@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dbt · Airflow · Spark 7일</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="home">
+<div class="layout single">
+<main>
+
+<div class="eyebrow">프로시저에서 모던 데이터 스택으로</div>
+<h1>dbt · Airflow · Spark 7일</h1>
+<p class="lead">프로시저로 마트를 만들어 온 analytics engineer를 위한 학습 코스입니다. 하루에 이론 1시간 남짓 + 내 PC 실습 1시간, 7일 동안 dbt를 중심으로 Airflow와 Spark까지 연결합니다.</p>
+
+<div style="margin:24px 0 8px; display:flex; justify-content:space-between; font-size:14.5px; color:var(--muted)">
+  <span id="overall-label">전체 진도</span><span id="overall-num"></span>
+</div>
+<div class="bar"><span id="overall-bar"></span></div>
+
+<h2 id="days">커리큘럼</h2>
+<ul class="day-list" id="day-list"></ul>
+
+<h2 id="how">이렇게 공부하세요</h2>
+<pre class="diagram">  하루 흐름 (약 2~2.5시간)
+
+  ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐   ┌───────────┐
+  │ ① 이론 읽기  │──▶│ ② 실습      │──▶│ ③ 스스로     │──▶│ ④ 퀴즈      │──▶│ ⑤ 완료 표시  │
+  │ 🧸 비유 먼저 │   │ 힌트 → 정답  │   │  설명 3문항  │   │ 틀린 건 해설 │   │ 진도 저장    │
+  └───────────┘   └───────────┘   └───────────┘   └───────────┘   └───────────┘</pre>
+<ul>
+<li><b>실습은 직접 타이핑하세요.</b> 정답은 접혀 있습니다. 힌트 1 → 힌트 2 → 정답 순서로 열어 보세요.</li>
+<li><b>"프로시저 감각으로 옮기면"</b> 상자는 내가 이미 아는 것과 연결하는 곳입니다. 꼭 읽고 넘어가세요.</li>
+<li>진도(실습 체크·퀴즈·완료)는 <b>이 브라우저에만</b> 저장됩니다. 다른 PC에서는 처음부터 보입니다.</li>
+<li>모르는 단어는 <a href="glossary.html">용어집</a>, 명령어는 <a href="cheatsheet.html">명령어 모음</a>, 내 프로시저 패턴이 dbt로 뭔지 궁금하면 <a href="dictionary.html">프로시저↔dbt 사전</a>.</li>
+</ul>
+
+<h2 id="setup">준비물</h2>
+<div class="table-wrap">
+<table>
+<tr><th>무엇</th><th>언제부터</th><th>비고</th></tr>
+<tr><td>Python 3.10 이상</td><td>1일차</td><td><code>python --version</code> 으로 확인</td></tr>
+<tr><td>dbt-duckdb</td><td>1일차</td><td>가상환경에 <code>pip install dbt-duckdb</code>. DB 서버·클라우드 계정 필요 없음, 0원</td></tr>
+<tr><td>Docker Desktop</td><td>5일차</td><td>Airflow(웹 화면 <code>localhost:8083</code>)와 Spark를 컨테이너로 띄움</td></tr>
+<tr><td>VS Code 같은 편집기</td><td>1일차</td><td>SQL·YAML 편집용</td></tr>
+</table>
+</div>
+<p>실습 파일: <a href="practice/">practice 폴더</a> (데이터 CSV, Airflow·Spark 설정). <a href="https://github.com/jinjinparkk/de-study">GitHub 저장소</a>에서도 받을 수 있습니다.</p>
+
+<div class="box summary">
+<span class="box-title">💡 7일을 한 줄로</span>
+dbt로 <b>SELECT를 레시피 카드처럼 나누고 테스트를 붙이고</b>, Airflow로 <b>언제·어떤 순서로 돌릴지 맡기고</b>, Spark는 <b>웨어하우스가 감당 못 할 크기일 때 꺼내는 큰 칼</b>로 이해한다.
+</div>
+
+<p style="margin-top:30px"><button class="btn" id="reset-all">진도 전체 초기화</button></p>
+
+</main>
+</div>
+<div class="footer">개인 학습용 · 실습 데이터는 가상 데이터입니다</div>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  const S = window.DE_STORE, DAYS = window.DE_DAYS;
+  const list = document.getElementById("day-list");
+  let total = 0;
+  DAYS.forEach((d, i) => {
+    const done = S.get(d.id + ":done", false);
+    const st = S.get(d.id + ":stat", null);
+    let pct = done ? 1 : 0;
+    if (!done && st) {
+      const den = st.stepsTotal + st.quizTotal;
+      pct = den ? (st.steps + st.quiz) / den * 0.9 : 0;
+    }
+    total += pct;
+    const prog = done
+      ? `✓ 완료 ${S.get(d.id + ":doneAt", "")}`
+      : st ? `실습 ${st.steps}/${st.stepsTotal}<br>퀴즈 ${st.quiz}/${st.quizTotal}` : "시작 전";
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="dnum">${i + 1}일차</div>
+      <div><span class="tool-tag ${d.tool}">${d.tool === "dbt" ? "dbt" : d.tool === "airflow" ? "Airflow" : "Spark"}</span><a class="dtitle" href="days/${d.file}">${d.title}</a><p class="ddesc">${d.desc}</p></div>
+      <div class="dprog">${prog}</div>`;
+    list.appendChild(li);
+  });
+  const pct = Math.round(total / DAYS.length * 100);
+  document.getElementById("overall-bar").style.width = pct + "%";
+  document.getElementById("overall-num").textContent = pct + "%";
+  document.getElementById("reset-all").addEventListener("click", () => {
+    if (!confirm("모든 진도와 퀴즈 기록을 지울까요?")) return;
+    Object.keys(localStorage).filter((k) => k.startsWith("de-study:")).forEach((k) => localStorage.removeItem(k));
+    location.reload();
+  });
+})();
+</script>
+</body>
+</html>

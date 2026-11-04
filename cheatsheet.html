@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>명령어 모음 · dbt · Airflow · Spark 7일</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="cheatsheet">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">부록</div>
+<h1>명령어 모음</h1>
+<p class="lead">실습하다 "그 명령 뭐였더라" 싶을 때 여는 페이지입니다. 기준 버전: dbt Core 1.10+, Airflow 3.x, Spark 4.x.</p>
+
+<h2 id="venv">Windows · PowerShell · 가상환경</h2>
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>명령</th><th>메모</th></tr>
+<tr><td>가상환경 만들기</td><td><code>python -m venv .venv</code></td><td>폴더마다 한 번</td></tr>
+<tr><td>가상환경 켜기</td><td><code>.\.venv\Scripts\Activate.ps1</code></td><td>프롬프트 앞에 <code>(.venv)</code>가 붙으면 성공</td></tr>
+<tr><td>스크립트 실행이 막힐 때</td><td><code>Set-ExecutionPolicy -Scope Process RemoteSigned</code></td><td>현재 창에서만 허용</td></tr>
+<tr><td>가상환경 끄기</td><td><code>deactivate</code></td><td></td></tr>
+<tr><td>패키지 설치</td><td><code>pip install dbt-duckdb</code></td><td><code>python -m pip install --upgrade pip</code> 먼저 해 두면 편함</td></tr>
+<tr><td>설치된 목록 저장</td><td><code>pip freeze &gt; requirements.txt</code></td><td>다른 PC에서 <code>pip install -r requirements.txt</code></td></tr>
+<tr><td>지금 어느 파이썬인지</td><td><code>(Get-Command python).Source</code></td><td><code>.venv</code> 안 경로가 나와야 함</td></tr>
+<tr><td>홈 폴더로 이동</td><td><code>cd $HOME\dbt-practice\shop</code></td><td><code>$HOME</code> = <code>C:\Users\내이름</code></td></tr>
+<tr><td>파일 목록 / 내용</td><td><code>Get-ChildItem</code> (<code>ls</code>) / <code>Get-Content 파일</code> (<code>cat</code>)</td><td></td></tr>
+<tr><td>폴더 통째로 지우기</td><td><code>Remove-Item -Recurse -Force 폴더</code></td><td></td></tr>
+<tr><td>환경 변수 (현재 창)</td><td><code>$env:DBT_TARGET = "prod"</code></td><td>bash의 <code>export</code></td></tr>
+<tr><td>포트 쓰는 프로그램 찾기</td><td><code>netstat -ano | findstr :8083</code></td><td>마지막 숫자가 PID</td></tr>
+</table>
+</div>
+
+<h2 id="dbt-cmd">dbt 명령</h2>
+<div class="table-wrap">
+<table>
+<tr><th>명령</th><th>하는 일</th><th>자주 붙이는 것</th></tr>
+<tr><td><code>dbt debug</code></td><td>프로젝트·프로필·DB 연결 확인. 안 되면 제일 먼저</td><td></td></tr>
+<tr><td><code>dbt deps</code></td><td><code>packages.yml</code>의 패키지 설치</td><td></td></tr>
+<tr><td><code>dbt seed</code></td><td><code>seeds/</code> CSV를 테이블로</td><td><code>--full-refresh</code> (컬럼이 바뀌었을 때)</td></tr>
+<tr><td><code>dbt run</code></td><td>모델 실행(테이블·뷰 생성)</td><td><code>-s 모델</code>, <code>--full-refresh</code></td></tr>
+<tr><td><code>dbt test</code></td><td>테스트 실행</td><td><code>-s 모델</code>, <code>--store-failures</code></td></tr>
+<tr><td><code>dbt build</code></td><td>seed·run·test·snapshot을 DAG 순서로 한 번에</td><td>실패한 테스트 뒤쪽 모델은 건너뜀</td></tr>
+<tr><td><code>dbt compile</code></td><td>Jinja를 풀어 SQL만 만들기 (<code>target/compiled</code>)</td><td><code>-s 모델</code></td></tr>
+<tr><td><code>dbt show</code></td><td>모델 결과 미리보기 (DB에 안 만듦)</td><td><code>-s daily_sales --limit 20</code>, <code>--inline "select 1"</code></td></tr>
+<tr><td><code>dbt ls</code></td><td>선택자에 걸리는 노드 목록</td><td><code>-s +fct_orders</code>, <code>--resource-type model</code></td></tr>
+<tr><td><code>dbt snapshot</code></td><td>snapshot 실행(SCD2 이력 쌓기)</td><td></td></tr>
+<tr><td><code>dbt source freshness</code></td><td>원본 최신성 검사</td><td><code>-s source:shop_raw</code></td></tr>
+<tr><td><code>dbt docs generate</code></td><td>문서용 <code>catalog.json</code>·<code>manifest.json</code> 생성</td><td></td></tr>
+<tr><td><code>dbt docs serve</code></td><td>문서 사이트 띄우기</td><td><code>--port 8085</code> (이 PC에서 8000·8001 사용 중)</td></tr>
+<tr><td><code>dbt clean</code></td><td><code>target/</code>, <code>dbt_packages/</code> 지우기</td><td></td></tr>
+<tr><td><code>dbt retry</code></td><td>직전 실행에서 실패한 지점부터 다시</td><td></td></tr>
+</table>
+</div>
+
+<h3>공통 옵션</h3>
+<div class="table-wrap">
+<table>
+<tr><th>옵션</th><th>뜻</th><th>예</th></tr>
+<tr><td><code>-s</code>, <code>--select</code></td><td>고르기</td><td><code>dbt run -s stg_orders</code></td></tr>
+<tr><td><code>--exclude</code></td><td>빼기</td><td><code>dbt build --exclude tag:heavy</code></td></tr>
+<tr><td><code>--full-refresh</code></td><td>incremental·seed를 처음부터 다시</td><td><code>dbt run -s fct_orders --full-refresh</code></td></tr>
+<tr><td><code>--vars</code></td><td>변수 넘기기 (<code>{{ var('run_date') }}</code>)</td><td><code>dbt run --vars "{run_date: '2026-10-05'}"</code></td></tr>
+<tr><td><code>--target</code>, <code>-t</code></td><td>profiles.yml의 환경 고르기</td><td><code>dbt build -t prod</code></td></tr>
+<tr><td><code>--threads</code></td><td>동시에 돌릴 모델 수</td><td><code>--threads 8</code></td></tr>
+<tr><td><code>--fail-fast</code>, <code>-x</code></td><td>하나라도 실패하면 즉시 중단</td><td></td></tr>
+<tr><td><code>--defer --state 폴더</code></td><td>내가 안 만든 상위 모델은 prod 것을 빌려 쓰기</td><td>CI에서 <code>state:modified</code>와 함께</td></tr>
+<tr><td><code>--project-dir</code>, <code>--profiles-dir</code></td><td>다른 폴더에서 실행할 때</td><td>Airflow 태스크에서 자주 씀</td></tr>
+</table>
+</div>
+
+<h3>선택 문법</h3>
+<div class="table-wrap">
+<table>
+<tr><th>쓰는 법</th><th>고르는 것</th></tr>
+<tr><td><code>fct_orders</code></td><td>그 모델 하나</td></tr>
+<tr><td><code>+fct_orders</code></td><td>그 모델과 <b>위쪽</b>(재료가 되는) 모델 전부</td></tr>
+<tr><td><code>fct_orders+</code></td><td>그 모델과 <b>아래쪽</b>(그걸 쓰는) 모델 전부</td></tr>
+<tr><td><code>1+fct_orders</code>, <code>fct_orders+2</code></td><td>위로 1단계만 / 아래로 2단계만</td></tr>
+<tr><td><code>@fct_orders</code></td><td>아래쪽 전부 + 그 아래쪽 모델들이 필요로 하는 위쪽까지 (CI에서 빠짐없이 빌드)</td></tr>
+<tr><td><code>tag:daily</code></td><td><code>tags: ['daily']</code> 붙은 것</td></tr>
+<tr><td><code>path:models/staging</code> (또는 <code>models/staging</code>)</td><td>폴더 아래 전부</td></tr>
+<tr><td><code>source:shop_raw+</code></td><td>그 source를 쓰는 모델 전부</td></tr>
+<tr><td><code>config.materialized:incremental</code></td><td>설정값으로 고르기</td></tr>
+<tr><td><code>state:modified+ --state prod_artifacts</code></td><td>prod manifest와 비교해 바뀐 모델과 그 아래쪽</td></tr>
+<tr><td><code>result:error+ --state target</code></td><td>지난 실행에서 실패한 모델과 그 아래쪽</td></tr>
+<tr><td><code>"a b"</code> (공백)</td><td>합집합(a 또는 b)</td></tr>
+<tr><td><code>"tag:daily,path:models/marts"</code> (쉼표)</td><td>교집합(둘 다 해당)</td></tr>
+</table>
+</div>
+
+<h2 id="airflow-cmd">Airflow 3 명령</h2>
+<p>연습 환경에서는 컨테이너 안에서 실행합니다: <code>docker exec -it 컨테이너이름 airflow ...</code></p>
+<div class="table-wrap">
+<table>
+<tr><th>명령</th><th>하는 일</th></tr>
+<tr><td><code>airflow standalone</code></td><td>스케줄러·API 서버·DAG 프로세서·메타DB를 한 번에 띄움 (연습용). 첫 실행 때 admin 비밀번호 출력</td></tr>
+<tr><td><code>airflow version</code></td><td>버전 확인</td></tr>
+<tr><td><code>airflow dags list</code></td><td>읽힌 DAG 목록</td></tr>
+<tr><td><code>airflow dags list-import-errors</code></td><td>문법 오류 등으로 못 읽은 DAG 파일과 오류 내용 — DAG가 안 보이면 이것부터</td></tr>
+<tr><td><code>airflow dags test 내_dag 2026-10-05</code></td><td>스케줄러 없이 DAG 한 번을 그 자리에서 실행 (디버깅용)</td></tr>
+<tr><td><code>airflow tasks test 내_dag 태스크id 2026-10-05</code></td><td>태스크 하나만 실행, 메타DB에 기록 안 남김</td></tr>
+<tr><td><code>airflow dags trigger 내_dag</code></td><td>지금 실행 요청 (스케줄러가 집어감). <code>--conf '{"k":"v"}'</code></td></tr>
+<tr><td><code>airflow dags pause</code> / <code>unpause 내_dag</code></td><td>스케줄 멈추기 / 켜기</td></tr>
+<tr><td><code>airflow backfill create --dag-id 내_dag --from-date 2026-10-01 --to-date 2026-10-05</code></td><td>지난 기간 채우기 (3.x 문법). <code>--reprocess-behavior failed</code>, <code>--max-active-runs 2</code></td></tr>
+<tr><td><code>airflow dags list-runs 내_dag</code></td><td>실행 기록 목록</td></tr>
+<tr><td><code>airflow tasks states-for-dag-run 내_dag 런id</code></td><td>한 실행 안의 태스크별 상태</td></tr>
+<tr><td><code>airflow connections list</code> / <code>variables list</code></td><td>저장된 접속 정보·변수</td></tr>
+<tr><td><code>airflow config get-value core dags_folder</code></td><td>DAG 폴더 위치 확인</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">2.x 와 다른 점</span>
+<p>3.x에서는 <code>airflow webserver</code> 대신 <code>airflow api-server</code>, <code>airflow dags backfill</code> 대신 <code>airflow backfill create</code>, DAG 인자 <code>schedule_interval</code> 대신 <code>schedule</code>, Dataset 대신 Asset 입니다. 인터넷 예제가 2.x 문법인 경우가 많으니 확인하세요.</p>
+</div>
+
+<h3>실습용 Docker 명령 (포트 8083)</h3>
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>명령</th></tr>
+<tr><td>띄우기 (compose 파일 있는 폴더에서)</td><td><code>docker compose up -d</code></td></tr>
+<tr><td>상태 보기</td><td><code>docker compose ps</code></td></tr>
+<tr><td>로그 따라 보기</td><td><code>docker compose logs -f</code> (admin 비밀번호도 여기)</td></tr>
+<tr><td>컨테이너 안에서 명령</td><td><code>docker compose exec airflow airflow dags list</code></td></tr>
+<tr><td>컨테이너 안 셸</td><td><code>docker compose exec airflow bash</code></td></tr>
+<tr><td>재시작 (설정·requirements 바꾼 뒤)</td><td><code>docker compose restart</code></td></tr>
+<tr><td>내리기 (데이터 유지)</td><td><code>docker compose down</code></td></tr>
+<tr><td>내리고 볼륨까지 삭제 (처음부터)</td><td><code>docker compose down -v</code></td></tr>
+<tr><td>접속</td><td><code>http://localhost:8083</code></td></tr>
+<tr><td>전체 컨테이너 / 포트 확인</td><td><code>docker ps --format "table {{.Names}}\t{{.Ports}}"</code></td></tr>
+</table>
+</div>
+<p class="meta-line">서비스 이름(<code>airflow</code>)은 5일차 compose 파일 기준입니다. 이름을 바꿨다면 <code>docker compose ps</code>로 확인하세요.</p>
+
+<h2 id="spark-cmd">PySpark DataFrame ↔ SQL</h2>
+<p><code>from pyspark.sql import functions as F</code> 를 했다고 가정합니다. 모든 줄은 <b>변환</b>(계획만 쌓임)이고, 마지막 표의 것들이 <b>액션</b>(실제 실행)입니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>SQL</th><th>DataFrame API</th></tr>
+<tr><td><code>SELECT a, b</code></td><td><code>df.select("a", "b")</code></td></tr>
+<tr><td><code>SELECT *, a * 2 AS a2</code></td><td><code>df.withColumn("a2", F.col("a") * 2)</code></td></tr>
+<tr><td><code>a AS x</code></td><td><code>F.col("a").alias("x")</code> / <code>df.withColumnRenamed("a", "x")</code></td></tr>
+<tr><td><code>LOWER(TRIM(status))</code></td><td><code>F.lower(F.trim("status"))</code></td></tr>
+<tr><td><code>CAST(d AS DATE)</code></td><td><code>F.col("d").cast("date")</code></td></tr>
+<tr><td><code>WHERE status = 'completed'</code></td><td><code>df.where(F.col("status") == "completed")</code> (<code>filter</code>도 같음)</td></tr>
+<tr><td><code>WHERE a = 1 AND b &gt; 2</code></td><td><code>df.where((F.col("a") == 1) &amp; (F.col("b") &gt; 2))</code> — 괄호 필수, <code>and</code> 아닌 <code>&amp;</code></td></tr>
+<tr><td><code>WHERE x IN (1, 2)</code> / <code>IS NULL</code></td><td><code>F.col("x").isin(1, 2)</code> / <code>F.col("x").isNull()</code></td></tr>
+<tr><td><code>CASE WHEN a &gt; 0 THEN 'y' ELSE 'n' END</code></td><td><code>F.when(F.col("a") &gt; 0, "y").otherwise("n")</code></td></tr>
+<tr><td><code>GROUP BY k</code> + <code>COUNT(*)</code>, <code>SUM(v)</code></td><td><code>df.groupBy("k").agg(F.count("*").alias("n"), F.sum("v").alias("s"))</code></td></tr>
+<tr><td><code>COUNT(DISTINCT c)</code></td><td><code>F.countDistinct("c")</code></td></tr>
+<tr><td><code>a LEFT JOIN b USING (id)</code></td><td><code>a.join(b, on="id", how="left")</code></td></tr>
+<tr><td><code>a JOIN b ON a.x = b.y</code></td><td><code>a.join(b, a.x == b.y, "inner")</code></td></tr>
+<tr><td>작은 표 브로드캐스트 힌트 <code>/*+ BROADCAST(b) */</code></td><td><code>a.join(F.broadcast(b), "id")</code></td></tr>
+<tr><td><code>ORDER BY d DESC</code></td><td><code>df.orderBy(F.col("d").desc())</code></td></tr>
+<tr><td><code>LIMIT 10</code></td><td><code>df.limit(10)</code></td></tr>
+<tr><td><code>SELECT DISTINCT</code></td><td><code>df.distinct()</code> / <code>df.dropDuplicates(["k"])</code></td></tr>
+<tr><td><code>UNION ALL</code></td><td><code>a.unionByName(b)</code></td></tr>
+<tr><td><code>ROW_NUMBER() OVER (PARTITION BY k ORDER BY t DESC)</code></td><td><code>from pyspark.sql.window import Window</code><br><code>F.row_number().over(Window.partitionBy("k").orderBy(F.col("t").desc()))</code></td></tr>
+<tr><td><code>CREATE TEMP VIEW v AS ...</code></td><td><code>df.createOrReplaceTempView("v")</code> 후 <code>spark.sql("select ... from v")</code></td></tr>
+<tr><td><code>EXPLAIN</code></td><td><code>df.explain()</code> / <code>df.explain("formatted")</code></td></tr>
+</table>
+</div>
+
+<h3>읽기 · 쓰기 · 파티션 · 액션</h3>
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>코드</th></tr>
+<tr><td>CSV 읽기</td><td><code>spark.read.csv("path", header=True, schema="id INT, d DATE")</code></td></tr>
+<tr><td>parquet 읽기</td><td><code>spark.read.parquet("path")</code></td></tr>
+<tr><td>JSON 읽기 (한 줄에 객체 하나)</td><td><code>spark.read.json("path/*.json")</code></td></tr>
+<tr><td>날짜 폴더로 나눠 parquet 쓰기</td><td><code>df.write.mode("overwrite").partitionBy("order_date").parquet("out")</code></td></tr>
+<tr><td>파티션 수 보기</td><td><code>df.rdd.getNumPartitions()</code></td></tr>
+<tr><td>파티션 늘리기/재분배 (셔플 O)</td><td><code>df.repartition(8)</code>, <code>df.repartition("order_date")</code></td></tr>
+<tr><td>파티션 줄이기 (셔플 X)</td><td><code>df.coalesce(1)</code></td></tr>
+<tr><td>캐시 / 해제</td><td><code>df.cache()</code> / <code>df.unpersist()</code></td></tr>
+<tr><td>셔플 파티션 수 설정</td><td><code>spark.conf.set("spark.sql.shuffle.partitions", "8")</code></td></tr>
+<tr><td><b>액션</b>: 보기 / 개수 / 가져오기</td><td><code>df.show(20)</code>, <code>df.count()</code>, <code>df.collect()</code>, <code>df.toPandas()</code> (작은 결과만!)</td></tr>
+<tr><td>스키마 보기 (액션 아님)</td><td><code>df.printSchema()</code></td></tr>
+</table>
+</div>
+
+<h3>실습용 Docker 명령 (Spark)</h3>
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>명령</th></tr>
+<tr><td>띄우기</td><td><code>docker run -d --name de-spark -p 8888:8888 -p 4040:4040 -v "$HOME\dbt-practice\shop:/home/jovyan/work" quay.io/jupyter/pyspark-notebook</code></td></tr>
+<tr><td>Jupyter 접속 주소(토큰) 보기</td><td><code>docker logs de-spark</code> → <code>http://127.0.0.1:8888/lab?token=...</code></td></tr>
+<tr><td>스크립트 실행</td><td><code>docker exec -it de-spark spark-submit /home/jovyan/work/spark/shop_spark.py</code></td></tr>
+<tr><td>대화형 셸</td><td><code>docker exec -it de-spark pyspark</code></td></tr>
+<tr><td>Spark UI</td><td><code>http://localhost:4040</code> (SparkSession이 살아 있는 동안만)</td></tr>
+<tr><td>멈추기 / 다시 켜기 / 지우기</td><td><code>docker stop de-spark</code> / <code>docker start de-spark</code> / <code>docker rm -f de-spark</code></td></tr>
+</table>
+</div>
+
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

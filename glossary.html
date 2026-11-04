@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>용어집 · dbt · Airflow · Spark 7일</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="glossary">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">부록</div>
+<h1>용어집</h1>
+<p class="lead">7일 동안 나오는 용어를 한곳에 모았습니다. 뜻은 짧게, 비유는 한 줄로, 자세한 설명은 괄호 안 일차로 가서 보세요.</p>
+
+<p><input class="search" type="search" id="q" placeholder="용어 검색 (예: 셔플, ref, logical date)" aria-label="용어 검색"></p>
+<p class="meta-line" id="count"></p>
+
+<h2 id="common">공통</h2>
+<dl class="glossary">
+<dt>ELT</dt>
+<dd>추출(Extract)·적재(Load)를 먼저 하고, 웨어하우스 안에서 SQL로 가공(Transform)하는 방식. 예전 ETL은 넣기 전에 바깥에서 가공했습니다.<br>🧸 장 본 걸 일단 냉장고에 다 넣고, 요리는 주방에서.<br><span class="where">1일차</span></dd>
+
+<dt>데이터 웨어하우스 (Data Warehouse)</dt>
+<dd>분석용으로 만든 데이터베이스. BigQuery·Snowflake·Redshift, 연습용으로는 DuckDB. 컬럼 단위로 저장해서 큰 집계가 빠릅니다.<br><span class="where">1일차</span></dd>
+
+<dt>레이크하우스 (Lakehouse)</dt>
+<dd>값싼 객체 저장소(S3·GCS)에 parquet 파일을 두고, Delta·Iceberg 같은 테이블 포맷을 얹어 웨어하우스처럼 쓰는 구조.<br>🧸 창고(레이크)에 선반 번호표(테이블 포맷)를 붙여 마트처럼 쓰기.<br><span class="where">7일차</span></dd>
+
+<dt>DAG (Directed Acyclic Graph)</dt>
+<dd>방향이 있고 되돌아오는 길(순환)이 없는 그래프. dbt는 모델 의존성을, Airflow는 태스크 순서를, Spark는 연산 단계를 DAG로 표현합니다.<br>🧸 "양파 썰기 → 볶기 → 담기" 처럼 앞 단계가 끝나야 뒷 단계가 가능한 순서표.<br><span class="where">2·5·7일차</span></dd>
+
+<dt>멱등성 (Idempotency)</dt>
+<dd>같은 입력으로 몇 번을 다시 돌려도 결과가 같은 성질. 재시도·백필을 안전하게 만드는 핵심입니다.<br>🧸 엘리베이터 버튼은 열 번 눌러도 한 번 누른 것과 같다.<br><span class="where">5일차</span></dd>
+
+<dt>리니지 (Lineage)</dt>
+<dd>어떤 테이블이 어디서 와서 어디로 가는지의 계보. dbt docs가 그래프로 그려 줍니다.<br><span class="where">3일차</span></dd>
+
+<dt>parquet</dt>
+<dd>컬럼 단위로 저장·압축하는 파일 형식. 필요한 컬럼만 읽고, 타입 정보가 들어 있어 CSV보다 훨씬 빠르고 작습니다.<br>🧸 CSV가 한 줄씩 쓴 일기장이라면 parquet은 항목별로 나눈 서랍장.<br><span class="where">7일차</span></dd>
+
+<dt>파티션 (테이블/파일)</dt>
+<dd>날짜 같은 컬럼 값으로 데이터를 나눠 저장한 단위. 조건에 맞는 파티션만 읽게 해서 비용과 시간을 줄입니다. Spark의 메모리 속 파티션과는 다른 뜻이니 주의.<br><span class="where">4·7일차</span></dd>
+
+<dt>SCD2 (Slowly Changing Dimension Type 2)</dt>
+<dd>값이 바뀔 때 덮어쓰지 않고 새 행을 추가하고, 옛 행에 유효기간(끝 날짜)을 찍어 이력을 남기는 방식.<br><span class="where">4일차</span></dd>
+
+<dt>DuckDB</dt>
+<dd>파일 하나짜리 분석용 데이터베이스. 설치가 쉽고 CSV·parquet을 바로 읽습니다. 이번 과정의 연습용 웨어하우스.<br><span class="where">1일차</span></dd>
+
+<dt>Docker 컨테이너</dt>
+<dd>프로그램과 그 실행 환경을 통째로 묶어 어디서나 같게 돌리는 상자. Airflow·Spark 실습을 이걸로 띄웁니다.<br>🧸 이삿짐 박스째 옮겨서 풀면 그대로 쓰는 원룸.<br><span class="where">5·7일차</span></dd>
+
+<dt>가상환경 (venv)</dt>
+<dd>폴더 전용 파이썬 패키지 방. 프로젝트마다 패키지 버전이 섞이지 않게 합니다.<br><span class="where">1일차</span></dd>
+</dl>
+
+<h2 id="dbt">dbt</h2>
+<dl class="glossary">
+<dt>모델 (model)</dt>
+<dd><code>models/</code> 아래 SELECT 문 하나가 담긴 <code>.sql</code> 파일. 파일 이름이 곧 테이블·뷰 이름이 됩니다.<br>🧸 레시피 카드 한 장.<br><span class="where">1일차</span></dd>
+
+<dt>ref()</dt>
+<dd>다른 모델을 참조하는 함수. 실제 테이블 이름으로 바뀌고, 동시에 실행 순서(의존성)를 만듭니다.<br>🧸 "이 카드는 양파 카드 다음"이라는 표시.<br><span class="where">1·2일차</span></dd>
+
+<dt>source()</dt>
+<dd>dbt가 만들지 않은 원본 테이블을 참조하는 함수. <code>sources.yml</code>에 선언하고, freshness 검사도 여기에 붙입니다.<br><span class="where">2일차</span></dd>
+
+<dt>materialization</dt>
+<dd>모델을 DB에 어떻게 만들지: <code>view</code>, <code>table</code>, <code>incremental</code>, <code>ephemeral</code>(CTE로 끼워 넣기). 설정 한 줄로 바뀝니다.<br>🧸 같은 요리를 바로 먹을지(뷰), 도시락으로 싸 둘지(테이블).<br><span class="where">2일차</span></dd>
+
+<dt>staging / intermediate / marts</dt>
+<dd>모델 계층. staging은 원본 정제(1:1), intermediate는 중간 조합, marts는 사람이 보는 최종 테이블(fct_, dim_).<br><span class="where">2일차</span></dd>
+
+<dt>fact / dimension (fct_, dim_)</dt>
+<dd>fact는 사건(주문·결제)이 한 행인 표, dimension은 대상(고객·상품)의 속성 표.<br><span class="where">2일차</span></dd>
+
+<dt>generic test</dt>
+<dd>YAML에 이름만 적어 쓰는 재사용 테스트. 기본 4종: <code>unique</code>, <code>not_null</code>, <code>accepted_values</code>, <code>relationships</code>. 1.10+에서는 인자를 <code>arguments:</code> 아래에 둡니다.<br><span class="where">3일차</span></dd>
+
+<dt>singular test</dt>
+<dd><code>tests/</code> 폴더에 직접 쓰는 SQL 테스트. "문제 행"을 고르는 SELECT이고, 결과가 0행이면 통과입니다.<br><span class="where">3일차</span></dd>
+
+<dt>severity · store_failures</dt>
+<dd>테스트 실패를 오류(error)로 볼지 경고(warn)로 볼지, 실패한 행을 테이블로 남길지 정하는 설정.<br><span class="where">3일차</span></dd>
+
+<dt>source freshness</dt>
+<dd>원본의 최신 시각(<code>loaded_at_field</code>)이 기준보다 오래됐는지 검사. <code>dbt source freshness</code>.<br>🧸 우유 유통기한 확인.<br><span class="where">3일차</span></dd>
+
+<dt>model contract</dt>
+<dd>모델이 내놓을 컬럼 이름·타입을 YAML에 약속하고, 다르면 빌드를 막는 기능.<br><span class="where">3일차</span></dd>
+
+<dt>dbt build</dt>
+<dd>run + test + seed + snapshot을 DAG 순서대로 한 번에. 앞 모델 테스트가 실패하면 뒤 모델은 건너뜁니다.<br><span class="where">3일차</span></dd>
+
+<dt>Jinja</dt>
+<dd>SQL 안에 <code>{{ }}</code>, <code>{% %}</code>로 변수·반복·조건을 쓰는 템플릿 문법. dbt가 컴파일 때 풀어 순수 SQL로 만듭니다.<br><span class="where">4일차</span></dd>
+
+<dt>매크로 (macro)</dt>
+<dd>Jinja로 만든 재사용 SQL 함수. <code>macros/</code> 폴더에 둡니다.<br>🧸 자주 쓰는 양념장을 미리 만들어 둔 병.<br><span class="where">4일차</span></dd>
+
+<dt>패키지 (package)</dt>
+<dd>남이 만든 매크로·테스트 묶음(예: <code>dbt_utils</code>). <code>packages.yml</code>에 적고 <code>dbt deps</code>.<br><span class="where">4일차</span></dd>
+
+<dt>incremental</dt>
+<dd>매번 전체를 다시 만들지 않고 새로 들어온 행만 MERGE/INSERT 하는 materialization. <code>is_incremental()</code>로 조건을 분기합니다.<br>🧸 가계부를 매일 처음부터 다시 쓰지 않고 오늘 줄만 추가.<br><span class="where">4일차</span></dd>
+
+<dt>--full-refresh</dt>
+<dd>incremental 모델을 처음부터 통째로 다시 만들게 하는 옵션.<br><span class="where">4일차</span></dd>
+
+<dt>snapshot</dt>
+<dd>원본 테이블의 변경 이력을 SCD2로 쌓아 주는 기능. 1.9+는 YAML로 설정합니다.<br><span class="where">4일차</span></dd>
+
+<dt>seed</dt>
+<dd>작은 CSV(코드표·매핑표)를 테이블로 올리는 기능. <code>dbt seed</code>.<br><span class="where">1일차</span></dd>
+
+<dt>선택자 (selector)</dt>
+<dd>어떤 모델만 돌릴지 고르는 문법. <code>+model</code>(위쪽 포함), <code>model+</code>(아래쪽 포함), <code>tag:</code>, <code>path:</code>, <code>state:modified</code> 등.<br><span class="where">2·6일차</span></dd>
+
+<dt>state:modified · manifest</dt>
+<dd><code>manifest.json</code>은 프로젝트 전체를 적은 지도. 이전 manifest와 비교해 바뀐 모델만 고르는 것이 <code>state:modified</code>, CI에서 씁니다.<br><span class="where">6일차</span></dd>
+
+<dt>target · profile</dt>
+<dd>profile은 접속 정보 묶음(<code>profiles.yml</code>), target은 그 안의 환경(dev/prod). <code>--target prod</code>로 바꿉니다.<br><span class="where">1·6일차</span></dd>
+
+<dt>Semantic Layer · MetricFlow</dt>
+<dd>"매출", "주문 수" 같은 지표 정의를 한곳(YAML)에 두고, 어떤 도구에서 물어도 같은 숫자가 나오게 하는 층. dbt에선 MetricFlow가 엔진입니다.<br><span class="where">7일차 (다음 단계)</span></dd>
+</dl>
+
+<h2 id="airflow">Airflow</h2>
+<dl class="glossary">
+<dt>오케스트레이터 (Orchestrator)</dt>
+<dd>여러 작업을 언제·어떤 순서로·실패하면 어떻게 할지 지휘하는 도구. Airflow가 대표적.<br>🧸 주방 매니저: 타이머와 순서표를 들고 있는 사람.<br><span class="where">5일차</span></dd>
+
+<dt>DAG (Airflow)</dt>
+<dd>태스크와 그 순서, 스케줄을 담은 파이썬 파일 하나. 3.x에서는 <code>from airflow.sdk import dag, task</code>.<br><span class="where">5일차</span></dd>
+
+<dt>Task · Operator</dt>
+<dd>Operator는 작업의 종류(BashOperator 등, 틀), Task는 DAG 안에 놓인 그 작업 하나(실물).<br>🧸 Operator는 "붕어빵 틀", Task는 구운 붕어빵 한 개.<br><span class="where">5일차</span></dd>
+
+<dt>TaskFlow API</dt>
+<dd><code>@dag</code>, <code>@task</code> 데코레이터로 파이썬 함수를 그대로 태스크로 만드는 방식. 반환값이 자동으로 XCom이 됩니다.<br><span class="where">5일차</span></dd>
+
+<dt>스케줄러 · 워커 · 메타DB</dt>
+<dd>스케줄러는 언제 무엇을 돌릴지 정하고, 워커가 실제로 실행하고, 메타DB가 모든 실행 상태를 기록합니다. 3.x에는 API 서버·DAG 프로세서도 따로 있습니다.<br><span class="where">5일차</span></dd>
+
+<dt>DAG Run · Task Instance</dt>
+<dd>DAG Run은 DAG를 한 번 실행한 기록(한 날짜분), Task Instance는 그 안의 태스크 하나의 실행.<br><span class="where">5일차</span></dd>
+
+<dt>logical date · data interval</dt>
+<dd>그 실행이 "어느 기간의 데이터"를 처리하는지. 일 단위 DAG의 10-05 실행은 10-05 00:00 ~ 10-06 00:00 구간을 맡습니다. 실제 실행 시각과 다릅니다.<br>🧸 "10월 5일자 신문"은 10월 6일 새벽에 찍는다.<br><span class="where">5일차</span></dd>
+
+<dt>catchup · 백필 (backfill)</dt>
+<dd>지나간 기간의 실행을 채워 넣는 것. catchup은 DAG를 켤 때 자동으로, 백필은 3.x에서 <code>airflow backfill create</code>로 직접.<br><span class="where">5일차</span></dd>
+
+<dt>XCom</dt>
+<dd>태스크끼리 작은 값(파일 경로, 행 수)을 주고받는 메모장. 큰 데이터는 넣지 않습니다.<br>🧸 주방 벽 화이트보드에 남기는 쪽지.<br><span class="where">5일차</span></dd>
+
+<dt>재시도 · 타임아웃 · 콜백</dt>
+<dd><code>retries</code>, <code>retry_delay</code>, <code>execution_timeout</code>, <code>on_failure_callback</code>으로 실패 대응을 설정합니다.<br><span class="where">6일차</span></dd>
+
+<dt>Asset (구 Dataset)</dt>
+<dd>"이 태스크가 이 데이터를 갱신했다"를 표시해, 시간 대신 데이터 갱신을 기준으로 다른 DAG를 깨우는 기능(3.x 이름).<br>🧸 "빵 나왔어요" 종이 울리면 포장 담당이 움직인다.<br><span class="where">6일차</span></dd>
+
+<dt>Cosmos</dt>
+<dd>dbt 프로젝트의 모델 하나하나를 Airflow 태스크로 펼쳐 주는 라이브러리(astronomer-cosmos).<br><span class="where">6일차</span></dd>
+
+<dt>Connection · Variable</dt>
+<dd>Airflow에 저장하는 접속 정보와 설정값. 코드에 비밀번호를 쓰지 않게 해 줍니다.<br><span class="where">5·6일차</span></dd>
+
+<dt>standalone</dt>
+<dd>스케줄러·API 서버·메타DB(SQLite)를 한 프로세스로 띄우는 연습용 실행 방식. 운영에는 쓰지 않습니다.<br><span class="where">5일차</span></dd>
+</dl>
+
+<h2 id="spark">Spark</h2>
+<dl class="glossary">
+<dt>분산 처리</dt>
+<dd>한 컴퓨터로 감당 못 할 데이터를 여러 컴퓨터(또는 코어)에 나눠 동시에 처리하는 것.<br>🧸 감자 1만 개를 요리사 100명이 나눠 깎기.<br><span class="where">7일차</span></dd>
+
+<dt>드라이버 (Driver)</dt>
+<dd>내 코드를 받아 실행 계획을 세우고 일을 나눠 주는 프로세스. SparkSession이 여기 삽니다.<br>🧸 주방장: 직접 썰지 않고 지시만.<br><span class="where">7일차</span></dd>
+
+<dt>익스큐터 (Executor)</dt>
+<dd>드라이버가 나눠 준 태스크를 실제로 계산하는 프로세스. 클러스터의 각 컴퓨터에 뜹니다.<br>🧸 칼을 든 요리사들.<br><span class="where">7일차</span></dd>
+
+<dt>클러스터 매니저 · local 모드</dt>
+<dd>컴퓨터 자원을 배정해 주는 관리자(YARN, Kubernetes, Standalone). local 모드는 한 컴퓨터 안에서 드라이버·익스큐터를 같이 돌리는 연습용.<br><span class="where">7일차</span></dd>
+
+<dt>SparkSession</dt>
+<dd>PySpark에서 Spark에 들어가는 입구 객체(<code>spark</code>). DB 커넥션 같은 것.<br><span class="where">7일차</span></dd>
+
+<dt>RDD · DataFrame · Spark SQL</dt>
+<dd>RDD는 저수준 분산 컬렉션, DataFrame은 컬럼·타입이 있는 표(옵티마이저가 최적화), Spark SQL은 그 표를 SQL로 다루는 방법. 지금은 DataFrame·SQL을 씁니다.<br><span class="where">7일차</span></dd>
+
+<dt>지연 실행 (Lazy evaluation)</dt>
+<dd>변환(select, where, join)은 계획만 쌓고, 액션(show, count, write)을 만나야 실제로 계산하는 방식.<br>🧸 장바구니에 담기만 하다가 결제 버튼을 눌러야 배송 시작.<br><span class="where">7일차</span></dd>
+
+<dt>변환 (Transformation) · 액션 (Action)</dt>
+<dd>변환은 새 DataFrame을 돌려주는 연산(계획 추가), 액션은 결과를 드라이버로 가져오거나 저장하는 연산(실행 시작).<br><span class="where">7일차</span></dd>
+
+<dt>Job · Stage · Task (Spark)</dt>
+<dd>액션 한 번 = Job, 셔플 경계로 나뉜 구간 = Stage, 파티션 하나를 처리하는 일 = Task. Spark UI(4040)에서 봅니다.<br><span class="where">7일차</span></dd>
+
+<dt>파티션 (Spark)</dt>
+<dd>DataFrame을 나눈 조각. 파티션 하나를 태스크 하나가 처리하므로 병렬도의 단위입니다.<br>🧸 감자 상자 하나 = 요리사 한 명 몫.<br><span class="where">7일차</span></dd>
+
+<dt>셔플 (Shuffle)</dt>
+<dd>groupBy·join·repartition 때 같은 키의 행을 같은 파티션으로 모으려고 네트워크로 데이터를 섞어 옮기는 것. 가장 비싼 작업.<br>🧸 반 전체가 자리를 바꿔 생일 월별로 다시 앉기.<br><span class="where">7일차</span></dd>
+
+<dt>narrow · wide 변환</dt>
+<dd>narrow는 파티션 안에서 끝나는 연산(select, filter), wide는 다른 파티션 데이터가 필요해 셔플이 생기는 연산(groupBy, join).<br><span class="where">7일차</span></dd>
+
+<dt>Broadcast Join · Sort-Merge Join</dt>
+<dd>작은 표를 모든 익스큐터에 복사해서 셔플 없이 붙이는 방식과, 양쪽을 키로 셔플·정렬해 맞붙이는 방식.<br>🧸 작은 메뉴판은 테이블마다 한 장씩 복사해 두기.<br><span class="where">7일차</span></dd>
+
+<dt>스큐 (Skew)</dt>
+<dd>특정 키에 데이터가 몰려 파티션 하나만 엄청 커지는 현상. 태스크 하나가 끝나지 않아 전체가 기다립니다.<br><span class="where">7일차</span></dd>
+
+<dt>캐시 (cache / persist)</dt>
+<dd>여러 번 쓰는 DataFrame의 계산 결과를 메모리에 잡아 두는 것. 다음 액션부터 재계산을 건너뜁니다.<br><span class="where">7일차</span></dd>
+
+<dt>Catalyst · AQE</dt>
+<dd>Catalyst는 DataFrame/SQL을 최적화하는 옵티마이저, AQE(Adaptive Query Execution)는 실행 중 실제 크기를 보고 조인 방식·파티션 수를 다시 고르는 기능.<br><span class="where">7일차</span></dd>
+
+<dt>repartition · coalesce</dt>
+<dd>repartition은 셔플해서 파티션 수를 늘리거나 줄이고, coalesce는 셔플 없이 합치기만 해서 줄입니다.<br><span class="where">7일차</span></dd>
+
+<dt>작은 파일 문제 (small files)</dt>
+<dd>파티션 × 날짜 폴더 수만큼 아주 작은 파일이 수만 개 생겨, 읽을 때 파일 여는 비용이 더 커지는 문제.<br><span class="where">7일차</span></dd>
+
+<dt>Delta Lake · Apache Iceberg</dt>
+<dd>parquet 파일 위에 트랜잭션·스키마 변경·시간 여행을 얹는 테이블 포맷. 레이크하우스의 핵심.<br><span class="where">7일차 (다음 단계)</span></dd>
+</dl>
+
+<p class="meta-line" id="empty" hidden>검색 결과가 없습니다.</p>
+
+<script>
+(function () {
+  var input = document.getElementById("q");
+  var countEl = document.getElementById("count");
+  var empty = document.getElementById("empty");
+  var dts = Array.prototype.slice.call(document.querySelectorAll("dl.glossary dt"));
+  function norm(s) { return s.toLowerCase().replace(/\s+/g, " "); }
+  function apply() {
+    var q = norm(input.value.trim());
+    var shown = 0;
+    dts.forEach(function (dt) {
+      var dd = dt.nextElementSibling;
+      var hit = !q || norm(dt.textContent + " " + dd.textContent).indexOf(q) !== -1;
+      dt.hidden = !hit; dd.hidden = !hit;
+      if (hit) shown++;
+    });
+    document.querySelectorAll("dl.glossary").forEach(function (dl) {
+      var any = dl.querySelector("dt:not([hidden])");
+      dl.hidden = !any;
+      var h = dl.previousElementSibling;
+      if (h && h.tagName === "H2") h.hidden = !any;
+    });
+    countEl.textContent = q ? "용어 " + dts.length + "개 중 " + shown + "개" : "용어 " + dts.length + "개";
+    empty.hidden = shown !== 0;
+  }
+  input.addEventListener("input", apply);
+  apply();
+})();
+</script>
+
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

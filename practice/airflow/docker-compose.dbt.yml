@@ -1,0 +1,18 @@
+# 6일차: 5일차 설정 위에 "dbt 가 들어간 이미지 + shop 프로젝트"를 덧씌우는 파일
+# 실행:  docker compose -f docker-compose.yml -f docker-compose.dbt.yml up -d --build
+# 준비:  같은 폴더의 .env 파일에  SHOP_DIR=C:/Users/내이름/dbt-practice/shop  한 줄
+services:
+  airflow:
+    image: de-airflow-dbt:3.3.2    # 아래 Dockerfile 로 직접 만든 이미지 이름
+    build: .
+    environment:
+      DBT_PROFILES_DIR: /opt/airflow/dbt          # profiles.yml 을 찾을 폴더
+      DBT_TARGET_PATH: /opt/airflow/dbt_target    # target/ 을 shop 폴더 밖에 쓰게 (내 PC 의 target/ 과 안 섞이게)
+      DBT_LOG_PATH: /opt/airflow/logs/dbt         # dbt.log 위치
+      DBT_DUCKDB_PATH: /opt/airflow/shop/shop_prod.duckdb  # prod target 이 쓸 DuckDB 파일 (내 PC 의 shop.duckdb 와 다른 파일)
+      DBT_USE_COLORS: "false"                     # 로그에 색깔용 제어 문자가 안 섞이게
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"     # 사용 통계 끄기 (읽기 전용 dbt 폴더에 .user.yml 을 쓰려 하지 않게)
+    volumes:
+      - ${SHOP_DIR:?SHOP_DIR 를 .env 에 적어 주세요}:/opt/airflow/shop
+      - ./dbt:/opt/airflow/dbt:ro
+      - ./landing:/opt/airflow/landing    # 수집 DAG 가 "새로 도착한 파일"을 찾는 곳

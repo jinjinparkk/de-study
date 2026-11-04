@@ -1,0 +1,17 @@
+customer_id,name,email,city,membership,updated_at
+1,김민지,user01@example.com,대전,basic,2026-09-30 09:00:00
+2,이서준,user02@example.com,광주,gold,2026-10-21 08:00:00
+3,박지우,user03@example.com,서울,basic,2026-09-30 09:00:00
+4,최하은,user04@example.com,대전,basic,2026-09-30 09:00:00
+5,정도윤,user05@example.com,서울,basic,2026-10-21 08:05:00
+6,강서연,user06@example.com,서울,basic,2026-09-30 09:00:00
+7,조예준,user07@example.com,광주,gold,2026-09-30 09:00:00
+8,윤지아,user08@example.com,서울,basic,2026-09-30 09:00:00
+9,장시우,user09@example.com,서울,gold,2026-09-30 09:00:00
+10,임수아,user10@example.com,서울,basic,2026-09-30 09:00:00
+11,한지호,user11@example.com,부산,basic,2026-09-30 09:00:00
+12,오다은,user12@example.com,인천,gold,2026-09-30 09:00:00
+13,서준우,user13@example.com,서울,basic,2026-09-30 09:00:00
+14,신유나,user14@example.com,서울,basic,2026-09-30 09:00:00
+15,권태윤,user15@example.com,대전,gold,2026-09-30 09:00:00
+16,문하린,user16@example.com,대구,basic,2026-10-21 09:00:00

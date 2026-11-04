@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5일차 · Airflow 핵심 개념</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="day5">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow airflow">5일차 · Airflow</div>
+<h1>Airflow 핵심 개념 — "언제, 어떤 순서로, 몇 번이든 같게"</h1>
+<p class="lead">어제까지는 dbt로 <b>무엇을</b> 만들지 적었습니다. 오늘은 그걸 <b>언제·어떤 순서로·실패하면 어떻게</b> 돌릴지를 맡는 Airflow를 배웁니다. 특히 모두가 헷갈리는 <b>logical date</b>를 날짜별 예시로 끝까지 풀어 봅니다.</p>
+<p class="meta-line">이론 약 110분 · 실습 약 70분 · 퀴즈 8문제 · 기준 버전 Airflow 3.3.2</p>
+
+<div class="box">
+<span class="box-title">오늘 마치면 할 수 있는 것</span>
+<ul>
+<li>cron이나 예약 쿼리로 버티던 일이 어디서 무너지는지, 오케스트레이터가 무엇을 대신해 주는지 설명하기</li>
+<li>DAG · Task · Operator · TaskFlow(<code>@task</code>) · 의존성(<code>&gt;&gt;</code>)을 구분해서 말하기</li>
+<li>Airflow 3의 구성 요소(scheduler, dag-processor, api-server, executor·worker, triggerer, 메타DB)가 각각 무슨 일을 하는지 그림으로 그리기</li>
+<li><b>logical date · data interval · <code>{{ ds }}</code></b> 가 실제 날짜로 어떻게 찍히는지 예측하기 (Airflow 3에서 바뀐 점 포함)</li>
+<li>catchup과 백필(<code>airflow backfill create</code>)을 구분하고, <b>몇 번 돌려도 결과가 같은(멱등)</b> DAG를 직접 쓰기</li>
+<li>Docker로 Airflow 3를 <code>localhost:8083</code>에 띄우고, DAG를 실행·로그 확인·백필까지 해 보기</li>
+</ul>
+</div>
+
+<h2 id="why">왜 오케스트레이터가 필요한가</h2>
+
+<p>프로시저를 운영할 때 보통 이렇게 시작합니다. BigQuery 예약 쿼리로 <code>CALL dm.sp_build_daily_sales(CURRENT_DATE() - 1)</code>을 매일 06:00에 걸어 두고, 원천 적재는 다른 팀 서버의 cron이 05:00에 돌립니다. 처음엔 잘 돌아갑니다. 그런데 작업이 늘면 이런 일이 생깁니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>상황</th><th>cron · 예약 쿼리로는</th><th>오케스트레이터(Airflow)로는</th></tr>
+<tr><td>원천 적재가 늦게 끝났다 (05:00 시작 → 06:20 종료)</td><td>06:00 프로시저가 <b>반쪽 데이터</b>로 돈다. "시간 간격"으로 순서를 흉내 냈기 때문</td><td>"적재 태스크가 <b>성공하면</b> 프로시저 태스크 시작"이라는 <b>의존성</b>으로 묶는다</td></tr>
+<tr><td>새벽에 네트워크가 잠깐 끊겼다</td><td>그냥 실패. 아침에 사람이 보고 다시 돌린다</td><td>5분 뒤 자동 재시도(<code>retries</code>), 그래도 안 되면 알림</td></tr>
+<tr><td>지난주 화~목 데이터가 잘못 들어와 다시 만들어야 한다</td><td>날짜를 바꿔 가며 손으로 3번 CALL</td><td><code>airflow backfill create --from-date … --to-date …</code> 한 줄 (백필)</td></tr>
+<tr><td>어제 그 작업, 몇 시에 돌았고 몇 분 걸렸지? 로그는?</td><td>서버마다 흩어진 로그 파일, 혹은 기록 없음</td><td>실행마다 상태·시작/종료 시각·로그가 화면 하나에 남는다</td></tr>
+<tr><td>작업이 50개, 서로 얽혀 있다</td><td>시간표 엑셀과 사람 기억</td><td>DAG 그림이 곧 문서. 코드라서 git으로 이력 관리</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>cron은 <b>알람 시계</b>입니다. "6시에 울려라"만 압니다. 앞사람이 일을 끝냈는지, 어제 실패했는지는 모릅니다.</p>
+<p>Airflow는 <b>주방 매니저</b>입니다. 순서표(DAG)를 들고 "재료 손질이 끝났으니 이제 볶기 시작", "볶기가 실패했네, 5분 뒤 다시", "지난주 화요일 메뉴를 다시 만들어 달래? 화요일 재료로 다시 해" 를 지휘합니다. 매니저는 <b>직접 요리하지 않습니다.</b> 요리는 요리사(BigQuery, dbt, Spark…)가 합니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>예약 쿼리의 "매일 06:00" = Airflow의 <b>schedule</b></li>
+<li>프로시저 인자 <code>p_date</code> = Airflow가 실행마다 넣어 주는 <b>logical date</b> (<code>{{ ds }}</code>)</li>
+<li>"적재 끝나면 CALL" 을 사람이 시간 간격으로 맞추던 것 = <b>태스크 의존성</b> (<code>적재 &gt;&gt; 프로시저</code>)</li>
+<li>실패 시 수동 재실행·날짜 바꿔 재실행 = <b>retries</b> · <b>백필</b></li>
+</ul>
+</div>
+
+<div class="box tip">
+<span class="box-title">Airflow가 하지 않는 일</span>
+<p>Airflow는 데이터를 <b>직접 옮기거나 계산하는 곳이 아닙니다</b>. 수 GB 데이터를 Airflow 태스크 안에서 pandas로 돌리는 건 가능은 하지만 나쁜 습관입니다. 무거운 일은 BigQuery·dbt·Spark에 시키고, Airflow는 "시켜라, 기다려라, 결과 확인해라"만 합니다. (아래 XCom 절에서 다시 나옵니다.)</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+오케스트레이터는 <b>시간이 아니라 "앞 작업의 성공"으로 순서를 잇고</b>, 실패·재시도·과거 날짜 재처리·기록을 대신 챙겨 주는 지휘자입니다.
+</div>
+
+<h2 id="concepts">DAG · Task · Operator · TaskFlow</h2>
+
+<h3>DAG = 작업 순서도 한 장</h3>
+<p><b>DAG</b>(Directed Acyclic Graph, 방향이 있고 되돌아오는 길이 없는 그래프)는 2일차 dbt 리니지와 같은 개념입니다. 화살표는 "앞이 끝나야 뒤가 시작"을 뜻하고, 돌고 도는 고리는 허용하지 않습니다. Airflow에서 DAG 하나는 보통 <b>파이썬 파일 하나</b>에 정의하고, 그 안에 이름(<code>dag_id</code>)·스케줄·시작일 같은 설정과 태스크들의 순서를 적습니다.</p>
+
+<pre class="diagram">          DAG: daily_orders_partition  (매일 1번 실행 = DagRun 1개)
+┌────────────┐     ┌─────────────┐     ┌─────────┐     ┌────────────┐
+│ show_dates │────▶│ extract_day │────▶│  check  │────▶│ list_files │
+└────────────┘     └─────────────┘     └─────────┘     └────────────┘
+   Task              Task                Task            Task
+ (@task 함수)        (@task 함수)          (@task 함수)      (BashOperator)</pre>
+
+<h3>Task와 Operator</h3>
+<ul>
+<li><b>Task</b> = 순서도의 칸 하나. "이 일을 해라"의 단위이고, 성공·실패·재시도도 태스크 단위로 기록됩니다.</li>
+<li><b>Operator</b> = 칸의 <b>종류(틀)</b>. "셸 명령을 돌리는 칸"(<code>BashOperator</code>), "파이썬 함수를 돌리는 칸"(<code>PythonOperator</code>), "BigQuery 쿼리를 보내는 칸"(<code>BigQueryInsertJobOperator</code>), "무언가를 기다리는 칸"(Sensor) 등이 있습니다. Operator에 설정값을 채우면 Task가 됩니다.</li>
+</ul>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>예</th><th>언제</th></tr>
+<tr><td>액션 Operator</td><td><code>BashOperator</code>, <code>PythonOperator</code>, <code>BigQueryInsertJobOperator</code></td><td>무언가를 실행</td></tr>
+<tr><td>Sensor</td><td><code>FileSensor</code>, <code>S3KeySensor</code>, <code>ExternalTaskSensor</code></td><td>조건이 맞을 때까지 기다림 (파일 도착 등)</td></tr>
+<tr><td>TaskFlow <code>@task</code></td><td>파이썬 함수에 <code>@task</code>를 붙임</td><td>파이썬 로직을 짧게. 내부적으로는 PythonOperator</td></tr>
+</table>
+</div>
+<p>Operator는 <b>provider 패키지</b>로 나뉘어 있습니다. Bash·Python 같은 기본 Operator는 Airflow 3부터 <code>apache-airflow-providers-standard</code>에 들어 있어서 import 경로가 <code>airflow.providers.standard.operators.bash</code>입니다. BigQuery는 <code>apache-airflow-providers-google</code>.</p>
+
+<h3>TaskFlow API — 함수에 <code>@task</code>만 붙이기</h3>
+<p>Airflow 3에서 DAG을 쓰는 표준 방식입니다. <code>from airflow.sdk import dag, task</code> 두 개면 됩니다.</p>
+
+<pre data-file="TaskFlow 모양 (요약)"><code>from airflow.sdk import dag, task      # Airflow 3 의 DAG 작성용 공개 도구 모음
+
+@dag(schedule=None)                    # 아래 함수 = DAG 하나
+def my_pipeline():
+    @task                              # 아래 함수 = 태스크 하나
+    def extract():
+        return [1, 2, 3]               # return 값은 다음 태스크로 전달된다 (XCom)
+
+    @task
+    def load(rows):                    # 앞 태스크 결과를 인자로 받는다
+        print(len(rows))
+
+    load(extract())                    # 함수 호출 모양 = 순서 연결 (extract → load)
+
+my_pipeline()                          # 파일 맨 아래에서 한 번 불러야 등록된다</code></pre>
+
+<h3>의존성 표시: <code>&gt;&gt;</code></h3>
+<pre data-file="의존성 표기 모음"><code>a &gt;&gt; b              # a 다음 b
+a &gt;&gt; [b, c] &gt;&gt; d    # a 다음 b·c 동시에, 둘 다 끝나면 d
+b &lt;&lt; a              # 같은 뜻 (반대 방향 화살표)
+load(transform(extract()))   # TaskFlow: 값을 넘기면 자동으로 순서가 생긴다</code></pre>
+
+<pre class="diagram">  a &gt;&gt; [b, c] &gt;&gt; d   를 그리면
+
+        ┌───▶ b ───┐
+  a ────┤          ├───▶ d      d 는 기본적으로 b, c 가 "모두 성공"해야 시작
+        └───▶ c ───┘            (trigger_rule="all_success" 가 기본값)</pre>
+
+<div class="box warn">
+<span class="box-title">가장 흔한 오해: DAG 파일은 "실행"되는 코드가 아니라 "순서도를 그리는" 코드</span>
+<p>DAG 파일의 맨 위(태스크 함수 <b>바깥</b>)에 적은 코드는 Airflow가 파일을 <b>읽을 때마다</b>(기본 수십 초~몇 분 간격) 실행됩니다. 여기에 DB 조회나 API 호출을 넣으면 하루에 수천 번 불립니다. 실제 일은 <b>태스크 함수 안</b>에서만 하세요.</p>
+<p>또 <code>extract()</code>를 "부르는" 순간 데이터가 읽히는 게 아닙니다. 순서도에 칸이 하나 생길 뿐이고, 실제 실행은 나중에 워커가 합니다.</p>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>DAG 파일은 <b>공연 큐시트</b>입니다. 큐시트를 인쇄한다고 조명이 켜지지는 않죠. 큐시트(DAG)에는 "1번 조명 → 2번 음악 → 3번 막 내림" 순서와 "매일 저녁 7시 공연"(schedule)이 적혀 있고, 공연 날마다 스태프(워커)가 큐시트대로 실제로 움직입니다. 공연 한 번이 <b>DagRun</b>, 그 공연에서 "2번 음악" 한 번 튼 것이 <b>TaskInstance</b>입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>DAG = 여러 프로시저를 순서대로 부르는 <b>마스터 프로시저</b> (단, 순서를 화살표로 선언)</li>
+<li>Task = 마스터 프로시저 안의 <code>CALL sp_xxx()</code> 한 줄. 다만 줄마다 성공/실패 기록이 따로 남고, 실패한 줄만 다시 돌릴 수 있다</li>
+<li>Operator = "CALL 하는 대상의 종류" (BigQuery 쿼리냐, 셸 스크립트냐, 파이썬이냐)</li>
+</ul>
+</div>
+
+<h2 id="arch">Airflow 3 아키텍처: 누가 무엇을 하나</h2>
+
+<pre class="diagram">                         ┌──────────────────────────────┐
+  내 DAG 파일 (.py) ─────▶│ dag-processor                 │  파일을 읽어 순서도를 만들고
+  dags/ 폴더              │  (파싱 전담)                    │──┐ 메타DB에 "직렬화"해서 저장
+                         └──────────────────────────────┘  │
+                                                           ▼
+┌──────────────────┐   읽고 씀    ┌──────────────────────────────────────┐
+│ scheduler         │◀──────────▶│ 메타데이터 DB (Postgres / 연습용 SQLite) │
+│ "지금 돌릴 차례?"   │            │ DAG 정의, DagRun, TaskInstance 상태,   │
+│ DagRun 만들고       │            │ XCom, 변수, 연결 정보 …                │
+│ 태스크를 큐에 넣음   │            └──────────────────────────────────────┘
+└────────┬─────────┘                         ▲
+         │ 실행 요청                            │ (워커는 DB 에 직접 안 붙고 API 를 거침)
+         ▼                                    │
+┌──────────────────┐   상태 보고·XCom   ┌──────┴───────────────────────┐
+│ executor → worker │──────────────────▶│ api-server                    │◀── 브라우저 (8083)
+│ 실제로 태스크 실행   │  (Task Execution  │  웹 화면(UI) + REST API +       │
+│ Local/Celery/K8s  │       API)        │  태스크용 실행 API               │
+└──────────────────┘                   └──────────────────────────────┘
+┌──────────────────┐
+│ triggerer         │  "1시간 기다려" 같은 대기 작업을 워커 대신 모아서 기다려 줌 (deferrable)
+└──────────────────┘</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>구성 요소</th><th>하는 일</th><th>비유</th></tr>
+<tr><td><b>dag-processor</b></td><td>dags 폴더의 .py 파일을 주기적으로 읽어(파싱) DAG 구조를 메타DB에 저장. Airflow 3부터 별도 프로세스가 기본</td><td>큐시트 인쇄 담당</td></tr>
+<tr><td><b>scheduler</b></td><td>"이 DAG의 다음 실행 시각이 됐나?", "앞 태스크가 끝났나?"를 계속 확인해 DagRun을 만들고 태스크를 실행 대기열에 넣음</td><td>무대 감독</td></tr>
+<tr><td><b>executor</b></td><td>대기열의 태스크를 <b>어디서 어떻게</b> 돌릴지 정하는 방식. <code>LocalExecutor</code>(같은 컴퓨터의 프로세스), <code>CeleryExecutor</code>(여러 워커 서버), <code>KubernetesExecutor</code>(태스크마다 파드)</td><td>스태프 배치 방식</td></tr>
+<tr><td><b>worker</b></td><td>실제로 태스크 코드를 실행하는 프로세스/서버</td><td>스태프</td></tr>
+<tr><td><b>api-server</b></td><td>웹 화면(UI)과 REST API를 제공. Airflow 3에서는 워커도 이 API를 통해서만 상태·XCom을 주고받음</td><td>안내 데스크 + 무전기</td></tr>
+<tr><td><b>triggerer</b></td><td>"파일 올 때까지", "외부 작업 끝날 때까지" 같은 긴 기다림을 워커 슬롯을 잡지 않고 대신 기다림</td><td>대기실 담당</td></tr>
+<tr><td><b>메타데이터 DB</b></td><td>모든 상태의 원장. 운영은 PostgreSQL, 오늘 연습은 SQLite</td><td>공연 일지</td></tr>
+</table>
+</div>
+
+<div class="box airflow">
+<span class="box-title">Airflow 2 → 3 에서 바뀐 것 (인터넷 예제가 2 기준이라 자주 헷갈림)</span>
+<ul>
+<li><code>webserver</code> → <b><code>api-server</code></b>. 화면도 새로 만들어졌습니다(React).</li>
+<li>DAG 파싱이 scheduler 안에서 → <b>별도 <code>dag-processor</code></b>.</li>
+<li>태스크가 메타DB에 직접 접속 → <b>API 서버를 거쳐서만</b> (보안·확장성).</li>
+<li><code>from airflow.decorators import dag, task</code> → <b><code>from airflow.sdk import dag, task</code></b>. <code>schedule_interval=</code> → <b><code>schedule=</code></b>.</li>
+<li><code>execution_date</code> → <b><code>logical_date</code></b>. Dataset → <b>Asset</b>. SubDAG·SLA 기능은 삭제.</li>
+<li><code>airflow dags backfill</code> → <b><code>airflow backfill create</code></b> (스케줄러가 실행).</li>
+<li><code>catchup</code> 기본값 True → <b>False</b>. 그리고 <code>"@daily"</code> 같은 cron 스케줄의 날짜 의미가 바뀌었습니다 — 아래 logical date 절에서 자세히.</li>
+</ul>
+</div>
+
+<p>오늘 쓰는 <code>airflow standalone</code> 명령은 위 프로세스들(scheduler, dag-processor, api-server, triggerer)을 <b>컨테이너 하나 안에서 한꺼번에</b> 띄우는 연습용 모드입니다. executor는 <code>LocalExecutor</code>, 메타DB는 SQLite입니다. 운영에서는 이렇게 하지 않고 프로세스마다 따로, DB는 Postgres로 둡니다.</p>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+dag-processor가 <b>읽고</b>, scheduler가 <b>정하고</b>, executor·worker가 <b>실행하고</b>, api-server가 <b>보여 주고 중계하고</b>, 메타DB가 <b>기억</b>합니다.
+</div>
+
+<h2 id="states">DagRun과 TaskInstance, 그리고 상태</h2>
+
+<p>DAG가 "설계도"라면, 실행할 때마다 생기는 기록이 둘 있습니다.</p>
+<ul>
+<li><b>DagRun</b> = DAG의 실행 1회. "2026-10-03 날짜분 실행" 같은 단위. <code>run_id</code>로 구분(<code>scheduled__…</code>, <code>manual__…</code>, <code>backfill__…</code>).</li>
+<li><b>TaskInstance</b> = 그 DagRun 안에서 태스크 1개의 실행. 상태·시도 횟수·로그가 여기 붙습니다.</li>
+</ul>
+
+<pre class="diagram">TaskInstance 상태 흐름 (자주 보는 것만)
+
+ (none) ──▶ scheduled ──▶ queued ──▶ running ──┬──▶ success
+   │         스케줄러가       실행기가     워커가     │
+   │         "돌릴 차례"      대기열에     실행 중    ├──▶ failed ──(retries 남음)──▶ up_for_retry ──▶ scheduled …
+   │                                            │
+   │                                            ├──▶ skipped        (일부러 건너뜀)
+   │                                            └──▶ deferred       (triggerer 에게 기다림을 맡김)
+   └──▶ upstream_failed   (앞 태스크가 실패해서 시작도 못 함)
+
+DagRun 상태:  queued ──▶ running ──▶ success / failed</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>상태</th><th>뜻</th><th>내가 할 일</th></tr>
+<tr><td><code>success</code></td><td>성공</td><td>-</td></tr>
+<tr><td><code>failed</code></td><td>재시도까지 다 쓰고 실패</td><td>로그 확인 → 고친 뒤 <b>Clear</b>(다시 실행)</td></tr>
+<tr><td><code>up_for_retry</code></td><td>실패했지만 재시도 대기 중</td><td>기다리기</td></tr>
+<tr><td><code>upstream_failed</code></td><td>앞 태스크가 실패해 시작 못 함</td><td>앞 태스크를 고치면 같이 다시 돈다</td></tr>
+<tr><td><code>skipped</code></td><td>조건에 따라 건너뜀</td><td>의도한 건지 확인</td></tr>
+<tr><td><code>queued</code>에서 오래 멈춤</td><td>실행 슬롯(pool, 동시 실행 수)이 없거나, DAG가 꺼져(paused) 있음</td><td>DAG 토글이 켜져 있는지부터 확인</td></tr>
+</table>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>프로시저 실행 이력을 남기려고 <code>etl_log(job_name, run_date, status, started_at, ended_at, error_msg)</code> 테이블을 직접 만들어 본 적이 있다면, 그게 바로 Airflow 메타DB의 <code>dag_run</code> · <code>task_instance</code> 테이블입니다. Airflow는 이걸 기본으로 갖고 있고, 화면까지 붙여 줍니다.</p>
+</div>
+
+<h2 id="logical-date">logical date와 data interval (오늘의 핵심)</h2>
+
+<p>Airflow를 처음 배우는 사람 거의 모두가 여기서 막힙니다. "10월 4일 0시에 돌았는데 왜 날짜가 10월 3일이지?" 천천히 갑니다.</p>
+
+<h3>출발점: 배치는 "지나간 구간"을 처리한다</h3>
+<p>일 배치는 보통 <b>어제 하루치</b> 데이터를 오늘 새벽에 처리합니다. 10월 3일 데이터는 10월 3일 23:59:59가 지나야 다 모이니까, 빨라도 10월 4일 0시 이후에야 처리할 수 있습니다. 그러면 이 실행을 부를 이름이 두 개 생깁니다.</p>
+<ul>
+<li>"10월 4일 0시에 <b>돈</b> 실행" — 실제 실행 시각 (Airflow 용어로 <b>run_after</b>)</li>
+<li>"10월 3일 <b>데이터를 처리한</b> 실행" — 데이터 기준 날짜 (<b>logical date</b>)</li>
+</ul>
+<p>프로시저로 치면 <code>CALL sp_build_daily_sales('2026-10-03')</code>을 10월 4일 새벽에 부르는 것과 같습니다. 인자 <code>p_date</code>는 10-03이고, 부른 시각은 10-04입니다. <b>Airflow의 logical date는 이 <code>p_date</code> 쪽</b>입니다. 이름이 "실행 날짜"(옛 이름 execution_date)처럼 들려서 헷갈렸던 거라, Airflow 2.2부터 "논리적 날짜(logical date)"로 이름을 바꿨습니다.</p>
+
+<h3>"구간이 있는" 스케줄: CronDataIntervalTimetable</h3>
+<p>오늘 실습 DAG는 <code>schedule=CronDataIntervalTimetable("0 0 * * *", timezone="UTC")</code>를 씁니다. "매일 00:00마다, <b>직전 하루 구간</b>을 처리한다"는 뜻입니다.</p>
+
+<pre class="diagram">실제 시간 ──▶
+            10-03 00:00               10-04 00:00               10-05 00:00
+ ────────────────┼─────────────────────────┼─────────────────────────┼──────────
+                 │◀──── 데이터 구간 A ─────▶│◀──── 데이터 구간 B ─────▶│
+                 │   (10-03 하루치 주문)     │   (10-04 하루치 주문)     │
+                                           ▲                         ▲
+                                     실행 A 시작                 실행 B 시작
+                                     (구간 A 가 끝난 직후)          (구간 B 가 끝난 직후)
+
+ 실행 A:  run_after           = 10-04 00:00     ← 실제로 도는 시각
+          data_interval_start = 10-03 00:00     ← 구간 시작
+          data_interval_end   = 10-04 00:00     ← 구간 끝 (이 시각은 포함 안 함)
+          logical_date        = 10-03 00:00     ← = 구간 시작
+          ds                  = "2026-10-03"    ← logical_date 의 날짜 부분 (문자열)</pre>
+
+<p>즉 이 스케줄에서는 <b>ds = 처리할 데이터의 날짜</b>가 되어 프로시저의 <code>p_date</code>와 딱 맞습니다. 그래서 DAG 안에서 <code>WHERE order_date = '{{ ds }}'</code>처럼 쓰면 됩니다.</p>
+
+<p>스케줄러가 다음 실행을 어떻게 계산하는지, Airflow 3.3.2의 시간표 객체에 직접 물어본 결과입니다(10-03부터 시작한다고 가정).</p>
+<pre data-file="실측: 시간표별 다음 실행 정보"><code>CronDataInterval UTC    | run_after 2026-10-04 00:00:00+00:00 | logical 2026-10-03 00:00:00+00:00 | interval 2026-10-03 00:00:00+00:00 ~ 2026-10-04 00:00:00+00:00
+CronTrigger(@daily) UTC | run_after 2026-10-03 00:00:00+00:00 | logical 2026-10-03 00:00:00+00:00 | interval 2026-10-03 00:00:00+00:00 ~ 2026-10-03 00:00:00+00:00</code></pre>
+
+<h3>Airflow 3에서 바뀐 함정: <code>schedule="@daily"</code>는 구간이 없다</h3>
+<p>두 번째 줄을 보세요. Airflow 3에서는 <code>"@daily"</code>나 <code>"0 0 * * *"</code> 같은 <b>cron 문자열</b>을 그냥 쓰면 <code>CronTriggerTimetable</code>이 됩니다(설정 <code>[scheduler] create_cron_data_intervals</code>의 기본값이 <code>False</code>로 바뀜 — 실측 확인). 이 시간표는 <b>"그 시각에 방아쇠를 당긴다"</b>만 알고 구간 개념이 없습니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>10-04 00:00에 도는 실행</th><th><code>CronDataIntervalTimetable</code> (Airflow 2의 <code>@daily</code>와 같음)</th><th><code>schedule="@daily"</code> (Airflow 3 기본 = <code>CronTriggerTimetable</code>)</th></tr>
+<tr><td>logical_date</td><td>10-03 00:00</td><td><b>10-04 00:00</b></td></tr>
+<tr><td>data_interval</td><td>10-03 00:00 ~ 10-04 00:00</td><td>10-04 00:00 ~ 10-04 00:00 (길이 0)</td></tr>
+<tr><td><code>{{ ds }}</code></td><td>2026-10-03 (= 처리할 날짜)</td><td><b>2026-10-04</b> (= 오늘. 어제 데이터를 원하면 <code>{{ macros.ds_add(ds, -1) }}</code>)</td></tr>
+</table>
+</div>
+
+<p>둘 다 맞는 방식입니다. 다만 <b>인터넷 예제(대부분 Airflow 2)를 그대로 옮기면 하루가 밀립니다.</b> 그래서 이 과정에서는 "구간"을 분명히 하려고 <code>CronDataIntervalTimetable</code>을 명시합니다. 실습 직접 비교 결과(같은 날짜 <code>2026-10-04</code>로 <code>airflow dags test</code>):</p>
+
+<pre data-file="실측: @daily(CronTrigger) DAG 를 2026-10-04 로 실행"><code>logical_date        = 2026-10-04 00:00:00+00:00
+data_interval_start = 2026-10-04 00:00:00+00:00
+data_interval_end   = 2026-10-04 00:00:00+00:00
+ds                  = 2026-10-04</code></pre>
+
+<h3>두 번째 함정: <code>ds</code>는 UTC 날짜다</h3>
+<p><code>ds</code>는 logical_date를 <b>UTC로</b> 날짜만 잘라 만든 문자열입니다(Airflow 3.3.2 소스: <code>ds = logical_date.strftime("%Y-%m-%d")</code>, logical_date는 UTC). 그래서 스케줄을 <b>서울 00:00</b>으로 잡으면, 서울 10-03 00:00 = UTC <b>10-02</b> 15:00 이라서 <code>ds</code>가 하루 전 날짜로 찍힙니다. 실제로 서울 시간대 시간표로 바꿔 돌려 본 결과:</p>
+
+<pre data-file="실측: timezone=&quot;Asia/Seoul&quot; 로 했을 때 (서울 10-03 00:00 구간 시작)"><code>logical_date        = 2026-10-02 15:00:00+00:00
+ds                  = 2026-10-02          ← 서울 기준으로는 10-03 인데!</code></pre>
+
+<p>그래서 실습 DAG는 시간대를 <b>UTC</b>로 둡니다(한국 시간 매일 09:00 실행). 서울 날짜가 꼭 필요하면 <code>data_interval_start.in_timezone("Asia/Seoul")</code>로 바꿔서 쓰면 됩니다.</p>
+
+<h3>세 번째 함정: 손으로 돌린 실행</h3>
+<p>Trigger 버튼이나 <code>airflow dags test DAG 2026-10-04</code>로 돌리면 <b>입력한 시각이 그대로 logical_date</b>가 되고, 구간은 "그 시각에 끝나는 직전 구간"으로 추정됩니다. 그래서 구간 시간표에서도 수동 실행은 <code>ds</code>와 구간 시작이 하루 어긋납니다(실측):</p>
+<pre data-file="실측: CronDataIntervalTimetable(UTC) DAG 를 dags test 2026-10-04 로"><code>logical_date        = 2026-10-04 00:00:00+00:00
+data_interval_start = 2026-10-03 00:00:00+00:00
+data_interval_end   = 2026-10-04 00:00:00+00:00
+ds                  = 2026-10-04</code></pre>
+<p>실습 DAG는 <b><code>ds</code> 하나만</b> 기준으로 씁니다. 그러면 "스케줄 실행·백필 = 그 구간의 날짜", "수동 실행 = 내가 입력한 날짜"가 되어 사람이 예측하기 쉽습니다. 한 DAG 안에서 <code>ds</code>와 <code>data_interval_*</code>를 섞어 쓰지 마세요.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>회사 <b>월간 마감</b>을 생각해 보세요. "9월 마감"은 10월 2일에 합니다. 마감 서류에 적는 이름은 "9월분"(logical date)이고, 실제로 작업한 날은 10월 2일(run_after)입니다. 누구도 "10월 2일 마감"이라고 부르지 않죠. Airflow도 실행을 <b>"몇 월분인지"</b>로 부릅니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<pre><code>-- 예약 쿼리 (매일 06:00):
+CALL dm.sp_build_daily_sales(DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY));
+--                           └ 이 "어제 날짜 계산"을 Airflow 가 대신 해서 {{ ds }} 로 준다</code></pre>
+<p>차이점: 예약 쿼리는 "<b>오늘 기준</b> 어제"를 매번 계산하니, 사흘 전 날짜분을 다시 돌리려면 SQL을 고쳐야 합니다. Airflow는 실행마다 logical date가 <b>고정</b>돼 있어서, 10-03 실행을 한 달 뒤에 다시 돌려도 <code>ds</code>는 여전히 "2026-10-03"입니다. 이게 백필과 재실행을 가능하게 하는 핵심입니다.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">절대 하지 말 것: 태스크 안에서 "오늘 날짜" 쓰기</span>
+<p><code>datetime.now()</code>, <code>CURRENT_DATE()</code>로 처리 날짜를 정하면, 같은 실행을 나중에 다시 돌렸을 때 <b>다른 날짜</b>를 처리합니다. 백필도 전부 "오늘"을 처리해 버립니다. 처리 날짜는 언제나 <code>{{ ds }}</code>(또는 data_interval)에서 가져오세요.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+logical date는 "<b>몇 일분</b>을 처리하는 실행인가"이고, 실제로 도는 시각이 아닙니다. 구간 시간표에서는 <code>ds</code> = 구간 시작 날짜, Airflow 3의 <code>"@daily"</code>에서는 <code>ds</code> = 도는 날. 그리고 <code>ds</code>는 UTC 날짜입니다.
+</div>
+
+<h2 id="catchup">catchup과 백필</h2>
+
+<h3>catchup: 켜는 순간 "밀린 숙제"를 할까?</h3>
+<p><code>start_date=2026-10-01</code>인 DAG를 오늘(11-04)에 처음 켜면, 10-01부터 11-03까지 33개 구간이 "아직 안 돈" 상태입니다.</p>
+<ul>
+<li><code>catchup=True</code> → 33개를 전부 자동으로 만들어 돌립니다.</li>
+<li><code>catchup=False</code> (Airflow 3 기본값, 실측 확인) → <b>가장 최근 구간 하나</b>(11-03분)만 돌고, 그 뒤로 정상 스케줄.</li>
+</ul>
+<p>catchup을 실수로 켜 두면 DAG를 켜는 순간 몇 백 개 실행이 쏟아질 수 있어서, 보통 False로 두고 <b>필요할 때 백필</b>을 명시적으로 합니다.</p>
+
+<h3>백필: 지정한 과거 구간을 다시 돌리기</h3>
+<p>Airflow 3의 백필은 <code>airflow backfill create</code>로 "이 범위를 돌려 달라"는 <b>요청을 등록</b>하면, 스케줄러가 일반 실행처럼 처리합니다(화면에서도 진행 상황이 보임). 먼저 <code>--dry-run</code>으로 어떤 날짜가 만들어질지 확인하는 습관을 들이세요. 아래는 실습 DAG로 실제로 본 결과입니다.</p>
+
+<pre data-file="실측: airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --dry-run"><code>Runs to be attempted:
++---------------------------+-----------------+------------------+
+| logical_date              | partition_key   | partition_date   |
++===========================+=================+==================+
+| 2026-10-01 00:00:00+00:00 |                 |                  |
+| 2026-10-02 00:00:00+00:00 |                 |                  |
+| 2026-10-04 00:00:00+00:00 |                 |                  |
+| 2026-10-05 00:00:00+00:00 |                 |                  |
++---------------------------+-----------------+------------------+</code></pre>
+<p>10-03이 빠졌습니다. 그 날짜로 <b>이미 실행 기록이 있었기 때문</b>입니다. 기본값 <code>--reprocess-behavior none</code>은 "이미 있는 날짜는 건너뛰기"입니다. 같은 명령에 <code>--reprocess-behavior completed</code>를 붙이자 10-01~10-05 다섯 개가 모두 나왔습니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>옵션</th><th>뜻</th></tr>
+<tr><td><code>--from-date</code> / <code>--to-date</code></td><td>범위. <b>둘 다 포함</b>. 날짜만 쓰면 UTC 00:00으로 해석</td></tr>
+<tr><td><code>--reprocess-behavior none|failed|completed</code></td><td>기록이 이미 있는 날짜를: 건너뜀(기본) / 실패한 것만 다시 / 성공한 것까지 다시</td></tr>
+<tr><td><code>--max-active-runs</code></td><td>백필 중 동시에 도는 날짜 수</td></tr>
+<tr><td><code>--run-backwards</code></td><td>최근 날짜부터 거꾸로</td></tr>
+<tr><td><code>--dry-run</code></td><td>만들 실행 목록만 보여 주고 끝</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">백필이 돌려면 DAG가 켜져(unpaused) 있어야 합니다</span>
+<p>백필은 실행 기록만 만들고, 실제 실행은 스케줄러가 합니다. 스케줄러는 꺼진(paused) DAG의 태스크를 대기열에 넣지 않습니다(3.3.2 스케줄러 코드에서 확인). 화면에서 DAG 토글을 켠 뒤 백필하세요.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<pre><code>-- 백필 = 이걸 날짜 범위로 돌려 주는 것
+FOR d IN ('2026-10-01' .. '2026-10-05') LOOP
+  CALL dm.sp_build_daily_sales(d);
+END LOOP;</code></pre>
+<p>단, 프로시저가 <b>몇 번 돌려도 같은 결과</b>여야 이 루프를 안심하고 돌릴 수 있습니다. 그게 다음 절입니다.</p>
+</div>
+
+<h2 id="idempotency">멱등성: 몇 번 돌려도 같은 결과</h2>
+
+<p><b>멱등(idempotent)</b>은 "같은 입력으로 1번 돌리든 10번 돌리든 결과가 같다"는 뜻입니다. Airflow는 재시도·Clear·백필로 같은 날짜를 <b>여러 번</b> 돌리는 게 일상이라, 모든 태스크가 멱등이어야 합니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">멱등이 아님: 돌릴 때마다 쌓인다</div>
+<pre><code>INSERT INTO dm.daily_sales
+SELECT order_date, COUNT(*), SUM(amount)
+FROM ... WHERE order_date = '{{ ds }}'
+GROUP BY order_date;
+-- 재시도 1번 = 같은 날짜 행이 2줄</code></pre>
+</div>
+<div>
+<div class="label">멱등: 그 날짜 칸을 통째로 바꾼다</div>
+<pre><code>DELETE FROM dm.daily_sales
+WHERE order_date = '{{ ds }}';
+INSERT INTO dm.daily_sales
+SELECT ... WHERE order_date = '{{ ds }}' ...;
+-- 몇 번 돌려도 그 날짜는 1줄</code></pre>
+</div>
+</div>
+
+<p>프로시저에서 이미 쓰던 <b>DELETE + INSERT (날짜 기준)</b> 패턴이 정확히 멱등 패턴입니다. 다른 모양도 있습니다.</p>
+<ul>
+<li><b>파티션 덮어쓰기</b>: BigQuery <code>WRITE_TRUNCATE</code> 로 <code>table$20261003</code> 파티션 교체, 파일이면 <code>dt=2026-10-03/</code> 폴더를 통째로 교체 (오늘 실습)</li>
+<li><b>MERGE</b>(키 기준 upsert): 4일차 dbt incremental의 <code>unique_key</code></li>
+<li><b>임시 파일에 쓰고 마지막에 이름 바꾸기</b>: 중간에 죽어도 반쪽 파일이 남지 않게 (오늘 실습 DAG의 <code>os.replace</code>)</li>
+</ul>
+
+<div class="box warn">
+<span class="box-title">멱등을 깨는 흔한 원인</span>
+<ul>
+<li>처리 날짜를 <code>now()</code>로 정함 (위 절)</li>
+<li>INSERT만 하고 지우지 않음, 파일에 append</li>
+<li>"마지막으로 처리한 ID 이후" 같은 상태를 태스크 바깥(변수 등)에 저장하고 갱신</li>
+<li>입력 원천 자체가 바뀜 (API가 과거 데이터를 다시 주지 않음) → 원본을 날짜별로 보관(raw 적재)하는 이유</li>
+</ul>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>엘리베이터 버튼은 멱등입니다. 3층 버튼을 다섯 번 눌러도 3층에 한 번 섭니다. 반면 자판기 버튼은 멱등이 아니죠 — 다섯 번 누르면 다섯 개가 나옵니다(돈이 있다면). 배치 태스크는 <b>엘리베이터 버튼</b>처럼 만들어야 합니다.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+"<b>그 날짜(ds) 칸만 통째로 지우고 다시 채운다</b>" — 프로시저의 DELETE + INSERT가 Airflow 멱등성의 기본형입니다.
+</div>
+
+<h2 id="templating">템플릿과 컨텍스트: <code>{{ ds }}</code>는 어디서 오나</h2>
+
+<p>Airflow는 실행 직전에 각 태스크에 <b>컨텍스트</b>(그 실행의 정보 묶음)를 만들어 줍니다. 이걸 꺼내 쓰는 방법이 두 가지입니다.</p>
+
+<h3>① 템플릿 (Jinja) — 문자열 안에 <code>{{ }}</code></h3>
+<p>dbt에서 쓰던 그 Jinja입니다. Operator의 <b>템플릿 가능한 인자</b>(예: <code>BashOperator</code>의 <code>bash_command</code>, SQL Operator의 <code>sql</code>)에 쓰면 실행 직전에 값으로 바뀝니다.</p>
+<pre><code>BashOperator(
+    task_id="list_files",
+    bash_command="ls -l {{ params.out_root }}/dt={{ ds }}",   # 실행 직전 → ls -l /opt/airflow/output/orders/dt=2026-10-03
+)</code></pre>
+<p>템플릿이 <b>모든 인자에서 되는 건 아닙니다</b>. 각 Operator 문서의 <code>template_fields</code>에 있는 인자만 바뀝니다. 태스크 화면의 <b>Rendered Template</b>(렌더링 결과) 탭에서 실제로 무엇으로 바뀌었는지 볼 수 있습니다 — dbt의 <code>target/compiled</code>와 같은 역할입니다.</p>
+
+<h3>② TaskFlow 함수 인자로 받기</h3>
+<pre><code>@task
+def show_dates(ds=None, data_interval_start=None, logical_date=None):   # 인자 이름 = 컨텍스트 키
+    print(ds)                                                          # Airflow 가 값을 채워 준다
+
+@task
+def other():
+    ctx = get_current_context()      # 전체 컨텍스트가 필요하면 (from airflow.sdk import get_current_context)
+    print(ctx["params"], ctx["run_id"])</code></pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>키</th><th>예 (10-03분 스케줄 실행)</th><th>설명</th></tr>
+<tr><td><code>ds</code></td><td><code>2026-10-03</code></td><td>logical_date의 날짜 (UTC, 문자열)</td></tr>
+<tr><td><code>ds_nodash</code></td><td><code>20261003</code></td><td>BigQuery 파티션 데코레이터(<code>table$20261003</code>)에 편함</td></tr>
+<tr><td><code>logical_date</code></td><td>2026-10-03 00:00 UTC</td><td>날짜·시간 객체</td></tr>
+<tr><td><code>data_interval_start</code> / <code>_end</code></td><td>10-03 00:00 / 10-04 00:00</td><td>처리 구간</td></tr>
+<tr><td><code>ts</code></td><td><code>2026-10-03T00:00:00+00:00</code></td><td>시각까지 문자열</td></tr>
+<tr><td><code>run_id</code></td><td><code>scheduled__2026-10-03T00:00:00+00:00</code></td><td>실행 이름</td></tr>
+<tr><td><code>params</code></td><td><code>{"min_amount": 0}</code></td><td>실행 인자 (아래)</td></tr>
+<tr><td><code>macros</code></td><td><code>macros.ds_add(ds, -1)</code></td><td>날짜 계산 도우미</td></tr>
+<tr><td><code>ti</code></td><td>TaskInstance</td><td>XCom 꺼내기, 시도 횟수 등</td></tr>
+</table>
+</div>
+
+<div class="box airflow">
+<span class="box-title">logical date가 없는 실행도 있다 (Airflow 3)</span>
+<p>Airflow 3에서는 API로 logical date <b>없이</b> 실행을 만들 수 있습니다. 이때는 <code>ds</code>·<code>data_interval_*</code> 같은 날짜 키가 컨텍스트에 아예 없습니다(소스 확인: logical_date가 있을 때만 이 키들을 채움). 날짜 기반 DAG는 Trigger할 때 날짜를 꼭 정해 주세요.</p>
+</div>
+
+<h2 id="xcom">XCom: 태스크끼리 쪽지 주고받기</h2>
+
+<p>태스크는 서로 다른 프로세스(운영에선 다른 서버)에서 돕니다. 파이썬 변수를 공유할 수 없죠. 그래서 작은 값을 <b>메타DB에 적어 두고</b> 다음 태스크가 읽어 가는 장치가 <b>XCom</b>(cross-communication)입니다. TaskFlow에서 <code>return</code> 하면 자동으로 XCom에 저장되고, 그 값을 다음 <code>@task</code>의 인자로 넘기면 자동으로 꺼내 옵니다.</p>
+
+<pre class="diagram">extract_day ──return "/opt/airflow/output/orders/dt=2026-10-03/orders.csv"──▶ ┌──────────┐
+                                                                            │ 메타DB    │
+check(path) ◀──────────────── 같은 값을 꺼내 인자로 ───────────────────────────── │ xcom 테이블│
+                                                                            └──────────┘</pre>
+
+<div class="box warn">
+<span class="box-title">XCom에 큰 데이터를 넣지 마세요</span>
+<ul>
+<li>XCom은 <b>메타DB의 한 칸</b>입니다. 수만 행 데이터프레임을 넣으면 DB가 커지고 느려지고, 크기 제한에 걸려 실패합니다.</li>
+<li>넣는 것: 파일 경로, 테이블 이름, 행 수, 배치 ID 같은 <b>쪽지</b>. 데이터 자체는 저장소(GCS·S3·웨어하우스 테이블)에 두고 그 <b>위치</b>만 넘깁니다.</li>
+<li>오늘 DAG도 데이터는 파일로 쓰고, XCom에는 경로 문자열만 넘깁니다.</li>
+</ul>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>XCom = 프로시저 간에 <code>OUT</code> 파라미터로 <b>스칼라 값</b>(행 수, 상태 코드)을 넘기는 것. 결과 집합을 넘길 땐 OUT 파라미터가 아니라 <b>임시 테이블</b>에 넣고 이름을 넘겼죠. 똑같습니다.</p>
+</div>
+
+<h2 id="params-retries">params와 재시도 기초</h2>
+
+<h3>params: 실행 인자</h3>
+<p><code>@dag(params={"min_amount": 0})</code>처럼 기본값을 두면, 화면에서 Trigger할 때 값을 바꿔 넣을 수 있고 태스크에서는 <code>{{ params.min_amount }}</code>나 <code>ctx["params"]["min_amount"]</code>로 읽습니다. 프로시저의 <b>기본값 있는 인자</b>와 같습니다. 단, 스케줄 실행은 항상 기본값으로 돕니다.</p>
+
+<h3>재시도</h3>
+<pre><code>from datetime import timedelta            # 시간 길이 (SQL 의 INTERVAL)
+
+@dag(..., default_args={                  # 이 DAG 의 모든 태스크 기본값
+    "retries": 2,                         # 실패하면 2번 더 (총 3번 시도)
+    "retry_delay": timedelta(minutes=5),  # 시도 사이 5분 쉬기
+})</code></pre>
+<p>재시도는 "<b>일시적</b> 실패"(네트워크, 잠깐의 잠금)를 흡수하는 장치입니다. SQL 오타 같은 영구적 실패는 몇 번 재시도해도 같으니, 재시도 횟수를 너무 크게 두지 마세요. 그리고 <b>재시도는 같은 태스크를 다시 돌리는 것</b>이라 멱등이 아니면 데이터가 꼬입니다. 알림·타임아웃 같은 운영 설정은 6일차에 자세히 봅니다.</p>
+
+<h2 id="lab">실습: Airflow 3 띄우고 첫 DAG·멱등 DAG·백필</h2>
+
+<div class="box warn">
+<span class="box-title">검증 메모 (작성자가 실제로 확인한 범위)</span>
+<p>이 페이지를 만들 때 Docker Desktop이 꺼져 있어 <b>컨테이너를 직접 띄워 보지는 못했습니다</b>. 대신 다음을 확인했습니다.</p>
+<ul>
+<li>이미지 태그 <code>apache/airflow:3.3.2</code>가 Docker Hub에 있음 (amd64·arm64), <code>docker compose config</code>로 compose 파일 문법 확인</li>
+<li>같은 버전(Airflow 3.3.2)을 Windows 파이썬 3.12에 설치해(공식 지원 환경이 아니라 호환용 임시 패치를 덧댐) 아래 DAG 파일들의 <b>파싱(import 오류 0)</b>, <code>airflow dags test</code> <b>성공</b>, <code>airflow backfill create --dry-run</code> 출력을 확인. 페이지의 "실측" 블록이 그 출력입니다.</li>
+</ul>
+<p><b>미검증</b>: 컨테이너 기동과 8083 접속, 새 화면(UI)의 정확한 버튼 이름, 스케줄러가 백필을 실제로 돌리는 과정. 화면 문구가 조금 다르면 비슷한 이름을 찾아 주세요.</p>
+</div>
+
+<div class="lab">
+
+<div class="step" data-id="folder">
+<div class="step-title">1. 작업 폴더와 설정 파일 준비</div>
+<p>dbt 프로젝트와 섞이지 않게 새 폴더를 만듭니다. <code>dags</code>(내 DAG 파일), <code>data</code>(입력), <code>output</code>(DAG가 쓰는 결과), <code>logs</code>(태스크 로그) 네 폴더를 컨테이너와 연결합니다.</p>
+<pre><code>mkdir $HOME\airflow-practice
+cd $HOME\airflow-practice
+mkdir dags, data, output, logs
+$base = "https://jinjinparkk.github.io/de-study/practice/airflow"
+curl.exe -sL "$base/docker-compose.yml" -o docker-compose.yml
+Copy-Item $HOME\dbt-practice\shop\data\raw_orders.csv .\data\
+Get-ChildItem -Recurse</code></pre>
+<p>파일 직접 받기: <a href="../practice/airflow/docker-compose.yml">docker-compose.yml</a> · 전체 설명 <a href="../practice/airflow/README.md">README.md</a></p>
+<pre data-file="docker-compose.yml"><code># 5일차: Airflow 3 를 컨테이너 하나(standalone)로 띄우는 설정
+# 실행:  docker compose up -d      →  http://localhost:8083
+# 끄기:  docker compose stop       (기록 유지)   /   docker compose down  (컨테이너 삭제 → 실행 기록도 사라짐)
+name: de-airflow
+
+services:
+  airflow:
+    image: apache/airflow:3.3.2
+    command: standalone            # 스케줄러·dag-processor·api-server·triggerer 를 한 컨테이너에서 같이 띄우는 연습용 모드
+    ports:
+      - "8083:8080"                # 내 PC 8083 → 컨테이너 8080 (8000·8001·8081 은 이미 사용 중)
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"                 # 예제 DAG 수십 개를 안 보이게
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True" # 로그인 없이 모두 관리자 (내 PC 연습용에서만!)
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"        # 새 DAG 파일을 30초마다 찾기 (기본 300초)
+    volumes:
+      - ./dags:/opt/airflow/dags          # 내가 쓰는 DAG 파일
+      - ./data:/opt/airflow/data:ro       # 읽기 전용 입력 (raw_orders.csv 를 여기에 복사)
+      - ./output:/opt/airflow/output      # DAG 가 쓰는 결과 파일
+      - ./logs:/opt/airflow/logs          # 태스크 로그를 내 PC 에서도 열어 볼 수 있게</code></pre>
+<details class="hint"><summary>이 파일에서 꼭 볼 줄</summary>
+<ul>
+<li><code>command: standalone</code> — 위 아키텍처 그림의 프로세스를 한 컨테이너에서 같이 띄움</li>
+<li><code>"8083:8080"</code> — 왼쪽이 내 PC 포트. 8000·8001·8081은 이미 쓰고 있어서 8083</li>
+<li><code>SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"</code> — 로그인 화면 없이 모두 관리자. <b>내 PC 연습용에서만</b> 쓰는 설정</li>
+<li><code>./dags:/opt/airflow/dags</code> — 내 PC의 <code>dags</code> 폴더 = 컨테이너 안 <code>/opt/airflow/dags</code>. 파일을 저장하면 컨테이너도 바로 봅니다</li>
+<li><code>REFRESH_INTERVAL: "30"</code> — 새 DAG 파일을 30초마다 찾음 (기본 300초라 새 파일이 5분 동안 안 보일 수 있음)</li>
+</ul>
+</details>
+</div>
+
+<div class="step" data-id="up">
+<div class="step-title">2. Airflow 띄우기</div>
+<p>Docker Desktop을 켠 뒤, 엔진이 돌고 있는지 먼저 확인합니다.</p>
+<pre><code>docker info --format "{{.ServerVersion}}"   # 숫자가 나오면 OK. 오류면 Docker Desktop 을 켜고 1분 기다리기
+docker compose up -d
+docker compose logs -f airflow</code></pre>
+<p>처음엔 이미지(약 1GB대)를 받느라 몇 분 걸립니다. 로그에 <code>Airflow is ready</code>가 보이면 <code>Ctrl+C</code>로 로그 보기만 끄고(컨테이너는 계속 돎), 브라우저에서 <a href="http://localhost:8083">http://localhost:8083</a> 을 엽니다.</p>
+<details class="hint"><summary>로그에 색깔별로 섞여 나오는 이름들</summary>
+<p><code>scheduler</code>, <code>dag-processor</code>, <code>api-server</code>, <code>triggerer</code>가 줄마다 앞에 붙어 나옵니다. 위 아키텍처 그림의 프로세스들이 실제로 따로 돌고 있다는 증거입니다. <code>standalone</code> 소스에서 이 네 개를 띄우고, 모두 준비되면 <code>Airflow is ready</code>를 찍는 것을 확인했습니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="ui">
+<div class="step-title">3. 빈 화면 둘러보기</div>
+<p>예제 DAG를 껐기 때문에(<code>LOAD_EXAMPLES=False</code>) DAG 목록이 비어 있습니다. 메뉴에서 <b>Admin</b> 아래 Variables·Connections·Pools가 있는지, 그리고 DAG 목록 화면의 위치를 눈에 익혀 두세요. 이후 단계는 이 목록에 내 DAG가 나타나는 것부터 시작합니다.</p>
+</div>
+
+<div class="step" data-id="hello">
+<div class="step-title">4. 직접 해보기: 첫 TaskFlow DAG (태스크 3개)</div>
+<p><code>dags\hello_taskflow.py</code>를 만들어 다음을 만족하게 써 보세요.</p>
+<ul>
+<li><code>dag_id="hello_taskflow"</code>, 자동 실행 없음(<code>schedule=None</code>), 시작일 2026-10-01, catchup 끔</li>
+<li><code>extract</code>: 주문 3건(<code>order_id</code>, <code>amount</code>)을 리스트로 return</li>
+<li><code>transform</code>: 받은 리스트의 amount 합계를 return</li>
+<li><code>load</code>: 합계를 print</li>
+<li>순서: extract → transform → load</li>
+</ul>
+<details class="hint"><summary>힌트 1</summary>
+<p>맨 위에 <code>import pendulum</code>, <code>from airflow.sdk import dag, task</code>. DAG 함수에 <code>@dag(...)</code>, 안쪽 함수 세 개에 <code>@task</code>를 붙입니다. 파일 맨 아래에서 DAG 함수를 한 번 불러야 합니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>순서는 <code>&gt;&gt;</code>를 쓰지 않아도, 값을 넘기는 모양 <code>load(transform(extract()))</code> 한 줄로 생깁니다. 합계는 SQL의 <code>SUM(amount)</code> = 파이썬 <code>sum(r["amount"] for r in rows)</code>.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="dags/hello_taskflow.py"><code># 5일차 첫 DAG: 태스크 3개 (extract → transform → load)
+# SQL 로 치면 "프로시저 하나를 3단계 블록으로 나누고, 단계마다 실행 기록이 남는 것"
+
+import pendulum                                  # 날짜·시간대 라이브러리 (SQL 의 TIMESTAMP WITH TIME ZONE 담당)
+from airflow.sdk import dag, task                # Airflow 3 의 DAG 작성 도구. @dag, @task 두 개만 쓴다
+
+
+@dag(                                            # 아래 함수 하나 = DAG 하나 (CREATE PROCEDURE 선언부)
+    dag_id="hello_taskflow",                     # 화면에 보이는 이름. 파일 이름과 달라도 되지만 맞추는 게 편하다
+    schedule=None,                               # 자동 실행 없음. 버튼(Trigger)으로만 돌린다
+    start_date=pendulum.datetime(2026, 10, 1, tz="Asia/Seoul"),  # 이 DAG 가 "유효해지는" 날짜
+    catchup=False,                               # 지난 날짜를 몰아서 채우지 않기
+    tags=["day5"],                               # 화면에서 거르기용 꼬리표
+)
+def hello_taskflow():                            # 이 함수 몸통은 "순서도를 그리는 코드". 데이터 처리는 안에서 안 한다
+
+    @task                                        # 이 함수 = 태스크 하나 (프로시저 안의 블록 하나)
+    def extract() -&gt; list[dict]:
+        rows = [                                 # 원래는 API·DB 에서 읽어 오는 부분. 오늘은 고정값
+            {"order_id": 1, "amount": 39000},
+            {"order_id": 2, "amount": 59000},
+            {"order_id": 3, "amount": 19000},
+        ]
+        print(f"extract: {len(rows)}건 읽음")    # print 는 태스크 로그에 그대로 찍힌다
+        return rows                              # return 값은 XCom 에 저장된다 (아주 작은 값만!)
+
+    @task
+    def transform(rows: list[dict]) -&gt; int:      # 앞 태스크의 return 값을 인자로 받는다
+        total = sum(r["amount"] for r in rows)   # SELECT SUM(amount) FROM rows
+        print(f"transform: 합계 {total}원")
+        return total
+
+    @task
+    def load(total: int) -&gt; None:
+        print(f"load: 오늘 매출 {total:,}원 을 적재했다고 칩시다")
+
+    load(transform(extract()))                   # 함수에 함수를 넘기면 순서가 생긴다: extract &gt;&gt; transform &gt;&gt; load
+
+
+hello_taskflow()                                 # 맨 아래에서 한 번 불러 줘야 Airflow 가 DAG 로 등록한다</code></pre>
+</details>
+<p>저장하고 30초쯤 기다리면 목록에 <code>hello_taskflow</code>가 나타납니다. 안 나타나면 파싱 오류부터 확인합니다.</p>
+<pre><code>docker compose exec airflow airflow dags list-import-errors   # "No data found" 면 오류 없음
+docker compose exec airflow airflow dags list</code></pre>
+</div>
+
+<div class="step" data-id="trigger">
+<div class="step-title">5. 실행하고 로그·XCom 읽기</div>
+<p>화면에서 <code>hello_taskflow</code>의 <b>토글을 켜고(unpause)</b>, <b>Trigger</b> 버튼으로 실행합니다. 실행 하나(DagRun)를 누르고 태스크 칸(TaskInstance)을 하나씩 눌러 보세요.</p>
+<ul>
+<li><b>Logs</b>: <code>print</code>한 내용이 그대로 보입니다</li>
+<li><b>XCom</b>: <code>extract</code>가 return한 리스트가 <code>return_value</code>라는 이름으로 저장돼 있습니다</li>
+<li><b>Graph</b> 보기: 세 칸이 화살표로 이어져 있는지</li>
+</ul>
+<p>같은 걸 명령으로도 할 수 있습니다. <code>dags test</code>는 스케줄러 없이 <b>그 자리에서 한 번</b> 돌려 보는 개발용 명령입니다(토글이 꺼져 있어도 됨).</p>
+<pre><code>docker compose exec airflow airflow dags test hello_taskflow</code></pre>
+<pre data-file="실측 출력 (긴 로그 중 일부)"><code>[DAG TEST] starting task_id=extract map_index=-1
+extract: 3건 읽음
+Done. Returned value was: [{'order_id': 1, 'amount': 39000}, {'order_id': 2, 'amount': 59000}, {'order_id': 3, 'amount': 19000}]
+Pushing xcom
+[DAG TEST] starting task_id=transform map_index=-1
+transform: 합계 117000원
+[DAG TEST] starting task_id=load map_index=-1
+load: 오늘 매출 117,000원 을 적재했다고 칩시다
+Marking run &lt;DagRun hello_taskflow @ 2026-11-04 06:57:38 ...: manual__2026-11-04T06:57:38...&gt; successful</code></pre>
+<p>로그 파일은 내 PC의 <code>logs\dag_id=hello_taskflow\run_id=…\task_id=extract\attempt=1.log</code>에도 생깁니다(경로 규칙은 3.3.2 기본 설정 <code>log_filename_template</code>).</p>
+</div>
+
+<div class="step" data-id="partition">
+<div class="step-title">6. 직접 해보기: 날짜별 파일을 멱등하게 쓰는 DAG</div>
+<p><code>dags\daily_orders_partition.py</code>를 만듭니다. 요구사항:</p>
+<ul>
+<li>스케줄: 매일 00:00 UTC, <b>구간 있는</b> 시간표(<code>CronDataIntervalTimetable</code>), 시작일 2026-10-01 UTC, catchup 끔</li>
+<li><code>show_dates</code>: logical_date·data_interval_start·data_interval_end·ds를 print</li>
+<li><code>extract_day</code>: <code>/opt/airflow/data/raw_orders.csv</code>에서 <code>order_date == ds</code>인 행만 골라 <code>/opt/airflow/output/orders/dt={ds}/orders.csv</code>로 저장. <b>같은 날짜로 다시 돌리면 파일을 통째로 교체</b>. 경로를 return</li>
+<li><code>check</code>: 경로를 받아 행 수를 세어 print</li>
+<li><code>list_files</code>: BashOperator로 <code>ls -l …/dt={{ ds }}</code></li>
+<li>순서: show_dates → extract_day → check → list_files</li>
+</ul>
+<details class="hint"><summary>힌트 1 — 날짜 받기</summary>
+<p><code>@task</code> 함수 인자 이름을 <code>ds=None</code>으로 두면 Airflow가 채워 줍니다. 시간표는 <code>from airflow.sdk import CronDataIntervalTimetable</code> 후 <code>schedule=CronDataIntervalTimetable("0 0 * * *", timezone="UTC")</code>.</p>
+</details>
+<details class="hint"><summary>힌트 2 — 멱등하게 쓰기</summary>
+<p>CSV는 표준 모듈 <code>csv.DictReader</code>로 읽고(<code>FROM</code>), 리스트 컴프리헨션의 <code>if</code>로 거르고(<code>WHERE</code>), <code>csv.DictWriter</code>로 씁니다. 먼저 <code>orders.csv.tmp</code>에 쓰고 마지막에 <code>os.replace(tmp, final)</code>로 이름을 바꾸면 "통째로 교체(DELETE+INSERT)"이면서 중간에 죽어도 반쪽 파일이 남지 않습니다. 폴더는 <code>os.makedirs(..., exist_ok=True)</code>.</p>
+</details>
+<details class="hint"><summary>힌트 3 — 순서 잇기</summary>
+<p><code>path = extract_day()</code>로 받아 두고 <code>show_dates() &gt;&gt; path</code>, <code>check(path) &gt;&gt; list_files</code>. <code>show_dates() &gt;&gt; check(extract_day())</code>처럼 한 줄로 쓰면 show_dates가 check 앞에만 붙고 extract_day 앞에는 안 붙습니다(작성자가 실제로 처음에 이렇게 틀렸습니다).</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="dags/daily_orders_partition.py"><code># 5일차: logical date 별로 파일을 "덮어써서" 멱등하게 만드는 DAG
+# 프로시저로 치면:  DELETE FROM t WHERE dt = p_date;  INSERT INTO t SELECT ... WHERE order_date = p_date;
+# p_date 를 사람이 넣는 대신 Airflow 가 실행마다 {{ ds }} 로 넣어 준다.
+
+import csv                                       # CSV 읽기·쓰기 (표준 라이브러리, 설치 필요 없음)
+import os                                        # 폴더 만들기·파일 이름 바꾸기
+import pendulum
+from airflow.sdk import dag, task, get_current_context, CronDataIntervalTimetable  # CronDataIntervalTimetable = "구간"이 있는 스케줄 (본문 참고)
+from airflow.providers.standard.operators.bash import BashOperator   # 셸 명령을 돌리는 전통적인 Operator
+
+SRC = "/opt/airflow/data/raw_orders.csv"         # 입력: 컨테이너 안 경로 (내 PC 의 practice/airflow/data)
+OUT_ROOT = "/opt/airflow/output/orders"          # 출력: dt=YYYY-MM-DD 폴더를 날짜마다 하나씩
+
+
+@dag(
+    dag_id="daily_orders_partition",
+    # 매일 00:00(UTC, 한국 09:00)에 "어제 하루" 구간을 처리한다. ds = 구간 시작 날짜 = 처리할 데이터의 날짜
+    # 시간대를 UTC 로 둔 이유: ds 는 UTC 기준으로 계산된다. 서울 00:00 으로 잡으면 ds 가 하루 전 날짜로 찍힌다 (본문 참고)
+    schedule=CronDataIntervalTimetable("0 0 * * *", timezone="UTC"),
+    start_date=pendulum.datetime(2026, 10, 1, tz="UTC"),
+    catchup=False,                               # 켜면 10-01 부터 오늘까지 전부 자동 실행된다 (백필로 따로 해 볼 것)
+    max_active_runs=3,                           # 백필 때 동시에 도는 날짜 수 상한
+    params={"min_amount": 0},                    # 수동 실행 때 화면에서 바꿀 수 있는 값 (SQL 의 프로시저 인자 기본값)
+    tags=["day5"],
+)
+def daily_orders_partition():
+
+    @task
+    def show_dates(ds=None, data_interval_start=None, data_interval_end=None, logical_date=None):
+        # 인자 이름을 컨텍스트 키와 똑같이 적으면 Airflow 가 값을 채워 준다
+        print(f"logical_date        = {logical_date}")
+        print(f"data_interval_start = {data_interval_start}")
+        print(f"data_interval_end   = {data_interval_end}")
+        print(f"ds                  = {ds}")
+
+    @task
+    def extract_day(ds=None) -&gt; str:
+        out_dir = f"{OUT_ROOT}/dt={ds}"          # 파티션 폴더: ... /dt=2026-10-03
+        os.makedirs(out_dir, exist_ok=True)      # 있으면 그냥 두고, 없으면 만든다 (CREATE SCHEMA IF NOT EXISTS)
+        tmp = f"{out_dir}/orders.csv.tmp"        # 먼저 임시 파일에 쓰고
+        final = f"{out_dir}/orders.csv"          # 다 쓰면 진짜 이름으로 바꾼다 (중간에 죽어도 반쪽 파일이 안 남게)
+
+        with open(SRC, newline="", encoding="utf-8") as f:   # FROM raw_orders
+            rows = [r for r in csv.DictReader(f)             # 한 줄씩 dict 로 읽어서
+                    if r["order_date"] == ds]                # WHERE order_date = ds
+
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["order_id", "customer_id", "order_date", "status"],
+                               extrasaction="ignore")        # SELECT 할 컬럼만 (updated_at 은 버림)
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(tmp, final)                   # 같은 날짜 파일이 있으면 통째로 교체 = DELETE + INSERT
+
+        print(f"{ds}: {len(rows)}건 → {final}")
+        return final                             # XCom 에는 "파일 경로"만 넘긴다 (데이터 자체는 X)
+
+    @task
+    def check(path: str) -&gt; int:
+        ctx = get_current_context()              # 컨텍스트 전체가 필요할 때 꺼내는 방법
+        min_amount = ctx["params"]["min_amount"] # params 읽기 (지금은 출력만)
+        with open(path, encoding="utf-8") as f:
+            n = sum(1 for _ in f) - 1            # 헤더 한 줄 빼고 줄 수 = COUNT(*)
+        print(f"검사: {path} 에 {n}건 (params.min_amount={min_amount})")
+        return n
+
+    # 전통적인 Operator 방식 태스크. bash_command 안의 {{ ds }} 는 실행 직전에 날짜로 바뀐다 (템플릿)
+    list_files = BashOperator(
+        task_id="list_files",
+        bash_command="ls -l {{ params.out_root }}/dt={{ ds }}",
+        params={"out_root": OUT_ROOT},
+    )
+
+    path = extract_day()                         # 태스크를 "부르면" 실행되는 게 아니라 순서도에 칸이 하나 생긴다
+    show_dates() &gt;&gt; path                         # show_dates 가 끝나야 extract_day 시작
+    check(path) &gt;&gt; list_files                    # extract_day → check → list_files
+
+
+daily_orders_partition()</code></pre>
+</details>
+</div>
+
+<div class="step" data-id="idempotent">
+<div class="step-title">7. 같은 날짜를 두 번 돌려 멱등성 확인</div>
+<pre><code>docker compose exec airflow airflow dags test daily_orders_partition 2026-10-05
+docker compose exec airflow airflow dags test daily_orders_partition 2026-10-05
+Get-Content output\orders\dt=2026-10-05\orders.csv</code></pre>
+<pre data-file="실측 (두 번 모두 같은 줄, 파일 내용도 1건 그대로)"><code>ds                  = 2026-10-05
+2026-10-05: 1건 → /opt/airflow/output/orders/dt=2026-10-05/orders.csv
+ds                  = 2026-10-05
+2026-10-05: 1건 → /opt/airflow/output/orders/dt=2026-10-05/orders.csv
+
+order_id,customer_id,order_date,status
+8,6,2026-10-05,completed</code></pre>
+<p>(실측은 Windows 경로로 찍혔고, 컨테이너에서는 위처럼 <code>/opt/airflow/...</code>로 나옵니다.) 이번엔 <code>extract_day</code>를 일부러 망가뜨려 보세요. <code>os.replace</code> 대신 <code>open(final, "a")</code>(append)로 바꿔 두 번 돌리면 같은 행이 두 번 쌓입니다. 확인했으면 원래대로 돌려놓습니다.</p>
+</div>
+
+<div class="step" data-id="dates">
+<div class="step-title">8. logical date 눈으로 확인하기</div>
+<p>화면에서 <code>daily_orders_partition</code> 토글을 켜세요. catchup이 꺼져 있으니 <b>가장 최근 구간 하나</b>만 바로 돕니다. 그 실행의 <code>show_dates</code> 로그를 열고, 아래 질문에 먼저 답한 뒤 확인합니다.</p>
+<ol>
+<li>오늘(실습하는 날) 09:00 KST 이후라면 <code>ds</code>는 며칠일까? (힌트: 00:00 UTC = 09:00 KST, 직전 구간)</li>
+<li><code>data_interval_end</code>와 실제 실행 시각은 얼마나 차이 날까?</li>
+<li><code>output\orders</code> 아래에 어떤 폴더가 생겼고, 그 날짜에 주문이 없으면 파일 내용은?</li>
+</ol>
+<details class="hint"><summary>답 확인</summary>
+<p>1) 어제 날짜(UTC). 2) 거의 같거나 몇 초 뒤 — 구간이 끝난 직후 돌기 때문. 3) <code>dt=어제날짜</code> 폴더, 실습 데이터는 10월 19일까지만 있어서 헤더 한 줄짜리 파일(0건)이 생깁니다. 데이터가 없어도 "빈 파티션"을 만드는 것도 멱등 설계의 일부입니다 — "안 돌았다"와 "돌았는데 0건"이 구분되니까요.</p>
+</details>
+</div>
+
+<div class="step" data-id="backfill">
+<div class="step-title">9. 백필: 10월 1~5일 다시 만들기</div>
+<p>먼저 어떤 실행이 만들어질지 봅니다.</p>
+<pre><code>docker compose exec airflow airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --dry-run</code></pre>
+<p>7단계에서 10-05를 <code>dags test</code>로 돌렸다면 그 날짜는 목록에서 빠질 수 있습니다(기록이 있으면 건너뛰는 기본 동작 — 이론 절의 실측 참고). 전부 다시 만들려면 <code>--reprocess-behavior completed</code>를 붙입니다. 이제 <code>--dry-run</code>을 빼고 실제로 실행합니다. <b>DAG 토글이 켜져 있어야</b> 돕니다.</p>
+<pre><code>docker compose exec airflow airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --reprocess-behavior completed
+Get-ChildItem output\orders</code></pre>
+<p>화면에서 실행 목록에 백필 실행들이 생기고(<code>max_active_runs=3</code>이라 최대 3개씩 동시에), 끝나면 <code>dt=2026-10-01</code>~<code>dt=2026-10-05</code> 폴더가 있어야 합니다. 원본 기준 건수는 10-01: 2, 10-02: 2, 10-03: 1, 10-04: 2, 10-05: 1건입니다.</p>
+<details class="hint"><summary>이 단계에서 확인할 것 (실제 스케줄러 실행은 작성자가 검증하지 못함)</summary>
+<p>각 백필 실행의 <code>show_dates</code> 로그에서 <code>ds</code>가 그 날짜와 같고, <code>data_interval_start</code>도 같은 날짜 00:00인지 보세요. 구간 시간표의 스케줄·백필 실행에서는 둘이 같아야 합니다(시간표 계산은 실측 확인). 만약 하루씩 어긋나 있다면 이 페이지의 설명이 틀린 것이니 알려 주세요.</p>
+</details>
+</div>
+
+<div class="step" data-id="stop">
+<div class="step-title">10. 정리하고 끄기</div>
+<pre><code>docker compose stop        # 컨테이너 멈춤. 실행 기록(SQLite)은 컨테이너 안에 남아 있음
+# docker compose down      # 컨테이너 삭제 → 실행 기록도 사라짐. DAG 파일·output·logs 는 내 PC 에 남음</code></pre>
+<p>내일은 <code>docker compose start</code>(또는 <code>up -d</code>)로 이어서 합니다.</p>
+</div>
+
+</div>
+
+<div class="box warn">
+<span class="box-title">자주 막히는 곳</span>
+<ul>
+<li><b>DAG가 목록에 안 나온다</b> → ① 30초 기다림 ② <code>airflow dags list-import-errors</code> ③ 파일 맨 아래에서 DAG 함수를 불렀는지 ④ 파일이 정말 <code>dags</code> 폴더에 있는지(<code>docker compose exec airflow ls /opt/airflow/dags</code>)</li>
+<li><b>Trigger 했는데 queued에서 안 움직인다</b> → DAG 토글이 꺼져(paused) 있습니다.</li>
+<li><b><code>ModuleNotFoundError: airflow.decorators</code> 등</b> → Airflow 2 예제를 옮긴 것. <code>from airflow.sdk import dag, task</code>, <code>schedule=</code>로 바꾸세요.</li>
+<li><b>날짜가 하루 어긋난다</b> → 시간표가 <code>"@daily"</code>(구간 없음)인지 <code>CronDataIntervalTimetable</code>인지, 시간대가 서울인지 UTC인지 확인. <code>show_dates</code> 같은 태스크를 하나 두면 원인을 바로 봅니다.</li>
+<li><b>포트 충돌 <code>bind: address already in use</code></b> → 8083을 다른 프로그램이 쓰고 있습니다. compose의 <code>"8083:8080"</code> 왼쪽 숫자를 바꾸세요.</li>
+<li><b>로그에 <code>FileNotFoundError: /opt/airflow/data/raw_orders.csv</code></b> → 1단계의 <code>Copy-Item</code>을 빼먹었거나 다른 폴더에서 <code>docker compose up</code>을 했습니다.</li>
+</ul>
+</div>
+
+<h2 id="recap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+Airflow는 <b>순서도(DAG)를 실행 기록(DagRun·TaskInstance)으로 바꿔 주는 지휘자</b>이고, 각 실행은 "몇 일분인가"(logical date)로 이름 붙습니다. 그래서 태스크는 <b><code>ds</code>로 날짜를 받고, 그 날짜 칸만 통째로 바꾸는(멱등)</b> 모양이어야 재시도·백필을 안심하고 쓸 수 있습니다.
+</div>
+
+<ul>
+<li>cron은 시간만, 오케스트레이터는 의존성·재시도·백필·기록까지</li>
+<li>DAG(순서도) → DagRun(1회 실행) → TaskInstance(태스크 1회 실행)</li>
+<li>dag-processor 읽기 / scheduler 정하기 / executor·worker 실행 / api-server 화면·중계 / 메타DB 기억 / triggerer 기다리기</li>
+<li>구간 시간표: <code>ds</code> = 구간 시작 날짜. Airflow 3 <code>"@daily"</code>: <code>ds</code> = 도는 날. <code>ds</code>는 UTC</li>
+<li>catchup은 자동 밀린 숙제, 백필은 명시적 재처리(<code>airflow backfill create</code>, 먼저 <code>--dry-run</code>)</li>
+<li>XCom에는 쪽지(경로·건수)만</li>
+</ul>
+
+<h3>스스로 설명해 보기</h3>
+<p>노트를 보지 않고 소리 내어 답해 보세요. 막히면 위로 돌아가 다시 읽습니다.</p>
+<ol>
+<li>구간 시간표로 매일 00:00 UTC에 도는 DAG의 "10월 4일 00:00 실행"에서 <code>ds</code>는 무엇이고, 왜 그런가요?</li>
+<li>예약 쿼리 <code>CALL sp(CURRENT_DATE()-1)</code>로는 백필이 왜 불편하고, Airflow는 무엇이 달라서 쉬운가요?</li>
+<li>재시도와 백필이 있는 환경에서 INSERT만 하는 태스크는 어떤 사고를 내나요? 어떻게 고치나요?</li>
+</ol>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="2">
+<p class="q-text">원천 적재(cron 05:00)와 마트 프로시저(예약 쿼리 06:00)를 시간 간격으로만 맞춰 둔 구조의 가장 큰 약점은?</p>
+<ol class="q-opts">
+<li>SQL을 두 번 써야 한다</li>
+<li>적재가 늦게 끝나면 프로시저가 반쪽 데이터로 돈다 — 순서가 "성공"이 아니라 "시각"으로만 이어져 있다</li>
+<li>BigQuery 비용이 두 배가 된다</li>
+<li>cron은 하루 한 번만 돌릴 수 있다</li>
+</ol>
+<div class="q-explain">시간 간격은 "앞 작업이 끝났다"를 보장하지 않습니다. 오케스트레이터는 "앞 태스크가 success면 시작"이라는 의존성으로 이 문제를 없앱니다. 비용·SQL 중복은 이 구조의 본질적인 문제가 아니고, cron은 하루 여러 번도 돌릴 수 있습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">DAG 파일의 태스크 함수 <b>바깥</b> 맨 위에 <code>rows = requests.get(API).json()</code>를 적었습니다. 어떤 일이 생기나요?</p>
+<ol class="q-opts">
+<li>DAG가 실행될 때 한 번만 호출된다</li>
+<li>첫 번째 태스크가 시작될 때 호출된다</li>
+<li>Airflow가 오류를 내고 막아 준다</li>
+<li>dag-processor가 파일을 읽을 때마다(수십 초~몇 분 간격) 계속 호출된다</li>
+</ol>
+<div class="q-explain">DAG 파일은 "순서도를 그리는 코드"라서 파싱할 때마다 맨 위 코드가 실행됩니다. 실행할 때 한 번이 아니라 <b>읽을 때마다</b>입니다. 실제 작업은 태스크 함수 안에서만 해야 합니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text"><code>CronDataIntervalTimetable("0 0 * * *", timezone="UTC")</code> DAG가 2026-10-04 00:00 UTC에 스케줄로 돌았습니다. 이 실행의 <code>{{ ds }}</code>는?</p>
+<ol class="q-opts">
+<li><code>2026-10-03</code></li>
+<li><code>2026-10-04</code></li>
+<li><code>2026-10-05</code></li>
+<li>실행할 때마다 달라진다</li>
+</ol>
+<div class="q-explain">구간 시간표는 직전 구간 [10-03 00:00, 10-04 00:00)을 처리하고, logical_date = 구간 시작 = 10-03 00:00입니다. ds는 그 날짜 부분이라 2026-10-03. 실행 시각(10-04)과 다르다는 게 핵심입니다. 같은 실행을 나중에 다시 돌려도 ds는 그대로라서 ④도 틀립니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">Airflow 3에서 <code>schedule="@daily"</code>로만 적은 DAG가 2026-10-04 00:00에 돌았습니다. 어제(10-03) 데이터를 처리하려면?</p>
+<ol class="q-opts">
+<li><code>{{ ds }}</code>를 그대로 쓰면 10-03이 나온다</li>
+<li><code>datetime.now() - 1일</code>로 계산한다</li>
+<li><code>{{ macros.ds_add(ds, -1) }}</code>처럼 하루를 빼거나, 구간 시간표(<code>CronDataIntervalTimetable</code>)로 바꾼다</li>
+<li><code>catchup=True</code>로 바꾼다</li>
+</ol>
+<div class="q-explain">Airflow 3에서 cron 문자열은 기본적으로 CronTriggerTimetable이 되어 logical_date = 실행 시각, ds = 10-04입니다(실측). 그래서 하루를 빼거나 구간 시간표를 명시해야 합니다. now()는 재실행·백필 때 엉뚱한 날짜가 되니 금지이고, catchup은 날짜 의미와 상관없습니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text"><code>airflow backfill create ... --from-date 2026-10-01 --to-date 2026-10-05 --dry-run</code> 결과에 10-03만 빠져 있습니다. 가장 그럴듯한 이유는?</p>
+<ol class="q-opts">
+<li>10-03에 원본 주문이 없어서</li>
+<li>10-03 logical date로 이미 실행 기록이 있고, 기본값 <code>--reprocess-behavior none</code>이 이를 건너뛰어서</li>
+<li><code>--to-date</code>가 포함되지 않는 범위라서</li>
+<li>DAG가 꺼져 있어서</li>
+</ol>
+<div class="q-explain">실측에서 그대로 본 상황입니다. 기록이 있는 날짜는 기본적으로 건너뛰고, <code>--reprocess-behavior completed</code>를 주면 포함됩니다. Airflow는 원본 데이터 유무를 모르며, to-date는 포함 범위이고, paused 여부는 목록 생성과 무관합니다(실제 실행에는 영향).</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">다음 중 <b>멱등한</b> 태스크는?</p>
+<ol class="q-opts">
+<li><code>INSERT INTO t SELECT ... WHERE dt = '{{ ds }}'</code></li>
+<li>오늘 날짜(<code>now()</code>) 폴더에 결과 파일을 덮어쓰기</li>
+<li>결과를 <code>orders.csv</code>에 append 모드로 이어 쓰기</li>
+<li><code>dt={{ ds }}/</code> 폴더의 파일을 임시 파일로 쓴 뒤 통째로 교체하기</li>
+</ol>
+<div class="q-explain">④는 그 날짜 칸만 통째로 바꾸므로 몇 번 돌려도 같습니다(DELETE+INSERT와 같은 효과). ①③은 돌릴 때마다 쌓이고, ②는 덮어쓰기는 하지만 날짜를 now()로 정해서 재실행·백필 때 다른 날짜를 건드립니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">XCom 사용으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>10만 행 데이터프레임을 다음 태스크로 넘긴다</li>
+<li>DB 비밀번호를 태스크 간에 넘긴다</li>
+<li>방금 쓴 파일 경로와 행 수를 넘긴다</li>
+<li>DAG 사이에 대용량 파일을 복사한다</li>
+</ol>
+<div class="q-explain">XCom은 메타DB에 저장되는 작은 쪽지입니다. 데이터는 저장소에 두고 위치·건수만 넘깁니다. 큰 데이터는 DB를 무겁게 하고 실패를 부르며, 비밀번호는 Connection·Secret으로 관리합니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">Airflow 3에서 사용자의 웹 화면과, 워커가 태스크 상태·XCom을 보고하는 창구를 함께 맡는 구성 요소는?</p>
+<ol class="q-opts">
+<li>api-server</li>
+<li>dag-processor</li>
+<li>triggerer</li>
+<li>scheduler</li>
+</ol>
+<div class="q-explain">Airflow 3의 api-server는 UI·REST API와 함께 태스크용 실행 API를 제공하고, 워커는 메타DB에 직접 붙지 않고 이 API를 거칩니다. dag-processor는 DAG 파일 파싱, triggerer는 긴 대기, scheduler는 실행 시점 결정과 대기열 담당입니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

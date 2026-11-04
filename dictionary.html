@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>프로시저 ↔ dbt 사전</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="dict">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">참고 자료 · dbt</div>
+<h1>프로시저 ↔ dbt 사전</h1>
+<p class="lead">"프로시저에서는 이렇게 했는데, dbt에서는 뭐라고 하지?" 가 떠오를 때 찾아보는 페이지입니다. 왼쪽이 BigQuery 프로시저, 오른쪽이 dbt입니다.</p>
+<p class="meta-line">처음부터 읽기보다, 필요한 항목을 목차에서 골라 보세요. 자세한 설명은 각 일차 페이지에 있습니다.</p>
+
+<h2 id="map">한눈에 보는 대응표</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th>프로시저에서 하던 것</th><th>dbt에서는</th><th>배우는 곳</th></tr>
+<tr><td><code>CREATE TEMP TABLE</code> 로 단계 나누기</td><td>CTE, <code>ephemeral</code> 모델, intermediate 모델</td><td>2일차</td></tr>
+<tr><td><code>CREATE OR REPLACE TABLE ... AS</code></td><td><code>materialized='table'</code> (뷰는 <code>'view'</code>)</td><td>1·2일차</td></tr>
+<tr><td>날짜 단위 <code>DELETE</code> 후 <code>INSERT</code></td><td>incremental <code>delete+insert</code> / <code>insert_overwrite</code> / <code>microbatch</code></td><td>4일차</td></tr>
+<tr><td><code>MERGE</code></td><td>incremental <code>merge</code> + <code>unique_key</code></td><td>4일차</td></tr>
+<tr><td>이력 테이블(SCD2) 직접 관리</td><td><code>snapshot</code></td><td>4일차</td></tr>
+<tr><td>파라미터 <code>p_date</code>, <code>DECLARE</code></td><td><code>var()</code>, <code>env_var()</code>, Jinja <code>{% set %}</code></td><td>4일차</td></tr>
+<tr><td><code>IF</code>·<code>LOOP</code>·<code>EXECUTE IMMEDIATE</code></td><td>Jinja <code>{% if %}</code>·<code>{% for %}</code>, <code>run_query()</code></td><td>4일차</td></tr>
+<tr><td>공통 SQL 조각·UDF</td><td>매크로(<code>macros/</code>), 패키지(<code>dbt_utils</code>)</td><td>4일차</td></tr>
+<tr><td><code>ASSERT</code>, 검증 쿼리, <code>RAISE</code></td><td>테스트(<code>data_tests</code>), <code>severity</code>, contract</td><td>3일차</td></tr>
+<tr><td>로그 테이블에 <code>INSERT</code></td><td><code>target/run_results.json</code> 등 아티팩트, <code>on-run-end</code> 훅</td><td>3·6일차</td></tr>
+<tr><td>실행 전후 SQL</td><td><code>pre_hook</code> / <code>post_hook</code></td><td>이 페이지</td></tr>
+<tr><td>스케줄 쿼리, cron</td><td>Airflow (dbt Core에는 스케줄러 없음)</td><td>5·6일차</td></tr>
+<tr><td><code>GRANT SELECT ...</code></td><td><code>grants</code> 설정</td><td>이 페이지</td></tr>
+<tr><td>엑셀 정의서, <code>COMMENT</code></td><td>YAML <code>description</code>, <code>dbt docs</code>, <code>persist_docs</code></td><td>3일차</td></tr>
+<tr><td>개발용·운영용 데이터셋 바꿔 치기</td><td>target(dev/prod), <code>generate_schema_name</code></td><td>4·6일차</td></tr>
+<tr><td>프로시저 호출 순서표</td><td><code>ref()</code> 가 만든 DAG + 선택자(<code>+model</code>)</td><td>2일차</td></tr>
+</table>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+프로시저는 <b>"어떻게"</b>(DDL·DML·순서)를 사람이 적고, dbt는 <b>"무엇"</b>(SELECT)만 적으면 나머지를 설정과 Jinja로 dbt가 채웁니다. 대부분의 프로시저 문법은 "설정 한 줄" 또는 "Jinja 한 줄"로 바뀝니다.
+</div>
+
+<h2 id="temp">임시 테이블 → CTE·ephemeral·intermediate</h2>
+
+<p>프로시저 안의 <code>CREATE TEMP TABLE</code>은 "중간 결과에 이름 붙이기"입니다. dbt에는 그 이름을 붙이는 방법이 세 가지 있고, <b>얼마나 여러 곳에서 다시 쓰는지</b>로 고릅니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>CREATE TEMP TABLE tmp_pay AS
+SELECT order_id, SUM(amount) AS amount
+FROM raw.payments
+GROUP BY order_id;
+
+SELECT o.order_id, p.amount
+FROM raw.orders o
+JOIN tmp_pay p USING (order_id);</code></pre>
+</div>
+<div>
+<div class="label">dbt ① 한 모델 안에서만 쓰면: CTE</div>
+<pre data-file="models/marts/fct_orders.sql"><code>with pay as (
+    select order_id, sum(amount) as amount
+    from {{ ref('stg_payments') }}
+    group by order_id
+)
+select o.order_id, p.amount
+from {{ ref('stg_orders') }} o
+join pay p using (order_id)</code></pre>
+</div>
+</div>
+
+<div class="compare">
+<div>
+<div class="label">dbt ② 여러 모델이 쓰지만 테이블은 필요 없으면: ephemeral</div>
+<pre data-file="models/intermediate/int_order_payments.sql"><code>{{ config(materialized='ephemeral') }}
+
+select order_id, sum(amount) as total_amount
+from {{ ref('stg_payments') }}
+group by order_id</code></pre>
+<p>DB에 아무것도 만들지 않고, 이 모델을 <code>ref()</code> 하는 쪽 SQL에 CTE로 끼워 넣어집니다.</p>
+</div>
+<div>
+<div class="label">dbt ③ 여러 모델이 쓰고 확인도 하고 싶으면: intermediate 모델(view/table)</div>
+<pre data-file="dbt_project.yml"><code>models:
+  shop:
+    intermediate:
+      +materialized: view</code></pre>
+<p>DB에 뷰가 생기므로 DBeaver 같은 다른 도구에서도 바로 조회할 수 있습니다.</p>
+</div>
+</div>
+
+<div class="box tip">
+<span class="box-title">고르는 기준</span>
+<p>한 곳에서만 쓰면 CTE → 두 곳 이상이면 별도 모델. 이 강의의 <code>shop</code> 프로젝트는 intermediate 폴더를 <code>ephemeral</code>로 둡니다. ephemeral도 <code>dbt show</code>로 결과를 볼 수 있고 테스트도 붙일 수 있지만(dbt가 CTE로 감싸서 실행), DB에 남는 객체가 없어서 <code>dbt run</code>을 해도 아무것도 안 생기고 다른 도구에서는 조회할 수 없습니다. 자주 들여다봐야 하면 view가 편합니다.</p>
+</div>
+
+<h2 id="create">CREATE OR REPLACE → materialized table·view</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>CREATE OR REPLACE TABLE dm.dim_customers AS
+SELECT c.customer_id, c.customer_name,
+       COUNT(o.order_id) AS order_count
+FROM stg.customers c
+LEFT JOIN stg.orders o USING (customer_id)
+GROUP BY 1, 2;</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="models/marts/dim_customers.sql"><code>{{ config(materialized='table') }}
+
+select c.customer_id, c.customer_name,
+       count(o.order_id) as order_count
+from {{ ref('stg_customers') }} c
+left join {{ ref('stg_orders') }} o using (customer_id)
+group by 1, 2</code></pre>
+</div>
+</div>
+
+<p>테이블 이름(<code>dim_customers</code>)은 파일 이름에서, 데이터셋(스키마)은 profiles.yml의 <code>schema</code>(BigQuery는 <code>dataset</code>)에서 옵니다. 폴더 단위로 한꺼번에 정하려면 <code>dbt_project.yml</code>에 <code>+materialized: table</code>을 씁니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>materialization</th><th>dbt가 보내는 SQL(대략)</th><th>언제</th></tr>
+<tr><td><code>view</code></td><td><code>CREATE OR REPLACE VIEW ... AS SELECT</code></td><td>staging처럼 가볍고 늘 최신이어야 할 때</td></tr>
+<tr><td><code>table</code></td><td><code>CREATE OR REPLACE TABLE ... AS SELECT</code> (어댑터에 따라 임시 이름으로 만든 뒤 바꿔 치기)</td><td>marts처럼 많이 조회될 때</td></tr>
+<tr><td><code>incremental</code></td><td>처음엔 <code>CREATE TABLE AS</code>, 그다음부터 <code>MERGE</code>/<code>DELETE+INSERT</code>/<code>INSERT</code></td><td>크고, 매번 다 다시 만들기 아까울 때</td></tr>
+<tr><td><code>ephemeral</code></td><td>없음 (CTE로 끼워 넣음)</td><td>재사용용 중간 단계</td></tr>
+<tr><td><code>materialized_view</code></td><td><code>CREATE MATERIALIZED VIEW</code></td><td>DB가 지원할 때(BigQuery 지원, DuckDB 미지원)</td></tr>
+</table>
+</div>
+
+<h2 id="delete-insert">날짜별 DELETE + INSERT → incremental</h2>
+
+<p>가장 흔한 프로시저 패턴입니다. "그날 것만 지우고 다시 넣는다". dbt에서는 <code>incremental</code> 모델 + 전략(<code>incremental_strategy</code>)으로 표현합니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>DELETE FROM dm.daily_sales
+WHERE order_date = p_date;
+
+INSERT INTO dm.daily_sales
+SELECT order_date, COUNT(*) AS orders,
+       SUM(amount) AS revenue
+FROM stg.orders
+WHERE order_date = p_date
+GROUP BY order_date;</code></pre>
+</div>
+<div>
+<div class="label">dbt (delete+insert)</div>
+<pre data-file="models/marts/daily_sales.sql"><code>{{ config(
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key='order_date'
+) }}
+
+select order_date, count(*) as orders,
+       sum(total_amount) as revenue
+from {{ ref('fct_orders') }}
+{% if is_incremental() %}
+where order_date &gt;= (select max(order_date) - interval 3 day
+                     from {{ this }})
+{% endif %}
+group by order_date</code></pre>
+</div>
+</div>
+
+<p><code>unique_key</code>에 적은 값(여기선 날짜)과 같은 행을 기존 테이블에서 지우고, 새 결과를 넣습니다. BigQuery에서는 파티션 통째로 갈아 끼우는 <code>insert_overwrite</code>가 더 싸고 빠른 경우가 많습니다.</p>
+
+<pre data-file="BigQuery에서 파티션 단위 교체"><code>{{ config(
+    materialized='incremental',
+    incremental_strategy='insert_overwrite',
+    partition_by={'field': 'order_date', 'data_type': 'date'}
+) }}</code></pre>
+
+<div class="box proc">
+<span class="box-title">p_date는 어디로?</span>
+<p>프로시저는 "오늘 처리할 날짜"를 밖에서 받습니다. dbt incremental은 보통 <b>대상 테이블의 최댓값(<code>{{ this }}</code>)</b>을 보고 스스로 범위를 정합니다. 밖에서 날짜를 꼭 받아야 하면 <code>var()</code>를 쓰거나(아래 "파라미터" 항목), 1.9+의 <code>microbatch</code> 전략을 씁니다 — <code>dbt run --event-time-start 2026-10-01 --event-time-end 2026-10-05</code> 처럼 날짜 구간을 넘기면 하루씩 나눠 돌려 줍니다.</p>
+</div>
+
+<h2 id="merge">MERGE → incremental merge</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>MERGE dm.fct_orders t
+USING (
+  SELECT * FROM stg.orders
+  WHERE updated_at &gt;= TIMESTAMP_SUB(
+    CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+) s
+ON t.order_id = s.order_id
+WHEN MATCHED THEN UPDATE SET
+  status = s.status, updated_at = s.updated_at
+WHEN NOT MATCHED THEN INSERT ROW;</code></pre>
+</div>
+<div>
+<div class="label">dbt (merge)</div>
+<pre data-file="models/marts/fct_orders.sql"><code>{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='order_id'
+) }}
+
+select order_id, customer_id, order_date,
+       status, updated_at
+from {{ ref('stg_orders') }}
+{% if is_incremental() %}
+where updated_at &gt; (select max(updated_at)
+                    from {{ this }})
+{% endif %}</code></pre>
+</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>MERGE의 부분</th><th>dbt에서 어디에</th></tr>
+<tr><td><code>MERGE dm.fct_orders t</code></td><td>파일 이름 + <code>materialized='incremental'</code></td></tr>
+<tr><td><code>USING (...) s</code></td><td>모델의 SELECT (<code>is_incremental()</code> 블록 포함)</td></tr>
+<tr><td><code>ON t.order_id = s.order_id</code></td><td><code>unique_key='order_id'</code> (여러 컬럼이면 리스트)</td></tr>
+<tr><td><code>WHEN MATCHED THEN UPDATE SET ...</code></td><td>기본은 전체 컬럼. 일부만 바꾸려면 <code>merge_update_columns=['status','updated_at']</code></td></tr>
+<tr><td><code>WHEN NOT MATCHED THEN INSERT</code></td><td>자동</td></tr>
+<tr><td>처음 실행 때 테이블 만들기</td><td>자동 (<code>is_incremental()</code>이 거짓 → 전체 SELECT로 <code>CREATE TABLE AS</code>)</td></tr>
+<tr><td>테이블 통째로 다시 만들기</td><td><code>dbt run --full-refresh -s fct_orders</code></td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">조심</span>
+<p>필터 컬럼을 <b>무엇으로</b> 잡느냐가 핵심입니다. <code>order_date</code>로 잡으면 "예전 주문의 상태가 오늘 바뀐 것"을 놓칩니다. 바뀐 시각(<code>updated_at</code>)으로 잡아야 합니다. 4일차 실습에서 직접 겪어 봅니다.</p>
+</div>
+
+<h2 id="scd2">이력 테이블(SCD2) → snapshot</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저 (직접 관리하는 이력 테이블)</div>
+<pre><code>-- 1) 바뀐 고객의 현재 행 닫기
+UPDATE dm.customers_hist h
+SET valid_to = CURRENT_TIMESTAMP()
+FROM stg.customers s
+WHERE h.customer_id = s.customer_id
+  AND h.valid_to IS NULL
+  AND s.updated_at &gt; h.updated_at;
+
+-- 2) 새 버전(또는 신규 고객) 넣기
+INSERT INTO dm.customers_hist
+SELECT s.*, s.updated_at AS valid_from,
+       NULL AS valid_to
+FROM stg.customers s
+LEFT JOIN dm.customers_hist h
+  ON h.customer_id = s.customer_id
+ AND h.valid_to IS NULL
+WHERE h.customer_id IS NULL;</code></pre>
+</div>
+<div>
+<div class="label">dbt (YAML snapshot, 1.9+)</div>
+<pre data-file="snapshots/snapshots.yml"><code>snapshots:
+  - name: customers_snapshot
+    relation: source('shop_raw', 'raw_customers')
+    config:
+      unique_key: customer_id
+      strategy: timestamp
+      updated_at: updated_at</code></pre>
+<pre><code>dbt snapshot</code></pre>
+<p>닫기(UPDATE)와 넣기(INSERT)를 dbt가 대신 만들어 보냅니다. DuckDB에서는 왼쪽과 똑같이 <code>UPDATE</code> 후 <code>INSERT</code> 두 문장으로, BigQuery·Snowflake에서는 <code>MERGE</code> 한 문장으로 보냅니다. 결과 테이블에 <code>dbt_valid_from</code>, <code>dbt_valid_to</code>, <code>dbt_scd_id</code>, <code>dbt_updated_at</code> 컬럼이 붙습니다.</p>
+</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>이력 테이블에서 하던 것</th><th>snapshot 설정</th></tr>
+<tr><td>"수정일이 바뀌면 새 버전"</td><td><code>strategy: timestamp</code> + <code>updated_at: 컬럼</code></td></tr>
+<tr><td>수정일이 없어서 컬럼 값을 비교</td><td><code>strategy: check</code> + <code>check_cols: [membership, city]</code> (또는 <code>all</code>)</td></tr>
+<tr><td>현재 행 표시 <code>valid_to IS NULL</code></td><td>기본 동작. 먼 미래 날짜로 두려면 <code>dbt_valid_to_current: "'9999-12-31'"</code></td></tr>
+<tr><td>원천에서 지워진 행 처리</td><td><code>hard_deletes: ignore</code>(기본) / <code>invalidate</code>(닫기) / <code>new_record</code>(삭제 표시 행 추가)</td></tr>
+<tr><td>이력 테이블을 다른 데이터셋에</td><td><code>schema: snapshots</code></td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">버전 차이</span>
+<p>1.8 이하에서는 <code>snapshots/*.sql</code> 안에 <code>{% snapshot %} ... {% endsnapshot %}</code> 블록으로 썼습니다. 지금도 동작하지만, 1.9부터는 위처럼 YAML로 쓰는 것이 권장 방식입니다. 인터넷 예제가 SQL 블록이면 오래된 글입니다.</p>
+</div>
+
+<h2 id="params">파라미터·변수 → var()·env_var()·set</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>CREATE PROCEDURE dm.sp_sales(p_date DATE)
+BEGIN
+  DECLARE v_min_amount INT64 DEFAULT 10000;
+
+  SELECT *
+  FROM stg.orders
+  WHERE order_date = p_date
+    AND amount &gt;= v_min_amount;
+END;
+
+CALL dm.sp_sales('2026-10-21');</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="models/marts/big_orders.sql"><code>{% set min_amount = 10000 %}
+
+select *
+from {{ ref('fct_orders') }}
+where order_date = '{{ var("run_date") }}'
+  and total_amount &gt;= {{ min_amount }}</code></pre>
+<pre><code>dbt run -s big_orders --vars "run_date: 2026-10-21"</code></pre>
+</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>무엇</th><th>dbt</th><th>값을 넣는 곳</th></tr>
+<tr><td>프로시저 인자(<code>p_date</code>)</td><td><code>{{ var('run_date') }}</code></td><td><code>--vars</code> 또는 <code>dbt_project.yml</code>의 <code>vars:</code> (기본값)</td></tr>
+<tr><td>지역 변수(<code>DECLARE</code>, <code>SET</code>)</td><td><code>{% set x = ... %}</code></td><td>모델 파일 안</td></tr>
+<tr><td>비밀·환경마다 다른 값</td><td><code>{{ env_var('DBT_BQ_PROJECT') }}</code></td><td>OS 환경 변수 (주로 profiles.yml 안에서 씀)</td></tr>
+<tr><td>지금 dev인지 prod인지</td><td><code>{{ target.name }}</code></td><td>profiles.yml의 target</td></tr>
+</table>
+</div>
+
+<pre data-file="dbt_project.yml (기본값 주기)"><code>vars:
+  run_date: '2026-10-01'</code></pre>
+
+<div class="box proc">
+<span class="box-title">DECLARE와 다른 점</span>
+<p>Jinja 변수는 <b>SQL이 만들어지기 전에</b> 글자로 바뀝니다. <code>{% set min_amount = 10000 %}</code> 은 DB 변수가 아니라 "문장 안에 10000을 붙여 넣어라"입니다. 그래서 <code>target/compiled</code>를 열면 <code>&gt;= 10000</code> 으로 보입니다.</p>
+</div>
+
+<h2 id="control">IF·LOOP·동적 SQL → Jinja</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저 (동적 SQL로 피벗)</div>
+<pre><code>DECLARE cols STRING;
+SET cols = (
+  SELECT STRING_AGG(
+    FORMAT("SUM(IF(method='%s', amount, 0)) AS %s_amount",
+           method, method))
+  FROM (SELECT DISTINCT method FROM raw.payments)
+);
+EXECUTE IMMEDIATE FORMAT("""
+  SELECT order_id, %s
+  FROM raw.payments GROUP BY order_id
+""", cols);</code></pre>
+</div>
+<div>
+<div class="label">dbt (Jinja for)</div>
+<pre data-file="models/marts/order_payment_pivot.sql"><code>{% set methods = ['card', 'bank_transfer',
+                  'kakaopay', 'point'] %}
+
+select
+    order_id,
+    {%- for m in methods %}
+    sum(case when payment_method = '{{ m }}'
+             then amount else 0 end) as {{ m }}_amount
+    {%- if not loop.last %},{% endif %}
+    {%- endfor %}
+from {{ ref('stg_payments') }}
+group by order_id</code></pre>
+</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>프로시저</th><th>Jinja</th></tr>
+<tr><td><code>IF cond THEN ... ELSE ... END IF;</code></td><td><code>{% if cond %} ... {% else %} ... {% endif %}</code></td></tr>
+<tr><td><code>FOR x IN (SELECT ...) DO ... END FOR;</code></td><td><code>{% for x in 리스트 %} ... {% endfor %}</code></td></tr>
+<tr><td>목록을 DB에서 읽어 와서 반복</td><td><code>run_query()</code> 결과로 리스트 만들기 (또는 <code>dbt_utils.get_column_values</code>)</td></tr>
+<tr><td><code>EXECUTE IMMEDIATE</code></td><td>필요 없음 — Jinja가 만든 글자가 곧 SQL</td></tr>
+<tr><td>환경별 분기 (<code>IF @@dataset = 'dev'</code>)</td><td><code>{% if target.name == 'dev' %}</code></td></tr>
+</table>
+</div>
+
+<pre data-file="DB에서 목록 읽어 오기 (run_query)"><code>{% set q %}select distinct payment_method from {{ ref('stg_payments') }} order by 1{% endset %}
+{% set res = run_query(q) %}
+{% if execute %}
+  {% set methods = res.columns[0].values() %}
+{% else %}
+  {% set methods = [] %}
+{% endif %}</code></pre>
+
+<div class="box warn">
+<span class="box-title">execute 를 꼭 감싸는 이유</span>
+<p>dbt는 실행 전에 모든 파일을 한 번 훑어서(파싱) DAG를 만드는데, 이때는 DB에 쿼리하지 않습니다. 그래서 <code>run_query</code> 결과는 실제 실행 단계(<code>execute</code>가 참)에서만 쓸 수 있습니다.</p>
+</div>
+
+<h2 id="udf">공통 SQL·UDF → 매크로·패키지</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저 / UDF</div>
+<pre><code>CREATE TEMP FUNCTION clean_text(s STRING) AS (
+  NULLIF(LOWER(TRIM(s)), '')
+);
+
+SELECT clean_text(status) AS status
+FROM raw.orders;</code></pre>
+</div>
+<div>
+<div class="label">dbt 매크로</div>
+<pre data-file="macros/clean_text.sql"><code>{% macro clean_text(col) -%}
+    nullif(lower(trim({{ col }})), '')
+{%- endmacro %}</code></pre>
+<pre data-file="models/staging/stg_orders.sql"><code>select {{ clean_text('status') }} as status
+from {{ source('shop_raw', 'raw_orders') }}</code></pre>
+</div>
+</div>
+
+<p>UDF는 DB 안에서 <b>실행 시점에</b> 불리고, 매크로는 <b>SQL을 만들 때</b> 글자로 펼쳐집니다. 그래서 매크로는 어떤 DB에서든 쓸 수 있고, 컴파일된 SQL에는 매크로 이름 대신 <code>nullif(lower(trim(status)), '')</code>가 그대로 들어 있습니다.</p>
+
+<p>남이 만든 매크로 묶음은 패키지로 받습니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>SELECT TO_HEX(MD5(CONCAT(
+  CAST(order_id AS STRING), '-',
+  CAST(payment_id AS STRING)))) AS pay_key
+FROM raw.payments;</code></pre>
+</div>
+<div>
+<div class="label">dbt + dbt_utils</div>
+<pre data-file="packages.yml"><code>packages:
+  - package: dbt-labs/dbt_utils
+    version: ["&gt;=1.3.0", "&lt;2.0.0"]</code></pre>
+<pre><code>select {{ dbt_utils.generate_surrogate_key(
+           ['order_id', 'payment_id']) }} as pay_key
+from {{ ref('stg_payments') }}</code></pre>
+</div>
+</div>
+
+<h2 id="assert">검증·에러 처리 → 테스트·contract</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>ASSERT (
+  SELECT COUNT(*) FROM dm.fct_orders
+  WHERE order_id IS NULL
+) = 0 AS 'order_id 에 NULL 있음';
+
+IF (SELECT COUNT(*) - COUNT(DISTINCT order_id)
+    FROM dm.fct_orders) &gt; 0 THEN
+  RAISE USING MESSAGE = 'order_id 중복';
+END IF;</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="models/marts/schema.yml"><code>models:
+  - name: fct_orders
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          - unique
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['placed', 'shipped',
+                         'completed', 'returned']
+              config:
+                severity: warn</code></pre>
+<pre><code>dbt build   # 모델 만들고 → 바로 테스트, 실패하면 하위 모델은 건너뜀</code></pre>
+</div>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>프로시저</th><th>dbt</th></tr>
+<tr><td><code>ASSERT ... AS '메시지'</code></td><td>generic 테스트(<code>unique</code>, <code>not_null</code>, <code>accepted_values</code>, <code>relationships</code>)</td></tr>
+<tr><td>복잡한 검증 쿼리</td><td>singular 테스트: <code>tests/*.sql</code> — <b>문제 행을 SELECT</b>하고, 0행이면 통과</td></tr>
+<tr><td>경고만 남기고 계속</td><td><code>severity: warn</code></td></tr>
+<tr><td>실패 행을 따로 저장</td><td><code>store_failures: true</code></td></tr>
+<tr><td>컬럼 타입·NOT NULL 강제</td><td>model contract (<code>contract: {enforced: true}</code>)</td></tr>
+<tr><td><code>BEGIN ... EXCEPTION WHEN ERROR THEN</code></td><td>dbt는 모델 하나가 실패하면 그 하위만 건너뛰고(<code>SKIP</code>) 나머지는 계속. 재시도·알림은 Airflow에서</td></tr>
+</table>
+</div>
+
+<h2 id="log">로그 테이블 → 아티팩트·훅</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>INSERT INTO ops.job_log
+  (job, started_at, row_count, status)
+VALUES ('sp_build_daily_sales',
+        CURRENT_TIMESTAMP(), @@row_count, 'OK');</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre><code># 실행할 때마다 자동으로 생기는 파일
+target/run_results.json   # 모델별 상태·소요 시간·영향 행 수
+target/manifest.json      # 프로젝트 전체 구조(모델·테스트·의존성)
+logs/dbt.log              # 자세한 로그</code></pre>
+<pre data-file="dbt_project.yml (로그 테이블에도 남기고 싶다면)"><code>on-run-end:
+  - "insert into ops.dbt_log
+     select current_timestamp, '{{ invocation_id }}'"</code></pre>
+</div>
+</div>
+
+<p>대부분은 <code>run_results.json</code>을 Airflow나 별도 도구(예: elementary 패키지)가 읽어 가는 방식으로 씁니다. 직접 로그 테이블을 만들 일은 많지 않습니다.</p>
+
+<h2 id="hooks">실행 전후 SQL → pre_hook·post_hook</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>-- 본 작업 전에
+SET @@query_label = 'team:mart';
+-- 본 작업
+CREATE OR REPLACE TABLE dm.fct_orders AS ...;
+-- 본 작업 후에
+CALL ops.refresh_bi_cache('fct_orders');</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="models/marts/fct_orders.sql"><code>{{ config(
+    materialized='table',
+    pre_hook="select 1",
+    post_hook="call ops.refresh_bi_cache('{{ this }}')"
+) }}
+
+select ...</code></pre>
+</div>
+</div>
+
+<p>모델 하나에 붙는 건 <code>pre_hook</code>/<code>post_hook</code>, 실행 전체의 처음·끝에 붙는 건 <code>dbt_project.yml</code>의 <code>on-run-start</code>/<code>on-run-end</code> 입니다.</p>
+
+<h2 id="schedule">스케줄 → Airflow</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>-- BigQuery 예약 쿼리(매일 06:00)
+CALL dm.sp_build_stg();
+CALL dm.sp_build_fct_orders();
+CALL dm.sp_build_daily_sales();
+-- 순서는 사람이 적고, 하나 실패하면 수동 재실행</code></pre>
+</div>
+<div>
+<div class="label">dbt + Airflow</div>
+<pre data-file="dags/shop_dbt.py"><code>from airflow.sdk import dag            # DAG = 예약 작업 하나
+from airflow.providers.standard.operators.bash import BashOperator  # 셸 명령 실행 부품
+
+@dag(schedule="0 6 * * *")             # 매일 06:00 (예약 쿼리의 일정)
+def shop_dbt():
+    BashOperator(                      # CALL 목록 대신 명령 하나
+        task_id="dbt_build",
+        bash_command="cd /opt/shop &amp;&amp; dbt build",  # 순서는 dbt가 ref()로 정함
+        retries=2,                     # 실패하면 두 번 더 시도
+    )
+
+shop_dbt()                             # DAG 등록</code></pre>
+</div>
+</div>
+
+<p>dbt Core에는 스케줄러가 없습니다. "언제"는 Airflow, "어떤 순서로"는 dbt가 맡습니다. 5·6일차에서 직접 만듭니다.</p>
+
+<h2 id="grants">GRANT → grants 설정</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>CREATE OR REPLACE TABLE dm.fct_orders AS ...;
+GRANT `roles/bigquery.dataViewer`
+  ON TABLE dm.fct_orders
+  TO "group:analysts@company.com";</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="dbt_project.yml"><code>models:
+  shop:
+    marts:
+      +grants:
+        roles/bigquery.dataViewer:
+          - "group:analysts@company.com"</code></pre>
+</div>
+</div>
+
+<p>테이블을 다시 만들 때마다 dbt가 권한을 다시 걸어 줍니다. 프로시저에서 <code>CREATE OR REPLACE</code> 후 권한이 날아가는 사고를 막아 줍니다. DuckDB는 권한 개념이 없어서 이 설정을 쓰지 않습니다(Postgres·Snowflake는 <code>select: ['analyst']</code> 처럼 씁니다).</p>
+
+<h2 id="docs">주석·정의서 → description·docs</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>-- 주문 팩트: 주문 1건 = 1행
+-- total_amount: 결제 합계(원), 분할결제 포함
+ALTER TABLE dm.fct_orders
+  ALTER COLUMN total_amount
+  SET OPTIONS (description = '결제 합계(원)');
+-- + 엑셀 테이블 정의서 따로 관리</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="models/marts/schema.yml"><code>models:
+  - name: fct_orders
+    description: 주문 팩트. 주문 1건 = 1행
+    config:
+      persist_docs: {relation: true, columns: true}
+    columns:
+      - name: total_amount
+        description: 결제 합계(원), 분할결제 포함</code></pre>
+<pre><code>dbt docs generate
+dbt docs serve --port 8085</code></pre>
+</div>
+</div>
+
+<p><code>persist_docs</code>를 켜면 설명이 DB의 테이블·컬럼 설명(BigQuery 콘솔에 보이는 그것)에도 들어갑니다. 정의서와 코드가 한 파일에 있어서 어긋나지 않습니다.</p>
+
+<h2 id="env">개발·운영 데이터셋 → target·generate_schema_name</h2>
+
+<div class="compare">
+<div>
+<div class="label">프로시저</div>
+<pre><code>-- 개발할 땐 dev_dm 으로 복사해서 이름 바꿔 실행
+CREATE OR REPLACE TABLE dev_dm.fct_orders AS ...;
+-- 운영 반영할 땐 dm 으로 다시 고쳐서 실행
+CREATE OR REPLACE TABLE dm.fct_orders AS ...;</code></pre>
+</div>
+<div>
+<div class="label">dbt</div>
+<pre data-file="profiles.yml"><code>shop:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      dataset: dbt_eunjin     # 내 개발 공간
+      # ...
+    prod:
+      type: bigquery
+      dataset: dm             # 운영
+      # ...</code></pre>
+<pre><code>dbt run              # dev 로
+dbt run --target prod  # 같은 코드, prod 로</code></pre>
+</div>
+</div>
+
+<p>코드는 그대로, 어디에 만들지만 target으로 바꿉니다. 모델에 <code>schema='marts'</code> 같은 설정을 주면 기본적으로 <code>&lt;target 스키마&gt;_marts</code>가 되는데, 이 규칙을 바꾸는 매크로가 <code>generate_schema_name</code>입니다(4일차).</p>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+프로시저 한 개 = dbt에서는 <b>모델 여러 개 + 설정 + 테스트 + 문서</b>로 나뉘고, 순서와 스케줄은 <b>ref()와 Airflow</b>가 나눠 맡습니다.
+</div>
+
+</main>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>

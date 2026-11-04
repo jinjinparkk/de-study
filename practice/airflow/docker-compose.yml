@@ -1,0 +1,20 @@
+# 5일차: Airflow 3 를 컨테이너 하나(standalone)로 띄우는 설정
+# 실행:  docker compose up -d      →  http://localhost:8083
+# 끄기:  docker compose stop       (기록 유지)   /   docker compose down  (컨테이너 삭제 → 실행 기록도 사라짐)
+name: de-airflow
+
+services:
+  airflow:
+    image: apache/airflow:3.3.2
+    command: standalone            # 스케줄러·dag-processor·api-server·triggerer 를 한 컨테이너에서 같이 띄우는 연습용 모드
+    ports:
+      - "8083:8080"                # 내 PC 8083 → 컨테이너 8080 (8000·8001·8081 은 이미 사용 중)
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"                 # 예제 DAG 수십 개를 안 보이게
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True" # 로그인 없이 모두 관리자 (내 PC 연습용에서만!)
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"        # 새 DAG 파일을 30초마다 찾기 (기본 300초)
+    volumes:
+      - ./dags:/opt/airflow/dags          # 내가 쓰는 DAG 파일
+      - ./data:/opt/airflow/data:ro       # 읽기 전용 입력 (raw_orders.csv 를 여기에 복사)
+      - ./output:/opt/airflow/output      # DAG 가 쓰는 결과 파일
+      - ./logs:/opt/airflow/logs          # 태스크 로그를 내 PC 에서도 열어 볼 수 있게

@@ -1,0 +1,12 @@
+# 컨테이너 안에서 dbt 가 쓰는 접속 정보 (DBT_PROFILES_DIR=/opt/airflow/dbt)
+shop:
+  target: dev
+  outputs:
+    dev:                       # 내 PC 에서 쓰던 것과 같은 파일. 컨테이너에서는 쓰지 않는다
+      type: duckdb
+      path: shop.duckdb
+      threads: 4
+    prod:                      # Airflow 가 쓰는 "운영" 파일. 경로는 환경 변수로 받는다
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'shop_prod.duckdb') }}"
+      threads: 1

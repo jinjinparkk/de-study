@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7일차 · Spark 기초와 전체 연결</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="day7">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow spark">7일차 · Spark</div>
+<h1>Spark 기초와 전체 연결</h1>
+<p class="lead">오늘은 Spark가 <b>왜 필요한지, 언제는 필요 없는지</b>를 먼저 정직하게 짚고, 같은 shop 데이터를 Spark로 집계해 parquet로 쓴 뒤 DuckDB·dbt에서 다시 읽어 7일 동안 배운 세 도구를 한 줄로 잇습니다.</p>
+<p class="meta-line">이론 약 90분 · 실습 약 60분 · 퀴즈 8문제</p>
+
+<div class="box">
+<span class="box-title">오늘 마치면 할 수 있는 것</span>
+<ul>
+<li>"이 일에 Spark가 필요한가, 웨어하우스(dbt)로 충분한가"를 근거를 들어 판단하기</li>
+<li>드라이버·익스큐터·클러스터 매니저가 각각 무슨 일을 하는지 그림으로 설명하기</li>
+<li>변환과 액션, narrow와 wide, 파티션과 셔플이 실행 속도에 어떻게 이어지는지 말하기</li>
+<li><code>explain()</code> 결과에서 <code>Exchange</code>(셔플), <code>BroadcastHashJoin</code>, <code>PartitionFilters</code>를 찾아 읽기</li>
+<li>PySpark로 dbt의 <code>daily_sales</code>와 같은 결과를 DataFrame API와 Spark SQL 두 가지로 만들기</li>
+<li>날짜별로 나눈 parquet를 쓰고, 그걸 DuckDB·dbt source로 읽기</li>
+</ul>
+</div>
+
+<h2 id="why">왜 분산 처리인가 — 그리고 언제 필요 없는가</h2>
+
+<p>컴퓨터 한 대의 메모리·디스크·CPU로 감당이 안 되는 데이터가 있습니다. 하루 로그가 2TB라면, 아무리 좋은 서버 한 대라도 읽는 데만 몇 시간이 걸립니다. 이걸 <b>100대가 20GB씩 나눠 동시에 읽으면</b> 몇 분이면 끝납니다. 이게 분산 처리의 전부입니다. Spark는 "나눠서 동시에 계산하고 결과를 다시 모으는 일"을 대신 해 주는 엔진입니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>감자 1만 개를 깎아야 합니다. 요리사 한 명이면 하루가 걸립니다. 요리사 100명에게 100개씩 나눠 주면 금방 끝나지만, 대신 <b>나눠 주고, 다 깎았는지 확인하고, 깎은 감자를 한곳에 모으는 사람</b>(주방장)이 필요하고, 감자를 옮기는 데 시간도 듭니다. 감자가 30개뿐이라면? 혼자 깎는 게 훨씬 빠릅니다. 나눠 주는 시간이 더 걸리니까요.</p>
+</div>
+
+<p>여기서 솔직하게 말씀드리면, <b>마케팅·분석 업무의 대부분은 Spark가 필요 없습니다.</b> BigQuery·Snowflake는 이미 내부적으로 수천 대에 나눠 계산하는 분산 엔진입니다. 내가 SQL만 쓰면 분산은 웨어하우스가 알아서 합니다. 그래서 "데이터가 크다 → Spark"가 아니라 "<b>웨어하우스 안으로 넣기 어렵거나, SQL로 표현하기 어렵거나, 웨어하우스 비용이 감당 안 될 때</b> → Spark"입니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>상황</th><th>보통의 선택</th><th>이유</th></tr>
+<tr><td>매체 리포트·GA4 export 집계, 일별 마트</td><td><b>웨어하우스 + dbt</b></td><td>이미 테이블에 있고 SQL로 충분. Spark를 끼우면 관리할 것만 늘어남</td></tr>
+<tr><td>GCS/S3에 쌓인 수백 GB~TB의 원본 로그·JSON을 정제해 테이블로</td><td><b>Spark</b> (또는 웨어하우스 외부 테이블)</td><td>웨어하우스 밖 파일을 대량으로 읽고, 중첩 JSON을 펴고, 잘못된 줄을 걸러내는 일</td></tr>
+<tr><td>스트리밍(Kafka) 이벤트를 실시간에 가깝게 처리</td><td><b>Spark Structured Streaming</b>, Flink</td><td>계속 들어오는 데이터를 마이크로 배치로 처리</td></tr>
+<tr><td>ML 피처 만들기, 대규모 학습 데이터 준비</td><td><b>Spark</b> (+ MLlib, pandas UDF)</td><td>파이썬 로직·라이브러리를 수많은 행에 분산 적용</td></tr>
+<tr><td>데이터 레이크/레이크하우스(Delta·Iceberg) 운영</td><td><b>Spark</b> (Databricks 등)</td><td>파일 기반 테이블의 쓰기·압축·병합의 기본 엔진</td></tr>
+<tr><td>CSV 몇 개, 수 GB 이하</td><td><b>DuckDB·pandas·웨어하우스</b></td><td>한 대로 충분. Spark는 시작만 수십 초</td></tr>
+</table>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>BigQuery 프로시저도 사실 분산으로 돌고 있었습니다. 슬롯(slot) 수천 개가 나눠 계산한 것이죠. 다만 그 분산이 <b>보이지 않았을 뿐</b>입니다.</li>
+<li>Spark는 그 분산을 <b>내가 직접 보고 조절하는</b> 엔진입니다. 파티션 수, 조인 방식, 메모리를 내가 정할 수 있고, 그래서 잘못 정하면 내가 느리게 만들 수도 있습니다.</li>
+</ul>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+Spark는 <b>웨어하우스 밖의 아주 큰 파일·로그·ML 데이터</b>를 여러 컴퓨터로 나눠 처리하는 엔진이고, 이미 웨어하우스에 있는 데이터를 SQL로 가공하는 일은 대부분 dbt로 충분합니다.
+</div>
+
+<h2 id="arch">클러스터 구조 — 드라이버, 익스큐터, 클러스터 매니저</h2>
+
+<pre class="diagram">                    ┌──────────────────────────────┐
+  내 코드 (PySpark) ─▶│ 드라이버 (Driver)              │
+                    │  · SparkSession 이 여기 산다    │
+                    │  · 코드 → 실행 계획(DAG) 으로    │
+                    │  · 계획을 Stage·Task 로 쪼갬     │
+                    │  · Spark UI (4040)            │
+                    └──────────────┬───────────────┘
+                                   │ "익스큐터 3개 주세요"
+                    ┌──────────────▼───────────────┐
+                    │ 클러스터 매니저                 │
+                    │ (YARN / Kubernetes / Standalone)│
+                    └──┬────────────┬────────────┬─┘
+                       │ 자원 배정     │             │
+             ┌─────────▼──┐  ┌──────▼─────┐  ┌───▼────────┐
+             │ 익스큐터 1   │  │ 익스큐터 2   │  │ 익스큐터 3   │
+             │ Task Task  │  │ Task Task  │  │ Task Task  │  ← 파티션 1개 = Task 1개
+             │ 메모리/캐시  │  │ 메모리/캐시  │  │ 메모리/캐시  │
+             └────────────┘  └────────────┘  └────────────┘
+                   ▲  ◀─────── 셔플: 익스큐터끼리 데이터 교환 ───────▶  ▲</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>구성 요소</th><th>하는 일</th><th>🧸 주방으로 치면</th></tr>
+<tr><td><b>드라이버</b></td><td>내 코드를 해석해 실행 계획을 세우고, 작업을 나눠 주고, 결과를 모음. <code>show()</code>·<code>collect()</code> 결과는 드라이버로 온다</td><td>주방장. 직접 썰지 않고 지시만</td></tr>
+<tr><td><b>익스큐터</b></td><td>파티션 단위 태스크를 실제로 계산하는 프로세스. 코어 수만큼 태스크를 동시에</td><td>칼을 든 요리사들</td></tr>
+<tr><td><b>클러스터 매니저</b></td><td>어느 컴퓨터에 익스큐터를 몇 개, 메모리 얼마로 띄울지 배정</td><td>인력 사무소</td></tr>
+<tr><td><b>local 모드</b></td><td>한 컴퓨터 안에서 드라이버·익스큐터를 한 프로세스로. <code>local[*]</code> = 코어 수만큼 태스크 동시 실행</td><td>주방장이 요리사도 겸하는 1인 식당</td></tr>
+</table>
+</div>
+
+<p>오늘 실습은 <b>local 모드</b>입니다. 컴퓨터는 한 대지만 코드는 클러스터에서 돌릴 때와 똑같습니다. 그래서 local에서 익힌 개념(파티션·셔플·실행 계획)은 그대로 진짜 클러스터로 가져갈 수 있습니다.</p>
+
+<div class="box tip">
+<span class="box-title">헷갈리기 쉬운 점</span>
+<p><code>df.collect()</code>나 <code>df.toPandas()</code>는 <b>모든 데이터를 드라이버 한 곳으로 모읍니다</b>. 100GB를 collect 하면 드라이버 메모리가 터집니다(OOM). 큰 결과는 파일로 쓰고, 드라이버로는 집계된 작은 결과만 가져오세요.</p>
+</div>
+
+<h2 id="api">RDD · DataFrame · Spark SQL</h2>
+
+<p>Spark에서 데이터를 다루는 방법은 세 가지 층이 있습니다. 결론부터 말하면 <b>지금은 DataFrame과 Spark SQL만 쓰면 됩니다.</b></p>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>RDD</th><th>DataFrame</th><th>Spark SQL</th></tr>
+<tr><td>모양</td><td>파이썬 객체 덩어리 목록 (스키마 없음)</td><td>컬럼 이름·타입이 있는 표</td><td>DataFrame에 SQL 문으로 질의</td></tr>
+<tr><td>최적화</td><td>없음. 쓴 그대로 실행</td><td>Catalyst 옵티마이저가 계획을 고침</td><td>DataFrame과 <b>완전히 같은</b> 옵티마이저</td></tr>
+<tr><td>속도(파이썬에서)</td><td>느림 (행마다 파이썬 왕복)</td><td>빠름 (JVM 안에서 계산)</td><td>빠름 (같음)</td></tr>
+<tr><td>언제</td><td>옛 코드, 아주 특수한 저수준 처리</td><td>파이프라인 코드, 동적인 컬럼 처리</td><td>SQL이 편한 사람, 복잡한 집계</td></tr>
+</table>
+</div>
+
+<p>중요한 사실: <b>DataFrame 코드와 Spark SQL은 같은 실행 계획으로 바뀝니다.</b> 실습에서 <code>explain()</code>으로 직접 확인합니다. 그러니 "SQL로 쓰면 느리지 않나?" 걱정은 하지 않아도 됩니다. 섞어 써도 됩니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">Spark SQL (익숙한 쪽)</div>
+<pre><code>select order_date,
+       count(*)    as orders,
+       sum(amount) as revenue
+from fct_orders
+where status = 'completed'
+group by order_date</code></pre>
+</div>
+<div>
+<div class="label">DataFrame API (같은 뜻)</div>
+<pre><code>(fct_orders
+  .where(F.col("status") == "completed")  # WHERE
+  .groupBy("order_date")                  # GROUP BY
+  .agg(F.count("*").alias("orders"),      # count(*)
+       F.sum("amount").alias("revenue"))) # sum(amount)</code></pre>
+</div>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>RDD는 <b>재료를 손으로 하나하나 집어 옮기는 것</b>, DataFrame은 <b>"양파 30개 썰어 주세요"라고 주문서를 쓰는 것</b>, Spark SQL은 <b>같은 주문서를 다른 양식(SQL)으로 쓰는 것</b>입니다. 주문서가 있으면 주방장(Catalyst)이 "양파를 먼저 거르고 썰면 덜 썰어도 되겠네" 하고 순서를 고쳐 줍니다. 손으로 옮기면 그런 최적화가 없습니다.</p>
+</div>
+
+<h2 id="lazy">지연 실행 — 변환과 액션</h2>
+
+<p>Spark에서 <code>select</code>, <code>where</code>, <code>join</code>, <code>groupBy</code>를 쓰면 <b>아무 계산도 일어나지 않습니다.</b> 계획만 쌓입니다. <code>show()</code>, <code>count()</code>, <code>write</code> 같은 <b>액션</b>을 만나야 그 계획 전체를 한 번에 최적화해서 실행합니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>예</th><th>결과</th></tr>
+<tr><td><b>변환 (Transformation)</b></td><td><code>select</code>, <code>where</code>, <code>withColumn</code>, <code>join</code>, <code>groupBy().agg()</code>, <code>orderBy</code>, <code>repartition</code></td><td>새 DataFrame(=계획)을 돌려줌. 즉시 끝남</td></tr>
+<tr><td><b>액션 (Action)</b></td><td><code>show</code>, <code>count</code>, <code>collect</code>, <code>toPandas</code>, <code>write.parquet</code>, <code>take</code></td><td>실제 실행(Job) 시작. 시간이 걸림</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>온라인 장보기와 같습니다. 장바구니에 담는 동안(변환)은 아무것도 배송되지 않습니다. <b>결제 버튼</b>(액션)을 눌러야 창고가 움직이는데, 그때 창고는 장바구니 전체를 보고 "같은 창고 물건끼리 한 번에 싸자"고 묶어서 보냅니다. 하나 담을 때마다 배송했다면 훨씬 비쌌겠죠.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>변환 = <b>뷰(VIEW) 정의</b>. <code>CREATE VIEW</code>는 바로 끝나고, 실제 계산은 그 뷰를 SELECT 할 때 일어나죠. Spark DataFrame도 뷰 정의가 차곡차곡 쌓인 것과 같습니다.</li>
+<li>액션 = <b>그 뷰를 실제로 SELECT 하거나 INSERT 하는 순간</b>. dbt의 ephemeral 모델이 CTE로 합쳐져 한 번에 실행되는 것과도 닮았습니다.</li>
+<li>그래서 같은 DataFrame에 액션을 두 번 하면 <b>처음부터 두 번 계산</b>합니다(뷰를 두 번 조회하듯). 이걸 막는 게 뒤에 나올 캐시입니다.</li>
+</ul>
+</div>
+
+<h3>Job · Stage · Task</h3>
+
+<pre class="diagram">액션 1번 (예: daily_sales.show())  ─────────────▶  Job 1개
+                                                   │
+          셔플이 필요한 곳에서 끊는다                  ▼
+┌──────────── Stage 0 ────────────┐   셔플   ┌──── Stage 1 ────┐
+│ CSV 읽기 → where → 부분 집계       │ ═══════▶ │ 최종 집계 → 결과  │
+│ (narrow 변환은 한 Stage 에 묶임)   │ Exchange │                 │
+│ Task  Task  Task  (파티션마다 1개) │          │ Task  Task      │
+└─────────────────────────────────┘          └─────────────────┘</pre>
+
+<ul>
+<li><b>Job</b>: 액션 한 번이 만든 실행 단위</li>
+<li><b>Stage</b>: 셔플 없이 이어서 할 수 있는 구간. 셔플이 생길 때마다 Stage가 끊깁니다</li>
+<li><b>Task</b>: Stage 안에서 파티션 하나를 처리하는 일. 파티션 8개면 Task 8개</li>
+</ul>
+<p>Spark UI(4040)의 Jobs → Stages 탭에서 이 구조를 그대로 볼 수 있습니다. 실습 7단계에서 직접 봅니다.</p>
+
+<h2 id="shuffle">파티션 · narrow와 wide · 셔플</h2>
+
+<p><b>파티션</b>은 DataFrame을 나눈 조각입니다. 익스큐터는 파티션 하나에 Task 하나를 붙여 처리합니다. 그래서 파티션 수가 곧 <b>동시에 할 수 있는 일의 최대치</b>입니다. 파티션이 2개인데 코어가 100개면 98개는 놉니다. 반대로 1KB짜리 파티션이 10만 개면 일보다 관리 비용이 더 큽니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>narrow 변환</th><th>wide 변환</th></tr>
+<tr><td>뜻</td><td>내 파티션 안의 데이터만 보면 되는 연산</td><td>다른 파티션의 데이터도 봐야 하는 연산</td></tr>
+<tr><td>예</td><td><code>select</code>, <code>where</code>, <code>withColumn</code>, <code>lower/trim</code>, <code>coalesce</code></td><td><code>groupBy</code>, <code>join</code>(브로드캐스트 아닌 경우), <code>distinct</code>, <code>orderBy</code>, <code>repartition</code></td></tr>
+<tr><td>비용</td><td>싸다. 앞뒤 연산이 한 Stage로 묶임</td><td>비싸다. <b>셔플</b>이 일어나고 Stage가 나뉨</td></tr>
+</table>
+</div>
+
+<p><b>셔플</b>은 "같은 키를 가진 행을 같은 파티션으로 모으려고" 데이터를 디스크에 쓰고 네트워크로 다른 익스큐터에 보내는 작업입니다. <code>group by order_date</code>를 하려면 10-05 주문이 여러 파티션에 흩어져 있으면 안 되니까, 10-05 행을 한 파티션으로 모아야 하죠. Spark 성능 문제의 대부분은 <b>셔플을 얼마나, 어떻게 하느냐</b>로 귀결됩니다.</p>
+
+<pre class="diagram">셔플 전 (파일 읽은 그대로)           셔플 후 (order_date 해시로 재분배)
+┌ 파티션 0 ┐ 10-01 10-05 10-09      ┌ 파티션 0 ┐ 10-01 10-01 10-09
+┌ 파티션 1 ┐ 10-05 10-01 10-02  ══▶ ┌ 파티션 1 ┐ 10-05 10-05 10-05
+┌ 파티션 2 ┐ 10-09 10-05 10-02      ┌ 파티션 2 ┐ 10-02 10-02
+                    (디스크에 쓰고 네트워크로 교환 = Exchange)</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>반 아이들이 아무렇게나 앉아 있습니다(파티션). "자기 이름표 쓰기"는 각자 자리에서 하면 됩니다(narrow). 그런데 "생일 달별로 모여 앉기"를 하려면 반 전체가 일어나서 자리를 옮겨야 합니다(셔플, wide). 자리 이동이 끝나야 다음 일을 시작할 수 있죠(Stage 경계).</p>
+</div>
+
+<h3>repartition 과 coalesce</h3>
+<div class="table-wrap">
+<table>
+<tr><th></th><th><code>repartition(n)</code> / <code>repartition("col")</code></th><th><code>coalesce(n)</code></th></tr>
+<tr><td>셔플</td><td>있음 (전체 재분배)</td><td>없음 (이웃 파티션끼리 합치기만)</td></tr>
+<tr><td>방향</td><td>늘리기·줄이기 모두</td><td>줄이기만</td></tr>
+<tr><td>결과</td><td>고르게 나뉨. 컬럼을 주면 같은 값끼리 모임</td><td>크기가 들쭉날쭉할 수 있음</td></tr>
+<tr><td>쓰는 때</td><td>병렬도를 올릴 때, 쓰기 전에 키별로 모을 때</td><td>필터 후 너무 잘게 쪼개진 걸 쓰기 전에 줄일 때</td></tr>
+</table>
+</div>
+
+<div class="box spark">
+<span class="box-title">spark.sql.shuffle.partitions 와 AQE</span>
+<p>셔플 뒤 파티션 수는 기본 <b>200</b>입니다. 30행짜리 데이터에도 200개로 나누려 하니 연습할 땐 과합니다. 실습 코드는 8로 줄였습니다. Spark 3.2부터는 <b>AQE(Adaptive Query Execution)</b>가 기본으로 켜져 있어, 실행 중에 실제 크기를 보고 작은 파티션을 합치거나 조인 방식을 바꿉니다. <code>explain()</code> 맨 위의 <code>AdaptiveSparkPlan</code>이 그 표시입니다.</p>
+</div>
+
+<h2 id="join">조인 전략 · 스큐 · 캐시</h2>
+
+<p>두 표를 조인하려면 같은 키의 행이 같은 곳에 있어야 합니다. Spark가 이걸 맞추는 대표적인 방법은 두 가지입니다.</p>
+
+<pre class="diagram">① Broadcast Hash Join  (한쪽이 작을 때 — 기본 기준 10MB 이하)
+   작은 표 stg_payments ──복사──▶ 익스큐터 1, 2, 3 모두에게
+   큰 표 orders 는 제자리에서 그냥 붙임  → 큰 표 셔플 없음 ✓ 빠름
+
+② Sort-Merge Join  (양쪽 다 클 때)
+   orders   ──셔플(order_id 해시)──▶ ┐
+                                    ├─ 파티션마다 정렬 후 지퍼처럼 맞붙임
+   payments ──셔플(order_id 해시)──▶ ┘   → 양쪽 다 셔플 ✗ 비싸지만 어떤 크기든 가능</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>Broadcast Hash Join</th><th>Sort-Merge Join</th></tr>
+<tr><td>조건</td><td>한쪽이 작다 (<code>spark.sql.autoBroadcastJoinThreshold</code>, 기본 10MB)</td><td>양쪽 다 크다</td></tr>
+<tr><td>셔플</td><td>큰 쪽 없음</td><td>양쪽 다</td></tr>
+<tr><td>위험</td><td>"작다"고 착각한 표가 커지면 드라이버·익스큐터 메모리 부족</td><td>느림, 스큐에 약함</td></tr>
+<tr><td>강제로</td><td><code>big.join(F.broadcast(small), "id")</code>, SQL은 <code>/*+ BROADCAST(small) */</code></td><td>브로드캐스트 기준을 <code>-1</code>로 꺼서 확인 가능</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>브로드캐스트는 <b>얇은 메뉴판을 테이블마다 한 장씩 복사해 두는 것</b>입니다. 손님(큰 표 행)이 움직일 필요가 없죠. Sort-Merge는 메뉴판이 전화번호부만큼 두꺼워 복사가 불가능할 때, <b>손님과 메뉴판을 모두 가나다순으로 줄 세워 맞춰 보는 것</b>입니다.</p>
+</div>
+
+<h3>스큐(skew) — 한 명만 야근하는 문제</h3>
+<p>셔플은 키 값으로 행을 나눕니다. 그런데 <code>customer_id = NULL</code>이나 "비회원" 같은 값 하나에 행의 40%가 몰려 있다면? 그 키를 맡은 파티션 하나만 거대해지고, 나머지 199개 Task는 1초 만에 끝나 그 하나를 기다립니다. Spark UI의 Stage 상세에서 <b>Task 시간의 최댓값이 중앙값보다 훨씬 크면</b> 스큐입니다.</p>
+<ul>
+<li>대책 ①: 몰린 키(NULL 등)를 먼저 걸러 따로 처리</li>
+<li>대책 ②: AQE의 skew join 처리(<code>spark.sql.adaptive.skewJoin.enabled</code>, 기본 켜짐)가 큰 파티션을 쪼개 줌</li>
+<li>대책 ③: 작은 쪽이면 브로드캐스트로 셔플 자체를 없앰</li>
+<li>대책 ④: 키에 랜덤 꼬리표(salt)를 붙여 강제로 흩뿌린 뒤 두 번 집계</li>
+</ul>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>BigQuery에서도 같은 일이 있었습니다. 특정 키에 몰린 JOIN이 "Resources exceeded"로 죽거나, 실행 상세의 한 단계만 유난히 오래 걸리던 경험이 있다면 그게 스큐입니다. 웨어하우스는 대부분 알아서 처리해 주지만, Spark에서는 내가 보고 손을 대야 합니다.</p>
+</div>
+
+<h3>캐시 — 여러 번 쓸 DataFrame은 잡아 두기</h3>
+<p>지연 실행 때문에 같은 DataFrame에 액션을 두 번 하면 CSV 읽기부터 두 번 합니다. <code>df.cache()</code>를 하면 <b>다음 액션 때 계산한 결과를 익스큐터 메모리에 잡아 두고</b>, 그 뒤 액션부터는 거기서 바로 씁니다.</p>
+<pre><code>fct = stg_orders.join(stg_payments, "order_id", "left").cache()  # 캐시 "예약" (아직 계산 안 함)
+fct.count()                                    # 첫 액션: 계산 + 메모리에 저장
+fct.groupBy("order_date").count().show()       # 메모리에서 바로 읽음 (CSV 다시 안 읽음)
+fct.groupBy("customer_id").count().show()      # 마찬가지
+fct.unpersist()                                # 다 썼으면 메모리 반납</code></pre>
+<p>한 번만 쓰는 DataFrame을 캐시하면 메모리만 낭비합니다. "같은 중간 결과에서 여러 갈래가 나갈 때"만 쓰세요. SQL로 치면 <b>임시 테이블을 만들어 두는 것</b>이고(<code>CREATE TEMP TABLE</code>), 캐시 안 한 DataFrame은 매번 다시 계산되는 뷰입니다.</p>
+
+<h2 id="explain">explain() 읽는 법</h2>
+
+<p><code>df.explain()</code>은 SQL의 <code>EXPLAIN</code>입니다. 물리 실행 계획(Physical Plan)을 보여 주는데, <b>아래에서 위로</b> 읽습니다. 맨 아래가 파일 읽기, 맨 위가 최종 결과입니다. 아래는 실습 코드 <code>daily_sales_df.explain()</code>의 실제 출력입니다(경로 줄임).</p>
+
+<pre data-file="daily_sales_df.explain() — 실제 출력">== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- Sort [order_date#2 ASC NULLS FIRST], true, 0
+   +- Exchange rangepartitioning(order_date#2 ASC NULLS FIRST, 8), ENSURE_REQUIREMENTS
+      +- HashAggregate(keys=[order_date#2], functions=[count(1), sum(amount#44L)])
+         +- Exchange hashpartitioning(order_date#2, 8), ENSURE_REQUIREMENTS
+            +- HashAggregate(keys=[order_date#2], functions=[partial_count(1), partial_sum(amount#44L)])
+               +- Project [order_date#2, amount#44L]
+                  +- BroadcastHashJoin [order_id#0], [order_id#6], LeftOuter, BuildRight, false
+                     :- Project [order_id#0, order_date#2]
+                     :  +- Filter (lower(trim(status#3, None)) = completed)
+                     :     +- FileScan csv [order_id#0,order_date#2,status#3] Batched: false, DataFilters: [(lower(trim(status#3, None)) = completed)], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/…/data/…, PartitionFilters: [], PushedFilters: [], ReadSchema: struct&lt;order_id:int,order_date:date,status:string&gt;
+                     +- BroadcastExchange HashedRelationBroadcastMode(List(cast(input[0, int, true] as bigint)),false)
+                        +- HashAggregate(keys=[order_id#6], functions=[sum(amount#8L)])
+                           +- Exchange hashpartitioning(order_id#6, 8), ENSURE_REQUIREMENTS
+                              +- HashAggregate(keys=[order_id#6], functions=[partial_sum(amount#8L)])
+                                 +- Filter isnotnull(order_id#6)
+                                    +- FileScan csv [order_id#6,amount#8L] Batched: false, DataFilters: [isnotnull(order_id#6)], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/…/data/…, PartitionFilters: [], PushedFilters: [IsNotNull(order_id)], ReadSchema: struct&lt;order_id:int,amount:bigint&gt;</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>찾을 단어</th><th>뜻</th><th>이 계획에서</th></tr>
+<tr><td><code>FileScan csv</code> / <code>parquet</code></td><td>파일 읽기. <code>PushedFilters</code>는 읽으면서 미리 거른 조건, <code>ReadSchema</code>는 실제로 읽는 컬럼</td><td>payments는 <code>PushedFilters: [IsNotNull(order_id)]</code>, <code>ReadSchema</code>에 <code>order_id</code>·<code>amount</code>만(안 쓰는 <code>method</code>는 안 읽음). orders는 <code>PushedFilters: []</code> — <code>lower(trim(status))</code>처럼 함수가 낀 조건은 파일 읽기로 못 내려가고 <code>DataFilters</code>에만 적힘</td></tr>
+<tr><td><code>Filter</code>의 위치</td><td>WHERE 조건이 실제로 적용되는 곳</td><td>코드에선 조인 <b>뒤</b>에 <code>where</code>를 썼는데 계획에선 조인 <b>아래</b>(FileScan 바로 위). 옵티마이저가 조건을 조인 앞으로 옮김(predicate pushdown)</td></tr>
+<tr><td><code>Exchange hashpartitioning(k, n)</code></td><td><b>셔플</b>. k 컬럼 해시로 n개 파티션에 재분배. Stage 경계</td><td>결제 합계(order_id), 일별 집계(order_date) 앞에 각각 한 번</td></tr>
+<tr><td><code>Exchange rangepartitioning</code></td><td>정렬(<code>orderBy</code>)을 위한 셔플</td><td>마지막 <code>order by order_date</code></td></tr>
+<tr><td><code>HashAggregate</code> 두 번</td><td>부분 집계(partial) → 셔플 → 최종 집계. 셔플 전에 미리 줄여서 보내는 최적화</td><td><code>partial_sum</code>, <code>partial_count</code>가 아래에 있음</td></tr>
+<tr><td><code>BroadcastHashJoin</code> + <code>BroadcastExchange</code></td><td>작은 쪽을 복사해서 붙이는 조인</td><td>결제 쪽이 작아서 브로드캐스트 선택</td></tr>
+<tr><td><code>SortMergeJoin</code> + <code>Sort</code></td><td>양쪽 셔플·정렬 후 조인</td><td>브로드캐스트를 끄면 이걸로 바뀜(아래)</td></tr>
+<tr><td><code>AdaptiveSparkPlan isFinalPlan=false</code></td><td>AQE가 실행 중 계획을 바꿀 수 있다는 표시. 실행 후엔 <code>true</code></td><td>맨 윗줄</td></tr>
+</table>
+</div>
+
+<p>같은 집계를 Spark SQL로 쓴 <code>daily_sales_sql.explain()</code>도 <b>똑같은 연산자 순서</b>가 나옵니다(실습 4단계). 그리고 브로드캐스트를 끄고(<code>autoBroadcastJoinThreshold = -1</code>) 조인만 explain 하면 이렇게 바뀝니다.</p>
+
+<pre data-file="브로드캐스트를 끈 조인 — 실제 출력">== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- Project [order_id#0, customer_id#1, order_date#2, status#42, amount#44L]
+   +- SortMergeJoin [order_id#0], [order_id#6], LeftOuter
+      :- Sort [order_id#0 ASC NULLS FIRST], false, 0
+      :  +- Exchange hashpartitioning(order_id#0, 8), ENSURE_REQUIREMENTS
+      :     +- Project [order_id#0, customer_id#1, order_date#2, lower(trim(status#3, None)) AS status#42]
+      :        +- FileScan csv [order_id#0,customer_id#1,order_date#2,status#3] Batched: false, DataFilters: [], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/…/data/…, PartitionFilters: [], PushedFilters: [], ReadSchema: struct&lt;order_id:int,customer_id:int,order_date:date,status:string&gt;
+      +- Sort [order_id#6 ASC NULLS FIRST], false, 0
+         +- HashAggregate(keys=[order_id#6], functions=[sum(amount#8L)])
+            +- Exchange hashpartitioning(order_id#6, 8), ENSURE_REQUIREMENTS
+               +- HashAggregate(keys=[order_id#6], functions=[partial_sum(amount#8L)])
+                  +- Filter isnotnull(order_id#6)
+                     +- FileScan csv [order_id#6,amount#8L] Batched: false, DataFilters: [isnotnull(order_id#6)], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/…/data/…, PartitionFilters: [], PushedFilters: [IsNotNull(order_id)], ReadSchema: struct&lt;order_id:int,amount:bigint&gt;</pre>
+<p>양쪽에 <code>Exchange hashpartitioning(order_id, 8)</code>(셔플)과 <code>Sort</code>가 붙었습니다. 이게 Sort-Merge Join의 비용입니다.</p>
+
+<div class="box tip">
+<span class="box-title">더 자세히 보려면</span>
+<p><code>df.explain("formatted")</code>는 연산자마다 번호를 붙여 나눠 보여 주고, <code>df.explain(True)</code>는 논리 계획(최적화 전·후)까지 보여 줍니다. 실행 후의 실제 행 수·시간은 Spark UI의 SQL 탭에서 봅니다.</p>
+</div>
+
+<h2 id="formats">파일 형식 · 파티션 쓰기 · 작은 파일 문제</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>CSV</th><th>JSON (줄마다 하나)</th><th>Parquet</th></tr>
+<tr><td>저장 방식</td><td>행 단위 텍스트</td><td>행 단위 텍스트, 중첩 가능</td><td><b>컬럼 단위</b> 바이너리, 압축</td></tr>
+<tr><td>타입 정보</td><td>없음 (추론하거나 직접 지정)</td><td>약함</td><td>파일 안에 있음</td></tr>
+<tr><td>필요한 컬럼만 읽기</td><td>불가 (줄 전체를 읽음)</td><td>불가</td><td>가능 (column pruning)</td></tr>
+<tr><td>조건으로 건너뛰기</td><td>불가</td><td>불가</td><td>가능 (row group 통계로 skip)</td></tr>
+<tr><td>크기</td><td>큼</td><td>더 큼</td><td>보통 CSV의 1/5~1/10</td></tr>
+<tr><td>쓰는 때</td><td>사람이 보는 교환용, 원본</td><td>API·로그 원본</td><td><b>분석용 저장의 기본</b></td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>CSV는 <b>한 사람의 정보를 한 줄씩 적은 일기장</b>입니다. "모두의 금액만" 보려 해도 모든 줄을 다 읽어야 하죠. Parquet은 <b>항목별 서랍장</b>입니다. "금액" 서랍만 열면 되고, 서랍 앞에 "최솟값 9,000 · 최댓값 129,000" 같은 꼬리표가 붙어 있어서 조건에 안 맞는 서랍은 열지도 않습니다.</p>
+</div>
+
+<h3>partitionBy — 폴더로 나눠 쓰기</h3>
+<p><code>df.write.partitionBy("order_date").parquet("out/fct_orders")</code>는 값마다 폴더를 만듭니다. 이 방식을 <b>Hive 스타일 파티션</b>이라 하고, Spark·DuckDB·BigQuery 외부 테이블·Athena 모두 이해합니다.</p>
+<pre class="diagram">out/fct_orders/
+├── _SUCCESS                          ← "다 썼다" 표시 (Airflow 센서가 이걸 보기도 함)
+├── order_date=2026-10-01/
+│   └── part-00000-....snappy.parquet  ← order_date 컬럼은 파일 안에 없고 폴더 이름에만
+├── order_date=2026-10-02/
+│   └── part-00000-....snappy.parquet
+└── ... (날짜 수만큼)</pre>
+<p>이렇게 쓰면 <code>where order_date = '2026-10-05'</code>로 읽을 때 <b>그 폴더 하나만</b> 엽니다(파티션 가지치기, partition pruning). explain에 <code>PartitionFilters: [... (order_date = 2026-10-05)]</code>로 보입니다. BigQuery의 파티션 테이블에서 <code>WHERE _PARTITIONDATE = ...</code>로 스캔 비용을 줄이던 것과 같은 원리입니다.</p>
+
+<h3>작은 파일 문제</h3>
+<p>Spark는 <b>파티션(메모리 조각)마다 폴더마다 파일을 하나씩</b> 씁니다. 메모리 파티션이 200개, 날짜 폴더가 365개면 최대 73,000개 파일이 생길 수 있습니다. 파일 하나에 몇 KB씩이면, 나중에 읽을 때 파일 목록을 가져오고 여닫는 시간이 데이터 읽는 시간보다 길어집니다.</p>
+<ul>
+<li>쓰기 전에 <code>.repartition("order_date")</code> → 같은 날짜가 한 파티션에 모여 <b>폴더마다 파일 1개</b> (실습 코드가 이 방식)</li>
+<li>전체가 작으면 <code>.coalesce(n)</code>으로 파일 수 줄이기</li>
+<li>너무 잘게 나누지 않기: 하루 몇 MB짜리 데이터를 시간 단위 폴더로 나누지 않기. 파일 하나 <b>수백 MB~1GB</b>가 적당한 크기</li>
+<li>Delta·Iceberg는 <code>OPTIMIZE</code>/compaction으로 작은 파일을 주기적으로 합침</li>
+</ul>
+
+<div class="box warn">
+<span class="box-title">이름이 같아서 헷갈리는 "파티션"</span>
+<p><b>Spark 파티션</b>은 메모리 속 데이터 조각(병렬 처리 단위), <b>파일 파티션</b>(<code>partitionBy</code>)은 디스크 폴더 나누기, <b>BigQuery 파티션</b>은 테이블 저장 단위입니다. 셋 다 "나눈다"는 뜻은 같지만 다른 물건입니다. <code>repartition</code>은 앞의 것, <code>partitionBy</code>는 두 번째 것을 바꿉니다.</p>
+</div>
+
+<h2 id="position">Spark · BigQuery · dbt-spark/Databricks — 어디에 무엇을</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>BigQuery (+ dbt)</th><th>Spark (직접 코드)</th><th>dbt-spark / Databricks</th></tr>
+<tr><td>정체</td><td>서버리스 웨어하우스. 분산은 숨겨져 있음</td><td>분산 처리 엔진. 클러스터를 내가(또는 서비스가) 띄움</td><td>Spark(또는 Databricks SQL) 위에서 dbt 모델을 돌리는 어댑터</td></tr>
+<tr><td>언어</td><td>SQL</td><td>Python·Scala·SQL</td><td>SQL (dbt 그대로), 일부 Python 모델</td></tr>
+<tr><td>데이터 위치</td><td>BigQuery 저장소 (외부 테이블도 가능)</td><td>어디든: GCS·S3·HDFS·Kafka·JDBC</td><td>레이크(Delta·Iceberg 테이블)</td></tr>
+<tr><td>운영 부담</td><td>거의 없음</td><td>큼 (클러스터·메모리·버전)</td><td>중간 (Databricks가 대부분 관리)</td></tr>
+<tr><td>잘하는 일</td><td>정형 데이터 SQL 가공, 마트, BI</td><td>원본 파일 대량 정제, 스트리밍, ML 피처</td><td>레이크하우스에서의 마트 계층</td></tr>
+<tr><td>내 업무에서</td><td><b>주력</b> (OKR 프로젝트도 여기)</td><td>필요할 때만</td><td>회사가 Databricks를 쓰면 이게 dbt</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">헷갈리기 쉬운 점</span>
+<p>dbt는 <b>엔진을 바꿔 끼우는 도구</b>입니다. 어댑터가 <code>dbt-duckdb</code>면 DuckDB가, <code>dbt-bigquery</code>면 BigQuery가, <code>dbt-spark</code>/<code>dbt-databricks</code>면 Spark가 계산합니다. 그래서 "dbt냐 Spark냐"는 사실 잘못된 질문이고, 정확히는 "<b>가공 로직을 SQL 모델(dbt)로 둘 것인가, Python 코드(Spark 잡)로 둘 것인가</b>"입니다. 둘 다 Spark 위에서 돌 수 있습니다.</p>
+</div>
+
+<h2 id="connect">세 도구는 이렇게 이어진다</h2>
+
+<pre class="diagram">  원본 (웨어하우스 밖)                                                  사람
+┌──────────────────┐                                              ┌────────┐
+│ GCS/S3 원본 로그    │                                              │ BI 대시  │
+│ raw/events/*.json │                                              │ 보드     │
+└────────┬─────────┘                                              └────▲───┘
+         │ ① Spark 잡: 읽기 → 정제·평탄화 → parquet (date 파티션)          │
+         ▼                                                            │
+┌──────────────────────────┐   ② dbt: source(external_location)    ┌───┴──────┐
+│ lake/fct_events/          │──────────────────────────────────────▶│ marts     │
+│  order_date=.../*.parquet │   staging → intermediate → marts      │ (테스트됨) │
+└──────────────────────────┘                                       └──────────┘
+         ▲                               ▲
+         │ 매일 06:00 SparkSubmit         │ Asset 갱신되면 dbt build
+┌────────┴───────────────────────────────┴────────────────────────────┐
+│ Airflow: 수집 DAG → [Spark 태스크] → Asset("lake/fct_events") → [dbt DAG]   │
+│          재시도·알림·백필(logical date 로 날짜 폴더 하나씩 = 멱등)             │
+└─────────────────────────────────────────────────────────────────────┘</pre>
+
+<ul>
+<li><b>Airflow</b>는 언제·어떤 순서로를 맡습니다. Spark 잡도 dbt도 Airflow 입장에선 태스크 하나입니다(<code>SparkSubmitOperator</code>, Databricks/Dataproc 오퍼레이터, 또는 BashOperator).</li>
+<li><b>Spark</b>는 웨어하우스로 바로 넣기 어려운 원본을 <b>정리된 parquet</b>로 바꿉니다. 날짜 파티션으로 쓰고 <code>mode("overwrite")</code> + 동적 파티션 덮어쓰기를 쓰면, 같은 날짜를 다시 돌려도 결과가 같습니다(5일차 멱등성).</li>
+<li><b>dbt</b>는 그 parquet를 source로 받아 마트를 만들고 테스트·문서를 붙입니다. 실습 9단계에서 정확히 이걸 합니다.</li>
+</ul>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>예전 구조가 "스케줄러(크론) → 프로시저 하나가 전부"였다면, 지금은 그 프로시저를 셋으로 쪼갠 겁니다. <b>언제</b>는 Airflow, <b>무거운 원본 손질</b>은 Spark, <b>SQL 가공·검증</b>은 dbt. 각 부분이 실패해도 그 부분만 다시 돌리면 됩니다.</p>
+</div>
+
+<h2 id="lab">실습: shop 데이터를 Spark로</h2>
+
+<p>1~4일차의 shop CSV를 Spark로 읽고, dbt에서 만든 <code>fct_orders</code>·<code>daily_sales</code>와 같은 결과를 만든 다음, parquet로 써서 DuckDB·dbt로 다시 읽습니다. 컨테이너 하나에 Spark·Java·Jupyter가 다 들어 있는 공식 이미지를 씁니다.</p>
+
+<div class="box spark">
+<span class="box-title">이 페이지의 실행 결과에 대해</span>
+<p>이 페이지의 출력 중 <b>2~6단계</b>(행 수, 집계 결과, DataFrame과 SQL의 차이 0행, 세 가지 explain, 파티션 수)는 <code>shop_spark.py</code>를 Spark 4.0.5 local 모드(Java 17)로 실제 실행한 결과를 그대로 옮긴 것입니다(경로·plan_id만 줄임). 다만 작성 환경에서 Docker를 쓸 수 없어 컨테이너가 아닌 Windows에서 직접 돌렸고, Windows에서는 Spark의 parquet 쓰기·읽기가 Hadoop 네이티브 파일(<code>winutils.exe</code>·<code>hadoop.dll</code>) 없이는 실패합니다. 그래서 <b>8단계의 폴더 구조와 PartitionFilters 출력은 Spark가 내는 형태를 보여 주는 예시</b>(직접 확인 못 함)이고, <b>9단계 dbt 결과는 같은 데이터·같은 Hive 파티션 구조의 parquet로 실제 실행한 값</b>입니다. 컨테이너 이미지의 Spark 버전에 따라 explain 세부 표기는 조금 다를 수 있습니다.</p>
+</div>
+
+<div class="lab">
+
+<div class="step" data-id="docker">
+<div class="step-title">1. 컨테이너 띄우기</div>
+<p>Docker Desktop을 켜고 PowerShell에서 실행합니다. shop 폴더를 컨테이너의 <code>/home/jovyan/work</code>로 연결(마운트)합니다. 컨테이너 안에서 쓴 파일이 내 PC의 shop 폴더에 그대로 생깁니다.</p>
+<pre><code>cd $HOME\dbt-practice\shop
+mkdir spark, out -ErrorAction SilentlyContinue
+curl.exe -sL https://jinjinparkk.github.io/de-study/practice/spark/shop_spark.py -o spark\shop_spark.py   # 실습 스크립트
+docker run -d --name de-spark `
+  -p 8888:8888 -p 4040:4040 `
+  -v "${HOME}\dbt-practice\shop:/home/jovyan/work" `
+  quay.io/jupyter/pyspark-notebook
+docker logs de-spark</code></pre>
+<p>이미지가 수 GB라 처음엔 몇 분 걸립니다. 로그에 <code>http://127.0.0.1:8888/lab?token=...</code>이 보이면 그 주소로 Jupyter에 들어갈 수 있습니다. 8888·4040이 이미 쓰이고 있다면 앞쪽 숫자만 바꾸세요(<code>-p 8890:8888 -p 4041:4040</code>).</p>
+<details class="hint"><summary>포트·마운트 뜻이 궁금하다면</summary>
+<p><code>-p 내PC포트:컨테이너포트</code>입니다. 8888은 Jupyter, 4040은 Spark UI. <code>-v 내PC폴더:컨테이너폴더</code>는 폴더 공유입니다. 컨테이너를 지워도 shop 폴더의 결과는 남습니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="session">
+<div class="step-title">2. SparkSession 만들고 CSV 읽기</div>
+<p>Jupyter에서 새 노트북(Python 3)을 열고 셀에 씁니다. 스크립트 전체는 <a href="../practice/spark/shop_spark.py">practice/spark/shop_spark.py</a>에 있습니다(명령 사용법은 <a href="../practice/spark/README.md">README</a>).</p>
+<pre data-file="셀 1"><code>from pyspark.sql import SparkSession          # Spark 입구 (DB 커넥션 같은 것)
+from pyspark.sql import functions as F        # lower, trim, sum ... SQL 함수 모음
+
+spark = (SparkSession.builder
+         .appName("shop_spark")               # Spark UI에 보일 이름
+         .master("local[*]")                  # 내 컴퓨터 코어 전부 사용
+         .config("spark.sql.shuffle.partitions", "8")  # 셔플 후 파티션 수 (기본 200)
+         .getOrCreate())
+
+DATA = "/home/jovyan/work/data"
+# schema 문자열 = CREATE TABLE 컬럼 정의. 직접 적으면 타입 추론보다 빠르고 정확
+orders_raw = spark.read.csv(f"{DATA}/raw_orders.csv", header=True,
+    schema="order_id INT, customer_id INT, order_date DATE, status STRING, updated_at TIMESTAMP")
+payments_raw = spark.read.csv(f"{DATA}/raw_payments.csv", header=True,
+    schema="payment_id INT, order_id INT, method STRING, amount BIGINT")
+
+orders_raw.printSchema()                      # DESCRIBE 와 같음 (계산 안 함)
+print(orders_raw.count(), payments_raw.count())  # count() = 액션 → 이때 파일을 실제로 읽음</code></pre>
+<p><code>30 32</code>가 나오면 성공입니다. <code>spark.read.csv(...)</code> 줄은 바로 끝나고 <code>count()</code>에서 시간이 걸리는 걸 느껴 보세요. 그게 지연 실행입니다.</p>
+</div>
+
+<div class="step" data-id="dataframe">
+<div class="step-title">3. 직접 해보기: DataFrame API로 stg → fct_orders → daily_sales</div>
+<p>dbt 모델 세 개를 DataFrame 변수 세 개로 옮겨 보세요.</p>
+<ul>
+<li><code>stg_orders</code>: <code>order_id, customer_id, order_date, lower(trim(status)) as status</code></li>
+<li><code>stg_payments</code>: 주문별 <code>sum(amount) as amount</code></li>
+<li><code>fct_orders</code>: 두 개를 <code>order_id</code>로 left join</li>
+<li><code>daily_sales_df</code>: completed만, 날짜별 <code>orders</code>, <code>revenue</code>, 날짜순 정렬 → <code>.show()</code></li>
+</ul>
+<details class="hint"><summary>힌트 1</summary>
+<p>SQL 절 하나가 메서드 하나입니다. <code>SELECT</code> → <code>.select()</code>, <code>WHERE</code> → <code>.where()</code>, <code>GROUP BY ... 집계</code> → <code>.groupBy(...).agg(...)</code>, <code>JOIN USING</code> → <code>.join(b, on="키", how="left")</code>, <code>ORDER BY</code> → <code>.orderBy()</code>. <a href="../cheatsheet.html#spark-cmd">명령어 모음</a>에 대응표가 있습니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>함수는 <code>F.</code>에 있습니다: <code>F.lower(F.trim("status"))</code>, <code>F.sum("amount")</code>, <code>F.count("*")</code>. 컬럼 이름 붙이기(AS)는 <code>.alias("이름")</code>. 조건은 <code>F.col("status") == "completed"</code> (등호 두 개).</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="셀 2"><code>stg_orders = orders_raw.select(               # select
+    "order_id", "customer_id", "order_date",
+    F.lower(F.trim("status")).alias("status"),  # lower(trim(status)) as status
+)
+stg_payments = (payments_raw
+    .groupBy("order_id")                       # group by order_id
+    .agg(F.sum("amount").alias("amount")))     # sum(amount) as amount
+
+fct_orders = stg_orders.join(stg_payments, on="order_id", how="left")  # left join using (order_id)
+
+daily_sales_df = (fct_orders
+    .where(F.col("status") == "completed")     # where status = 'completed'
+    .groupBy("order_date")                     # group by order_date
+    .agg(F.count("*").alias("orders"),         # count(*) as orders
+         F.sum("amount").alias("revenue"))     # sum(amount) as revenue
+    .orderBy("order_date"))                    # order by order_date
+
+daily_sales_df.show()                          # 액션: 여기서 계산</code></pre>
+</details>
+<p>실제 출력(앞부분):</p>
+<pre data-file="daily_sales_df.show() — 실제 출력">+----------+------+-------+
+|order_date|orders|revenue|
++----------+------+-------+
+|2026-10-02|     1|  19000|
+|2026-10-03|     1|  59000|
+|2026-10-04|     2| 188000|
+|2026-10-05|     1|  89000|
+|2026-10-06|     1|  59000|
+|2026-10-08|     1| 129000|
+|2026-10-09|     1|  19000|
+|2026-10-10|     1|  89000|
+|2026-10-11|     1|  39000|
+|2026-10-16|     2| 148000|
+|2026-10-17|     1|  19000|
+|2026-10-18|     1|  49000|
++----------+------+-------+</pre>
+<p>12일, 완료 주문 14건, 매출 합계 906,000원입니다. 1일차 dbt <code>daily_sales</code>와 같은 숫자인지 <code>dbt show -s daily_sales</code>로 맞춰 보세요.</p>
+</div>
+
+<div class="step" data-id="sql">
+<div class="step-title">4. 같은 것을 Spark SQL로 + 두 결과 비교</div>
+<p>DataFrame을 임시 뷰로 등록하면 SQL로 질의할 수 있습니다. dbt 모델 SQL을 거의 그대로 붙여 넣으면 됩니다.</p>
+<pre data-file="셀 3"><code>orders_raw.createOrReplaceTempView("raw_orders")      # CREATE TEMP VIEW raw_orders AS ...
+payments_raw.createOrReplaceTempView("raw_payments")
+
+daily_sales_sql = spark.sql("""
+    with stg_orders as (
+        select order_id, customer_id, order_date, lower(trim(status)) as status
+        from raw_orders
+    ),
+    stg_payments as (
+        select order_id, sum(amount) as amount from raw_payments group by order_id
+    )
+    select o.order_date, count(*) as orders, sum(p.amount) as revenue
+    from stg_orders o
+    left join stg_payments p using (order_id)
+    where o.status = 'completed'
+    group by o.order_date
+    order by o.order_date
+""")                                                  # spark.sql() 도 변환. 아직 실행 안 됨
+
+# A EXCEPT ALL B, B EXCEPT ALL A 가 둘 다 0행이면 두 결과는 같다
+diff = (daily_sales_df.exceptAll(daily_sales_sql).count()
+        + daily_sales_sql.exceptAll(daily_sales_df).count())
+print("차이 행 수:", diff)</code></pre>
+<p><code>차이 행 수: 0</code>이 나오면 두 방식의 결과가 완전히 같습니다. 이제 둘의 실행 계획을 비교해 보세요.</p>
+<pre><code>daily_sales_df.explain()
+daily_sales_sql.explain()</code></pre>
+<p>실제로 돌려 보면 두 출력은 내부 번호(<code>plan_id</code>)만 다르고 <b>연산자와 순서가 한 줄도 다르지 않습니다</b>. Catalyst가 두 코드를 같은 계획으로 바꾼 것입니다.</p>
+</div>
+
+<div class="step" data-id="explain">
+<div class="step-title">5. 직접 해보기: explain() 에서 셔플과 조인 찾기</div>
+<p>위 <a href="#explain">explain 읽는 법</a>의 표를 옆에 두고 <code>daily_sales_df.explain()</code> 출력에서 아래 세 가지를 찾아 적어 보세요.</p>
+<ol>
+<li>셔플(<code>Exchange</code>)은 몇 번, 어떤 컬럼 기준으로 일어나나요?</li>
+<li>조인 방식은 무엇이고, 왜 그게 골라졌을까요?</li>
+<li><code>status = 'completed'</code> 조건(<code>Filter</code>)은 조인보다 위에 있나요, 아래에 있나요? 코드에 쓴 순서와 같나요?</li>
+</ol>
+<details class="hint"><summary>힌트 1</summary>
+<p><code>Exchange</code>로 시작하는 줄만 세어 보세요. <code>BroadcastExchange</code>는 셔플이 아니라 "작은 표 복사"입니다.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<ol>
+<li><b>세 번</b>: <code>hashpartitioning(order_id, 8)</code>(결제 합계용), <code>hashpartitioning(order_date, 8)</code>(일별 집계용), <code>rangepartitioning(order_date ASC, 8)</code>(정렬용). 각각이 Stage 경계입니다.</li>
+<li><b>BroadcastHashJoin</b>. 결제 합계 쪽이 수 KB라 기준(10MB)보다 훨씬 작아서 복사해 붙이는 게 싸다고 판단했습니다. 그래서 orders 쪽은 조인 때문에 셔플되지 않았습니다.</li>
+<li><b>조인 아래</b>, orders <code>FileScan</code> 바로 위에 있습니다. 코드에선 <code>join</code> 뒤에 <code>where</code>를 썼지만, 옵티마이저가 "orders 컬럼만 쓰는 조건이니 조인 전에 거르면 조인할 행이 줄어든다"고 판단해 앞으로 옮겼습니다(predicate pushdown). 다만 <code>lower(trim())</code> 같은 함수가 낀 조건이라 CSV 읽기 자체로는 못 내려가서 <code>PushedFilters: []</code>이고 <code>DataFilters</code>에만 적혀 있습니다. 반면 payments 쪽은 <code>PushedFilters: [IsNotNull(order_id)]</code>가 읽기 단계로 내려갔습니다.</li>
+</ol>
+</details>
+<p>이어서 브로드캐스트를 끄고 조인 방식이 바뀌는 걸 확인합니다.</p>
+<pre><code>spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")   # 브로드캐스트 끄기
+stg_orders.join(stg_payments, "order_id", "left").explain()      # SortMergeJoin 이 보여야 함
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", str(10 * 1024 * 1024))  # 원래대로 10MB</code></pre>
+</div>
+
+<div class="step" data-id="partitions">
+<div class="step-title">6. 파티션 수 보기: repartition vs coalesce</div>
+<pre data-file="셀 4"><code>print(fct_orders.rdd.getNumPartitions())          # 지금 몇 조각인가
+re4 = fct_orders.repartition(4, "order_date")      # order_date 해시로 4조각 (셔플 O)
+print(re4.rdd.getNumPartitions())
+co1 = re4.coalesce(1)                              # 4조각을 1조각으로 합치기 (셔플 X)
+print(co1.rdd.getNumPartitions())
+
+# 파티션마다 몇 행? = SELECT partition_id, count(*) GROUP BY partition_id
+re4.groupBy(F.spark_partition_id().alias("partition")).count().orderBy("partition").show()</code></pre>
+<pre data-file="실제 출력">fct_orders 파티션 수: 1
+repartition(4, order_date): 4
+coalesce(1): 1
++---------+-----+
+|partition|count|
++---------+-----+
+|        0|    8|
+|        1|    6|
+|        2|    9|
+|        3|    7|
++---------+-----+</pre>
+<p>처음엔 1조각입니다. CSV가 작아서(기본 128MB 단위로 나눠 읽음) 한 조각으로 읽혔기 때문입니다. 그리고 30행이 4조각에 고르게 나뉘지 않았죠(8·6·9·7). 해시는 "같은 날짜는 같은 조각"만 보장하지 "조각 크기가 같다"는 보장하지 않습니다. 날짜 하나에 데이터가 몰리면 이게 곧 스큐입니다. <code>re4.explain()</code>과 <code>co1.explain()</code>을 비교하면 <code>coalesce</code>에는 새 <code>Exchange</code>가 없고 <code>Coalesce 1</code>만 붙는 것도 보입니다.</p>
+</div>
+
+<div class="step" data-id="ui">
+<div class="step-title">7. Spark UI(4040)에서 셔플 눈으로 보기</div>
+<p>노트북이 열려 있는 동안(SparkSession이 살아 있는 동안) 브라우저에서 <code>http://localhost:4040</code>을 엽니다.</p>
+<ol>
+<li><b>Jobs</b> 탭: 액션마다 Job이 하나씩 생겼습니다. <code>count()</code>, <code>show()</code>, <code>exceptAll().count()</code>…</li>
+<li><code>daily_sales_df.show()</code> Job을 눌러 <b>DAG Visualization</b>을 펼칩니다. Stage 사이에 있는 경계가 셔플입니다.</li>
+<li><b>Stages</b> 탭: <code>Shuffle Write</code>, <code>Shuffle Read</code> 열에 바이트 수가 찍힌 Stage가 셔플을 한 곳입니다. 몇 KB뿐이지만, 데이터가 TB면 이 열이 몇백 GB가 됩니다.</li>
+<li><b>SQL / DataFrame</b> 탭: 쿼리를 누르면 explain 계획이 그림으로, 연산자마다 실제 행 수와 함께 나옵니다. AQE가 셔플 파티션을 몇 개로 줄였는지(<code>AQEShuffleRead</code>)도 보입니다.</li>
+</ol>
+<p>스크립트로 실행할 때는 끝나면 UI도 닫힙니다. 보고 싶다면 <code>KEEP_UI=1</code>로 실행해 Enter를 누르기 전까지 열어 둡니다(README 참고).</p>
+<p class="meta-line">참고: 이 단계의 화면 설명은 Spark 4.0 UI의 탭 이름 기준이며, 페이지 작성 때 화면을 직접 캡처해 확인하지는 못했습니다.</p>
+</div>
+
+<div class="step" data-id="write">
+<div class="step-title">8. 직접 해보기: order_date 로 나눈 parquet 쓰기</div>
+<p><code>fct_orders</code>를 <code>/home/jovyan/work/out/fct_orders</code>에 parquet로 쓰세요. 조건은 두 가지입니다.</p>
+<ul>
+<li>날짜별 폴더(<code>order_date=2026-10-01/</code> …)로 나눌 것</li>
+<li>날짜 폴더마다 파일이 <b>하나씩만</b> 생기게 할 것 (작은 파일 문제 피하기)</li>
+</ul>
+<details class="hint"><summary>힌트 1</summary>
+<p>쓰기는 <code>df.write.mode("overwrite").partitionBy("컬럼").parquet("경로")</code> 모양입니다. <code>mode("overwrite")</code>는 <code>CREATE OR REPLACE</code>입니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>메모리 파티션마다 날짜 폴더마다 파일이 하나씩 생깁니다. 쓰기 직전에 같은 날짜를 한 메모리 파티션으로 모아 두면(<code>repartition("order_date")</code>) 폴더마다 파일이 하나가 됩니다.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="셀 5"><code>out = "/home/jovyan/work/out/fct_orders"
+(fct_orders
+    .repartition("order_date")        # 같은 날짜끼리 한 조각으로 (셔플) → 폴더마다 파일 1개
+    .write
+    .mode("overwrite")                # CREATE OR REPLACE
+    .partitionBy("order_date")        # 날짜별 폴더로
+    .parquet(out))                    # write = 액션
+
+back = spark.read.parquet(out)        # 다시 읽기. order_date 는 폴더 이름에서 복원됨
+print(back.count())                   # 30
+back.where(F.col("order_date") == "2026-10-05").explain()   # PartitionFilters 확인</code></pre>
+</details>
+<p>PowerShell에서 결과 폴더를 확인합니다: <code>Get-ChildItem -Recurse out\fct_orders | Select-Object -First 8</code></p>
+<pre data-file="폴더 구조 — Spark가 만드는 형태 예시 (작성 환경에서 미검증)">out\fct_orders\_SUCCESS
+out\fct_orders\order_date=2026-10-01\part-00000-(uuid).c000.snappy.parquet
+out\fct_orders\order_date=2026-10-02\part-00000-(uuid).c000.snappy.parquet
+out\fct_orders\order_date=2026-10-03\part-00000-(uuid).c000.snappy.parquet
+...   (날짜 폴더 19개)</pre>
+<p>읽을 때의 계획에서 날짜 조건이 <code>PartitionFilters</code>로 들어간 것을 확인하세요. 19개 폴더 중 하나만 엽니다.</p>
+<pre data-file="back.where(order_date = '2026-10-05').explain() — 형태 예시 (작성 환경에서 미검증)">== Physical Plan ==
+*(1) ColumnarToRow
++- FileScan parquet [order_id#..,customer_id#..,status#..,amount#..,order_date#..] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/home/jovyan/work/out/fct_orders], PartitionFilters: [isnotnull(order_date#..), (order_date#.. = 2026-10-05)], PushedFilters: [], ReadSchema: struct&lt;order_id:int,customer_id:int,status:string,amount:bigint&gt;</pre>
+</div>
+
+<div class="step" data-id="duckdb">
+<div class="step-title">9. 직접 해보기: Spark가 쓴 parquet를 DuckDB·dbt 에서 읽기</div>
+<p>이제 컨테이너 밖, 평소 쓰던 dbt 가상환경으로 돌아옵니다. 먼저 DuckDB로 바로 읽어 보고, 그다음 dbt source로 등록합니다.</p>
+<pre><code>cd $HOME\dbt-practice
+.\.venv\Scripts\Activate.ps1
+cd shop
+dbt show --inline "select * from read_parquet('out/fct_orders/*/*.parquet', hive_partitioning = true)" --limit 5</code></pre>
+<pre data-file="실제 출력 (dbt-duckdb 1.11)"><code>| order_id | customer_id | status    | amount | order_date |
+| -------- | ----------- | --------- | ------ | ---------- |
+|        1 |          10 | shipped   |  39000 | 2026-10-01 |
+|        2 |          10 | returned  |  59000 | 2026-10-01 |
+|        3 |          12 | completed |  19000 | 2026-10-02 |
+|        4 |           8 | placed    |  89000 | 2026-10-02 |
+|        5 |           8 | completed |  59000 | 2026-10-03 |</code></pre>
+<p><code>order_date</code>가 맨 끝 컬럼으로 붙어 있습니다. 파일 안에는 없고 폴더 이름에서 살려 낸 컬럼이기 때문입니다. 행 수 제한은 SQL 안의 <code>limit</code>이 아니라 <code>--limit</code> 옵션으로 줍니다(<code>dbt show</code>가 자기 limit을 덧붙여서, SQL에 <code>limit</code>을 쓰면 문법 오류가 납니다).</p>
+<p>과제: <code>sources.yml</code>에 <code>lake</code>라는 source를 추가하고 테이블 <code>fct_orders_spark</code>가 이 parquet를 가리키게 하세요. 그리고 그걸 읽어 일별 매출을 내는 모델 <code>models/marts/daily_sales_from_spark.sql</code>을 만들고, 1일차 <code>daily_sales</code>와 숫자가 같은지 확인하세요.</p>
+<details class="hint"><summary>힌트 1</summary>
+<p>2일차 <code>shop_raw</code> source의 <code>meta.external_location</code>에 <code>read_csv(...)</code>를 썼던 것처럼, 이번엔 <code>read_parquet(...)</code>를 씁니다. 폴더 이름 <code>order_date=...</code>를 컬럼으로 살리려면 <code>hive_partitioning = true</code>가 필요합니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>external_location 안의 <code>{name}</code>은 테이블 이름으로 바뀝니다. 이번엔 폴더 이름(<code>fct_orders</code>)과 테이블 이름(<code>fct_orders_spark</code>)이 달라서 경로를 직접 적는 게 간단합니다. 테이블 단위로 <code>meta</code>를 둘 수 있습니다.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="models/sources.yml (추가)"><code>  - name: lake
+    tables:
+      - name: fct_orders_spark
+        meta:
+          external_location: "read_parquet('out/fct_orders/*/*.parquet', hive_partitioning = true)"</code></pre>
+<pre data-file="models/marts/daily_sales_from_spark.sql"><code>select
+    order_date,
+    count(*)     as orders,
+    sum(amount)  as revenue
+from {{ source('lake', 'fct_orders_spark') }}
+where status = 'completed'
+group by order_date
+order by order_date</code></pre>
+<pre><code>dbt run -s daily_sales_from_spark
+dbt show -s daily_sales_from_spark --limit 20</code></pre>
+</details>
+<p><code>dbt show -s daily_sales_from_spark</code>의 실제 출력입니다.</p>
+<pre data-file="실제 출력 (dbt-duckdb 1.11, 같은 구조의 parquet)"><code>| order_date | orders | revenue |
+| ---------- | ------ | ------- |
+| 2026-10-02 |      1 |   19000 |
+| 2026-10-03 |      1 |   59000 |
+| 2026-10-04 |      2 |  188000 |
+| 2026-10-05 |      1 |   89000 |
+| 2026-10-06 |      1 |   59000 |
+| 2026-10-08 |      1 |  129000 |
+| 2026-10-09 |      1 |   19000 |
+| 2026-10-10 |      1 |   89000 |
+| 2026-10-11 |      1 |   39000 |
+| 2026-10-16 |      2 |  148000 |
+| 2026-10-17 |      1 |   19000 |
+| 2026-10-18 |      1 |   49000 |</code></pre>
+<p>Spark에서 낸 숫자와 같습니다. <b>Spark가 만든 파일을 다른 엔진이 아무 변환 없이 읽었다</b>는 점이 중요합니다. parquet + Hive 파티션은 엔진 사이의 공용어입니다.</p>
+</div>
+
+<div class="step" data-id="cleanup">
+<div class="step-title">10. 정리하고 하루 마무리</div>
+<pre><code>docker stop de-spark       # 멈추기 (다시 쓸 땐 docker start de-spark)
+docker rm de-spark         # 완전히 지우기 (shop\out 결과는 남음)
+Add-Content .gitignore "out/"
+git add .
+git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code></pre>
+<p><code>out/</code>은 다시 만들 수 있는 결과물이라 git에 올리지 않습니다(<code>target/</code>과 같은 이유).</p>
+</div>
+
+</div>
+
+<div class="box warn">
+<span class="box-title">자주 막히는 곳</span>
+<ul>
+<li><code>port is already allocated</code> → 8888이나 4040을 다른 프로그램이 쓰고 있습니다. <code>-p 8890:8888 -p 4041:4040</code>처럼 앞 숫자만 바꾸세요. 노트북을 두 개 열면 두 번째 SparkSession은 컨테이너 안에서 4041을 씁니다.</li>
+<li><code>Path does not exist: file:/home/jovyan/work/data/raw_orders.csv</code> → <code>-v</code> 마운트 경로가 틀렸습니다. <code>docker exec de-spark ls /home/jovyan/work/data</code>로 확인하세요.</li>
+<li>4040이 안 열림 → SparkSession이 끝났거나(스크립트 종료, <code>spark.stop()</code>), 아직 만들기 전입니다. 노트북에서 셀을 실행해 둔 상태로 여세요.</li>
+<li><code>F.col("status") == "completed" and ...</code>에서 오류 → 파이썬의 <code>and</code>/<code>or</code>는 못 씁니다. <code>&amp;</code>/<code>|</code>와 괄호를 쓰세요: <code>(F.col("a") == 1) &amp; (F.col("b") &gt; 2)</code>.</li>
+<li>DuckDB에서 <code>order_date</code> 컬럼이 없음 → <code>hive_partitioning = true</code>를 빼먹었습니다. 그 컬럼은 파일 안이 아니라 폴더 이름에만 있습니다.</li>
+<li>DuckDB에서 <code>_SUCCESS</code> 파일 때문에 오류 → 경로를 <code>out/fct_orders/*/*.parquet</code>처럼 <code>.parquet</code>로 끝나게 적으세요.</li>
+<li>Windows에서 Docker 없이 <code>pip install pyspark</code>로 돌리면 Java 설치, 그리고 parquet 쓰기에 <code>winutils.exe</code>/<code>HADOOP_HOME</code> 문제가 생기기 쉽습니다. 이 과정에서 컨테이너를 쓰는 이유입니다.</li>
+</ul>
+</div>
+
+<h2 id="recap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+Spark는 <b>변환을 계획으로 쌓았다가 액션 때 한 번에</b>, 데이터를 <b>파티션으로 나눠 익스큐터들이 동시에</b> 계산하는 엔진이고, 비용의 대부분은 <b>셔플</b>에서 나온다.
+</div>
+
+<ul>
+<li>Spark가 필요한 곳: 웨어하우스 밖의 큰 원본 파일·로그·JSON, 스트리밍, ML 피처, 레이크하우스. 테이블에 있는 데이터의 SQL 가공은 대부분 웨어하우스+dbt로 충분</li>
+<li>드라이버는 계획·지시, 익스큐터는 계산, 클러스터 매니저는 자원 배정. local 모드는 한 대에서 전부</li>
+<li>DataFrame과 Spark SQL은 같은 옵티마이저 → 같은 실행 계획. RDD는 거의 쓸 일 없음</li>
+<li>narrow는 셔플 없음, wide(groupBy·join·orderBy)는 셔플 → Stage 경계</li>
+<li>작은 표 조인은 Broadcast, 큰 표끼리는 Sort-Merge. 한 키에 몰리면 스큐</li>
+<li>explain은 아래에서 위로: FileScan → Filter → Exchange(셔플) → HashAggregate → Join</li>
+<li>분석 저장은 parquet, <code>partitionBy</code>로 날짜 폴더, 쓰기 전 <code>repartition</code>으로 작은 파일 줄이기</li>
+</ul>
+
+<h3>스스로 설명해 보기</h3>
+<p>노트를 보지 않고 소리 내어 답해 보세요. 막히면 위로 돌아가 다시 읽습니다.</p>
+<ol>
+<li>팀장님이 "GA4 데이터가 커지니까 Spark로 옮기자"고 하면, 어떤 질문부터 하겠습니까?</li>
+<li><code>df = spark.read.csv(...)</code> 줄은 0.1초인데 <code>df.count()</code>는 30초가 걸렸습니다. 왜일까요?</li>
+<li><code>group by order_date</code>를 하면 왜 데이터가 네트워크를 타고 이동해야 하나요?</li>
+</ol>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="3">
+<p class="q-text">다음 중 Spark를 도입할 이유가 <b>가장 약한</b> 경우는?</p>
+<ol class="q-opts">
+<li>GCS에 매일 500GB씩 쌓이는 원본 JSON 로그를 정제해 parquet로 만들기</li>
+<li>Kafka로 들어오는 클릭 이벤트를 몇 분 단위로 집계하기</li>
+<li>이미 BigQuery 테이블에 있는 매체 리포트를 일별 마트로 집계하기</li>
+<li>수억 행의 사용자 행동 데이터로 ML 학습용 피처 만들기</li>
+</ol>
+<div class="q-explain">이미 웨어하우스에 있는 정형 데이터를 SQL로 집계하는 일은 BigQuery가 내부적으로 분산 처리해 줍니다. 여기에 Spark를 끼우면 데이터를 꺼냈다 다시 넣는 일과 클러스터 관리만 늘어납니다. dbt 모델이 맞습니다. 나머지 셋(웨어하우스 밖 대용량 원본, 스트리밍, ML 피처)은 Spark가 잘하는 영역입니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">아래 코드에서 실제로 계산(Job)이 시작되는 줄은?</p>
+<pre><code>a = spark.read.parquet("events")           # (1)
+b = a.where(F.col("country") == "KR")      # (2)
+c = b.groupBy("day").count()               # (3)
+c.show()                                   # (4)</code></pre>
+<ol class="q-opts">
+<li>(1)부터 줄마다 하나씩</li>
+<li>(4)에서 (1)~(3)을 합친 계획이 한 번에</li>
+<li>(3)의 groupBy에서</li>
+<li>(2)의 where에서</li>
+</ol>
+<div class="q-explain"><code>read</code>, <code>where</code>, <code>groupBy().count()</code>는 모두 변환이라 계획만 쌓입니다. <code>show()</code>가 액션이라 이때 전체 계획을 최적화해(예: country 조건을 파일 읽기로 내려보내기) 한 번에 실행합니다. 참고로 <code>read</code>는 스키마 확인 때문에 파일 메타데이터를 살짝 보기도 하지만, 데이터 전체를 계산하지는 않습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">다음 중 셔플을 <b>일으키지 않는</b> 연산은?</p>
+<ol class="q-opts">
+<li><code>df.groupBy("customer_id").agg(F.sum("amount"))</code></li>
+<li><code>df.orderBy("order_date")</code></li>
+<li><code>df.repartition(16)</code></li>
+<li><code>df.where(F.col("status") == "completed").select("order_id")</code></li>
+</ol>
+<div class="q-explain"><code>where</code>와 <code>select</code>는 각 파티션 안에서 끝나는 narrow 변환이라 셔플이 없습니다. groupBy(같은 키 모으기), orderBy(전체 정렬), repartition(재분배)은 모두 다른 파티션의 데이터가 필요한 wide 연산이라 explain에 <code>Exchange</code>가 생깁니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">10억 행 주문 표와 300행짜리 매체 코드표를 조인합니다. Spark가 보통 고르는 조인 방식과 그 이유는?</p>
+<ol class="q-opts">
+<li>Broadcast Hash Join — 작은 코드표를 모든 익스큐터에 복사하면 큰 주문 표를 셔플하지 않아도 되므로</li>
+<li>Sort-Merge Join — 큰 표가 있으면 항상 정렬 후 조인해야 하므로</li>
+<li>Broadcast Hash Join — 큰 주문 표를 모든 익스큐터에 복사하므로</li>
+<li>Cartesian Join — 키가 다르면 모든 조합을 만들어야 하므로</li>
+</ol>
+<div class="q-explain">브로드캐스트되는 쪽은 <b>작은</b> 표입니다(기본 10MB 이하). 300행 코드표를 복사해 두면 10억 행은 제자리에서 붙기만 하니 셔플이 사라집니다. 3번처럼 큰 표를 복사하면 메모리가 터집니다. Sort-Merge는 양쪽이 다 클 때의 방식입니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">Spark UI의 한 Stage에서 Task 199개는 2초, 1개는 25분 걸렸습니다. 가장 먼저 의심할 것은?</p>
+<ol class="q-opts">
+<li>익스큐터 수가 너무 많다</li>
+<li>parquet 대신 CSV를 써서 그렇다</li>
+<li>특정 키에 데이터가 몰린 스큐(skew)</li>
+<li>캐시를 너무 많이 했다</li>
+</ol>
+<div class="q-explain">셔플은 키 값으로 행을 나누기 때문에, NULL·"비회원" 같은 한 값에 행이 몰리면 그 파티션 하나만 거대해집니다. 다른 Task는 금방 끝나고 그 하나를 기다리는 모양이 전형적인 스큐입니다. 몰린 키를 따로 처리하거나, AQE skew join, 브로드캐스트, salt로 대응합니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text"><code>explain()</code> 출력에서 셔플이 일어나는 지점을 알려 주는 연산자는?</p>
+<ol class="q-opts">
+<li><code>FileScan</code></li>
+<li><code>Exchange hashpartitioning(...)</code></li>
+<li><code>Project</code></li>
+<li><code>BroadcastExchange</code></li>
+</ol>
+<div class="q-explain"><code>Exchange hashpartitioning(키, n)</code>(정렬이면 <code>rangepartitioning</code>)이 셔플이고 Stage 경계입니다. <code>FileScan</code>은 파일 읽기, <code>Project</code>는 SELECT 컬럼 고르기입니다. <code>BroadcastExchange</code>는 작은 표를 복사해 보내는 것이라 이름은 비슷해도 큰 표를 섞는 셔플과는 다릅니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text"><code>df.write.partitionBy("order_date").parquet("out")</code>로 썼더니 날짜 폴더 365개마다 작은 파일이 200개씩 생겼습니다. 가장 알맞은 대처는?</p>
+<ol class="q-opts">
+<li>parquet 대신 CSV로 쓴다</li>
+<li><code>spark.sql.shuffle.partitions</code>를 2000으로 올린다</li>
+<li><code>partitionBy</code>를 <code>order_date</code>, <code>hour</code> 두 단계로 더 잘게 나눈다</li>
+<li>쓰기 직전에 <code>.repartition("order_date")</code>로 같은 날짜를 한 조각에 모은다</li>
+</ol>
+<div class="q-explain">파일 수 ≈ 메모리 파티션 수 × 폴더 수입니다. 쓰기 전에 <code>repartition("order_date")</code>를 하면 같은 날짜 행이 한 메모리 파티션에 모여 폴더마다 파일이 하나가 됩니다. 셔플 파티션을 늘리거나 폴더를 더 잘게 나누면 파일이 오히려 늘어나고, CSV는 형식만 나빠질 뿐 파일 수 문제와 관계없습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">"Airflow → Spark → dbt" 구성에서 각 도구의 역할을 바르게 짝지은 것은?</p>
+<ol class="q-opts">
+<li>Airflow: 언제·순서·재시도 / Spark: 원본 파일을 정제된 parquet로 / dbt: parquet를 source로 받아 마트·테스트</li>
+<li>Airflow: 원본 파일 정제 / Spark: 스케줄 / dbt: 대시보드</li>
+<li>Airflow: SQL 모델 관리 / Spark: 테스트 / dbt: 클러스터 자원 배정</li>
+<li>세 도구 모두 같은 일을 하므로 하나만 쓰면 된다</li>
+</ol>
+<div class="q-explain">Airflow는 계산을 직접 하지 않고 지휘만 합니다(5·6일차). Spark는 웨어하우스 밖의 큰 원본을 손질해 parquet로 쓰고, dbt는 그 결과를 source로 받아 SQL 모델·테스트·문서를 붙입니다. 오늘 실습 8·9단계가 이 연결의 축소판입니다.</div>
+</div>
+
+</div>
+
+<h2 id="week">7일 정리</h2>
+
+<p>7일 동안 배운 것을 한 장에 모으면 이렇습니다.</p>
+
+<pre class="diagram">┌─────────────────────────────── Airflow (5·6일차) ───────────────────────────────┐
+│  DAG · schedule · logical date/data interval · catchup·backfill · 재시도·알림       │
+│  멱등 태스크 · XCom(작은 값만) · Asset(데이터 갱신으로 다음 DAG 깨우기)              │
+│                                                                                │
+│   [수집 태스크] ──▶ [Spark 태스크] ──Asset──▶ [dbt build 태스크] ──▶ [알림]          │
+└──────┬──────────────────┬──────────────────────────┬───────────────────────────┘
+       │                  │ 7일차                      │ 1~4일차, 6일차
+       ▼                  ▼                            ▼
+┌────────────┐   ┌──────────────────────┐   ┌──────────────────────────────────────┐
+│ 원본         │   │ Spark                 │   │ dbt (웨어하우스: DuckDB/BigQuery)        │
+│ CSV·JSON·로그 │──▶│ 드라이버 → 익스큐터       │──▶│ source ─▶ staging ─▶ intermediate ─▶ │
+│ API         │   │ 변환(계획) / 액션(실행)   │   │          marts (fct_, dim_)            │
+└────────────┘   │ 파티션 · 셔플 · 조인 전략  │   │ ref()로 DAG · materialization          │
+                 │ explain · Spark UI     │   │ 테스트 · freshness · contract · docs   │
+                 │ → parquet (date 파티션) │   │ Jinja·매크로 · incremental · snapshot   │
+                 └──────────────────────┘   │ 선택자(+, @, state:modified) · target  │
+                                            └───────────────────┬──────────────────┘
+                                                                ▼
+                                                     BI · 분석 · Semantic Layer</pre>
+
+<h3>스스로 점검하기</h3>
+<p>막힘 없이 설명할 수 있으면 체크하세요. 막히는 항목은 괄호 안 일차로 돌아가 다시 봅니다.</p>
+<ul>
+<li>프로시저 하나를 dbt 모델 여러 개로 나누면 무엇이 좋아지는지 (1일차)</li>
+<li><code>ref()</code>와 <code>source()</code>의 차이, 그리고 staging·intermediate·marts에 각각 무엇을 두는지 (2일차)</li>
+<li>view·table·incremental·ephemeral을 언제 고르는지 (2·4일차)</li>
+<li>generic 4종과 singular 테스트, <code>dbt build</code>가 실패한 테스트 뒤를 어떻게 처리하는지 (3일차)</li>
+<li>MERGE 프로시저를 incremental 모델로, 이력 테이블을 snapshot으로 옮기는 방법 (4일차)</li>
+<li>logical date와 실제 실행 시각이 다른 이유, 백필이 안전하려면 무엇이 필요한지 (5일차)</li>
+<li>Airflow에서 dbt를 돌릴 때 태스크를 어떻게 나누고, Asset으로 무엇을 잇는지 (6일차)</li>
+<li>Spark가 필요한 일과 필요 없는 일, 셔플이 비싼 이유, explain에서 셔플 찾기 (7일차)</li>
+</ul>
+
+<h2 id="next">다음 단계 로드맵</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th>순서</th><th>주제</th><th>왜 · 무엇부터</th></tr>
+<tr><td>1</td><td><b>dbt Semantic Layer · MetricFlow</b></td><td>"매출"·"전환" 정의를 YAML(semantic model, measure, dimension, metric) 한곳에 두고 어디서 물어도 같은 숫자를 내게 하는 층. 마케팅 Semantic Layer OKR과 바로 이어집니다. <code>semantic_models:</code>와 <code>metrics:</code> 문서부터, 로컬에서는 <code>mf query</code>로 확인</td></tr>
+<tr><td>2</td><td><b>CI에서 dbt 돌리기</b></td><td>PR마다 <code>dbt build -s state:modified+ --defer --state prod_manifest</code>로 바뀐 것만 검증. GitHub Actions 하나로 시작. SQL 린트(SQLFluff)와 함께</td></tr>
+<tr><td>3</td><td><b>Airflow 운영 환경</b></td><td>standalone 대신 Helm 차트로 Kubernetes에 올리기, KubernetesExecutor·KubernetesPodOperator, 원격 로그, Cloud Composer(GCP 관리형)와의 차이</td></tr>
+<tr><td>4</td><td><b>Delta Lake · Apache Iceberg</b></td><td>parquet 폴더에 트랜잭션·MERGE·스키마 변경·시간 여행을 얹는 테이블 포맷. 오늘 만든 <code>out/fct_orders</code>를 Delta/Iceberg 테이블로 다시 써 보는 것부터. BigQuery도 Iceberg 테이블을 지원합니다</td></tr>
+</table>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+<b>dbt로 SQL을 제품처럼</b>(테스트·문서·버전), <b>Airflow로 언제·순서를</b>, <b>Spark로 웨어하우스 밖의 큰 일을</b>. 다음 걸음은 지표를 한곳에서 정의하는 Semantic Layer와, 이 모든 걸 자동 검증하는 CI입니다.
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

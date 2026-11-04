@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2일차 · 모델·ref·source·계층</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="day2">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">2일차 · dbt</div>
+<h1>모델·ref·source·계층 — 프로젝트에 뼈대 세우기</h1>
+<p class="lead">어제 만든 모델 3개를 <b>원본(source) → staging → intermediate → marts</b> 네 층으로 다시 짓습니다. dbt 프로젝트가 커져도 길을 잃지 않게 해 주는 규칙들을 배웁니다.</p>
+<p class="meta-line">이론 약 90분 · 실습 약 80분 · 퀴즈 8문제</p>
+
+<div class="box">
+<span class="box-title">오늘 마치면 할 수 있는 것</span>
+<ul>
+<li><code>source()</code>와 <code>ref()</code>의 차이를 말하고, 원본 경로를 <code>sources.yml</code> 한 곳에 모으기</li>
+<li>staging · intermediate · marts 각 층이 <b>무엇을 하고 무엇을 하면 안 되는지</b> 설명하기</li>
+<li><code>stg_</code> · <code>int_</code> · <code>fct_</code> · <code>dim_</code> 이름 규칙과 "한 행이 무엇인가(grain)"를 모델마다 말하기</li>
+<li>view · table · ephemeral · incremental 의 차이를 알고, <code>dbt_project.yml</code>에서 폴더별로 정하기</li>
+<li><code>--select</code>, <code>+모델</code>, <code>모델+</code>, <code>path:</code> 로 필요한 모델만 골라 실행하기</li>
+</ul>
+</div>
+
+<h2 id="layers">왜 층을 나누나</h2>
+
+<p>어제 만든 <code>daily_sales</code>는 잘 돌아갑니다. 그런데 내일 누가 "고객별 매출도 보고 싶어요"라고 하면 어떻게 될까요? 아마 <code>daily_sales</code>를 복사해서 <code>customer_sales</code>를 만들고, 그 안에 또 결제 합계 로직을 넣을 겁니다. 한 달 뒤에는 "결제 합계"가 다섯 군데에 다섯 가지 모양으로 흩어져 있게 됩니다. 프로시저 시절에 겪어 본 바로 그 상황입니다.</p>
+
+<p>dbt 커뮤니티는 이 문제를 <b>층(layer)</b>으로 풉니다. 데이터가 흐르는 방향대로 역할이 다른 폴더를 두고, 각 층에는 정해진 일만 시킵니다.</p>
+
+<pre class="diagram">  원본(source)          staging              intermediate           marts
+ ─────────────      ─────────────────     ──────────────────     ──────────────────
+  raw_customers ──▶  stg_customers ─────────────────────────────▶ dim_customers
+                                                                     ▲
+  raw_orders    ──▶  stg_orders    ─────────────────────────┬──▶ fct_orders
+                                                            │       │
+  raw_payments  ──▶  stg_payments  ──▶ int_order_payments ──┘       └──▶ (dim_customers 도 참조)
+
+  "있는 그대로"       "깨끗하게"          "조립 부품"              "사람이 보는 완성품"
+  손대지 않는다       1:1, 이름·형·정제    조인·집계 중간 단계       BI·분석가가 쓰는 테이블</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>층</th><th>하는 일</th><th>하면 안 되는 일</th><th>보통 materialization</th></tr>
+<tr><td><b>source</b><br>(원본)</td><td>수집 도구가 넣어 둔 테이블·파일. dbt는 <b>읽기만</b> 한다</td><td>dbt가 직접 고치거나 덮어쓰기</td><td>(dbt가 만들지 않음)</td></tr>
+<tr><td><b>staging</b></td><td>원본 테이블 <b>하나당 모델 하나</b>. 컬럼 이름 바꾸기, 형 변환, <code>lower(trim())</code> 같은 정제</td><td>조인, 집계, 비즈니스 규칙(“완료 주문만” 같은 필터)</td><td>view</td></tr>
+<tr><td><b>intermediate</b></td><td>staging을 조립하는 중간 단계. 집계, 여러 staging 조인, 복잡한 계산 쪼개기</td><td>최종 사용자에게 직접 노출</td><td>ephemeral 또는 view</td></tr>
+<tr><td><b>marts</b></td><td>사람이 쓰는 완성품. 사실(fct)과 차원(dim) 테이블</td><td>원본(source)을 직접 읽기 — 반드시 staging을 거친다</td><td>table (나중엔 incremental)</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>식당 주방을 떠올려 보세요.</p>
+<ul>
+<li><b>source</b> = 납품받은 식재료 상자. 흙 묻은 채로 창고에 있습니다. 상자 자체는 건드리지 않습니다.</li>
+<li><b>staging</b> = 손질 담당. 양파는 양파대로 씻고 껍질 벗겨 통에 담습니다. 아직 다른 재료와 섞지 않습니다. 재료 하나당 손질 통 하나.</li>
+<li><b>intermediate</b> = 소스·육수 같은 반조리 재료. 여러 요리에 같이 쓰입니다. 손님 앞에 그대로 나가지는 않습니다.</li>
+<li><b>marts</b> = 접시에 담긴 완성 요리. 손님(분석가·대시보드)이 받는 건 이것뿐입니다.</li>
+</ul>
+<p>양파 껍질 벗기는 법이 바뀌면 손질 통 하나만 고치면 되고, 그 양파를 쓰는 모든 요리에 저절로 반영됩니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>프로시저 안의 <code>CREATE TEMP TABLE tmp_orders AS SELECT ... LOWER(TRIM(status))</code> 블록 → <b>staging 모델</b>. 차이는 이 정제가 프로시저마다 복사되지 않고 한 곳에만 있다는 것.</li>
+<li><code>tmp_pay</code>처럼 "다음 단계에서 쓰려고 미리 합쳐 두는 임시 테이블" → <b>intermediate 모델</b></li>
+<li>마지막 <code>INSERT INTO dm.xxx</code>의 대상 테이블 → <b>marts 모델</b></li>
+<li>BigQuery에서 데이터셋을 <code>raw</code> / <code>stg</code> / <code>dm</code>으로 나눠 쓰던 습관이 있다면, 그게 이미 층 나누기입니다. dbt는 그걸 <b>폴더와 이름 규칙</b>으로 강제해 줄 뿐입니다.</li>
+</ul>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+staging은 <b>원본 하나를 깨끗하게</b>, intermediate는 <b>조립</b>, marts는 <b>완성품</b>. 정제 로직은 staging 한 곳에만 둔다.
+</div>
+
+<h2 id="source">source() — 원본에 이름표 붙이기</h2>
+
+<p>어제는 모델 안에 <code>read_csv('data/raw_orders.csv')</code>를 직접 썼습니다. 이렇게 원본 위치를 모델마다 하드코딩하면 세 가지 문제가 생깁니다.</p>
+<ol>
+<li>원본 위치가 바뀌면(파일 → BigQuery 테이블, 데이터셋 이름 변경) 그 원본을 읽는 <b>모든 모델</b>을 찾아 고쳐야 합니다.</li>
+<li>dbt는 그 문자열이 "원본"이라는 걸 모릅니다. 그래서 리니지 그래프에 원본이 나타나지 않고, 원본에 테스트나 신선도 검사(3일차)를 붙일 수도 없습니다.</li>
+<li>어떤 원본을 쓰고 있는지 목록이 어디에도 없습니다.</li>
+</ol>
+
+<p><code>source()</code>는 이 문제를 <b>YAML에 원본 목록을 한 번 적고, 모델에서는 이름으로만 부르는</b> 방식으로 풉니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">1일차: 위치를 직접 적는다</div>
+<pre><code>select ...
+from read_csv('data/raw_orders.csv')</code></pre>
+</div>
+<div>
+<div class="label">2일차: 이름으로 부른다</div>
+<pre><code>select ...
+from {{ source('shop_raw', 'raw_orders') }}</code></pre>
+</div>
+</div>
+
+<p><code>source('묶음 이름', '테이블 이름')</code> 두 인자를 받습니다. 묶음(source)은 보통 "어디서 온 데이터인가" 단위입니다 — 쇼핑몰 DB, GA4, 광고 API 처럼요. 실제 위치는 <code>sources.yml</code>에 적습니다.</p>
+
+<pre data-file="models/staging/sources.yml"><code>sources:
+  - name: shop_raw                 # source('shop_raw', ...) 의 첫 번째 인자
+    meta:
+      external_location: "read_csv('data/{name}.csv', header = true)"
+    tables:
+      - name: raw_customers        # 두 번째 인자
+      - name: raw_orders
+      - name: raw_payments</code></pre>
+
+<p><code>external_location</code>은 <b>dbt-duckdb 전용</b> 설정입니다. "이 source는 DB 안 테이블이 아니라 바깥 파일이다, 읽을 때는 이 표현식을 써라"는 뜻이고, <code>{name}</code> 자리에 테이블 이름이 들어갑니다. 그래서 <code>source('shop_raw', 'raw_orders')</code>는 컴파일하면 이렇게 바뀝니다(실제로 확인한 결과).</p>
+
+<pre data-file="target/compiled/shop/models/staging/stg_orders.sql (일부)"><code>from read_csv('data/raw_orders.csv', header = true)</code></pre>
+
+<div class="box tip">
+<span class="box-title">BigQuery에서는 이렇게 씁니다</span>
+<p>회사·OKR 프로젝트(BigQuery)에서는 원본이 이미 테이블이므로 <code>external_location</code> 대신 프로젝트·데이터셋을 적습니다. 모델 코드는 한 글자도 바뀌지 않습니다 — 이게 source를 쓰는 이유입니다.</p>
+<pre data-file="models/staging/sources.yml (BigQuery 예)"><code>sources:
+  - name: shop_raw
+    database: my-gcp-project   # BigQuery 프로젝트
+    schema: raw                # 데이터셋
+    tables:
+      - name: raw_orders       # → `my-gcp-project`.`raw`.`raw_orders`</code></pre>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th><code>source('묶음', '테이블')</code></th><th><code>ref('모델')</code></th></tr>
+<tr><td>가리키는 것</td><td>dbt <b>바깥</b>에서 만들어진 원본</td><td>dbt <b>안</b>에서 만든 모델</td></tr>
+<tr><td>정의하는 곳</td><td><code>sources.yml</code> 같은 YAML</td><td><code>models/</code> 안의 <code>.sql</code> 파일 이름</td></tr>
+<tr><td>dbt가 만드나?</td><td>아니오, 읽기만</td><td>예, <code>dbt run</code> 때 만든다</td></tr>
+<tr><td>쓰는 곳</td><td>원칙적으로 <b>staging 모델에서만</b></td><td>staging 이후 모든 층</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p><code>source()</code>는 회사 주소록입니다. "김 대리에게 전화해"라고 말하면 되지, 매번 전화번호를 외워서 누르지 않습니다. 김 대리 번호가 바뀌면 주소록 한 줄만 고칩니다. <code>sources.yml</code>이 그 주소록입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>프로시저 안의 <code>FROM raw.orders</code>를 <code>FROM {{ source('shop_raw', 'raw_orders') }}</code>로 바꾼다고 생각하면 됩니다. 원본 데이터셋 이름이 <code>raw</code>에서 <code>raw_v2</code>로 바뀌는 날, 프로시저 세계에서는 <code>grep</code>으로 전부 찾아 고치지만, dbt에서는 <code>sources.yml</code>의 <code>schema:</code> 한 줄만 고칩니다.</p>
+</div>
+
+<h2 id="dag">ref()와 DAG</h2>
+
+<p>모델끼리는 <code>ref()</code>로 연결합니다. dbt는 프로젝트의 모든 <code>ref()</code>와 <code>source()</code>를 읽어 <b>DAG</b>를 만듭니다.</p>
+
+<p><b>DAG</b>(Directed Acyclic Graph, 방향 있는 비순환 그래프)는 이름이 어렵지만 뜻은 간단합니다.</p>
+<ul>
+<li><b>Directed(방향)</b>: 화살표에 방향이 있다. <code>stg_orders → fct_orders</code>는 "fct_orders가 stg_orders를 쓴다"는 뜻이고, 반대는 아니다.</li>
+<li><b>Acyclic(순환 없음)</b>: 화살표를 따라가다 출발점으로 돌아오는 길이 없다. A가 B를 쓰고 B가 A를 쓰면 무엇을 먼저 만들지 정할 수 없기 때문.</li>
+<li><b>Graph(그래프)</b>: 점(모델)과 선(의존 관계)의 모음.</li>
+</ul>
+
+<p>DAG가 있으면 dbt는 두 가지를 스스로 정합니다.</p>
+<ol>
+<li><b>실행 순서</b>: 화살표가 들어오는 쪽을 먼저. <code>stg_*</code> → <code>int_*</code> → <code>fct_orders</code> → <code>dim_customers</code></li>
+<li><b>동시 실행</b>: 서로 의존하지 않는 모델은 같이 돌립니다. <code>profiles.yml</code>의 <code>threads: 4</code>가 "최대 4개 동시"라는 뜻입니다. 오늘 실습 로그에서 stg 세 개가 같은 초에 <code>START</code> 되는 걸 보게 됩니다.</li>
+</ol>
+
+<pre class="diagram">오늘 완성할 shop 프로젝트의 DAG
+
+ [source]                 [staging]              [intermediate]          [marts]
+
+ shop_raw.raw_customers ─▶ stg_customers ───────────────────────────────▶ dim_customers
+                                                                              ▲
+ shop_raw.raw_orders ────▶ stg_orders ─────────────────────────┐              │
+                                                               ├─▶ fct_orders ┘
+ shop_raw.raw_payments ──▶ stg_payments ──▶ int_order_payments ┘
+
+ 실행 순서:  ① stg 3개 동시  →  ② fct_orders (int 는 ephemeral 이라 안에 녹아 들어감)  →  ③ dim_customers</pre>
+
+<p>순환을 만들면 dbt는 아예 실행하지 않고 멈춥니다. 실제로 <code>stg_orders</code>에 <code>ref('fct_orders')</code>를 넣어 보면 이렇게 나옵니다.</p>
+<pre><code>Compilation Error
+  Found a cycle: model.shop.stg_orders --&gt; model.shop.fct_orders</code></pre>
+
+<div class="box warn">
+<span class="box-title">주석 안의 ref도 진짜 ref입니다</span>
+<p>위 순환 에러는 <code>-- {{ ref('fct_orders') }}</code>처럼 <b>SQL 주석 안에</b> 적었을 때도 똑같이 납니다. Jinja(<code>{{ }}</code>)는 SQL보다 <b>먼저</b> 처리되기 때문에, SQL 입장에서 주석이어도 Jinja는 그 안을 읽고 의존 관계를 만듭니다. 잠시 막아 두고 싶다면 Jinja 주석 <code>{# ... #}</code>을 쓰세요.</p>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>DAG는 요리 순서도입니다. "소스를 만들려면 양파 손질이 먼저", "파스타를 담으려면 소스가 먼저". 순서도가 있으면 주방장이 없어도 보조 요리사 넷(threads 4)이 각자 할 수 있는 일부터 동시에 시작합니다. 그런데 "소스를 만들려면 파스타가 먼저, 파스타를 만들려면 소스가 먼저"라고 적혀 있으면 아무도 시작할 수 없습니다 — 그게 순환입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>프로시저 세계에서는 "A 프로시저 끝나면 B, B 끝나면 C"를 스케줄러(또는 마스터 프로시저)에 사람이 적었습니다. 새 테이블이 생길 때마다 그 순서표도 손으로 고쳐야 했죠. dbt에서는 <b>SQL 안의 <code>ref()</code>가 곧 순서표</b>입니다. 순서표와 코드가 따로 놀 수가 없습니다.</p>
+</div>
+
+<h2 id="naming">이름 규칙과 grain</h2>
+
+<p>dbt에서 모델 파일 이름은 곧 테이블 이름입니다. 그래서 이름만 보고도 "어느 층인지, 한 행이 무엇인지" 알 수 있게 접두어를 붙입니다. dbt Labs가 권장하고 대부분 팀이 따르는 규칙입니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>접두어</th><th>층</th><th>뜻</th><th>오늘 만들 것</th><th>한 행(grain)</th></tr>
+<tr><td><code>stg_</code></td><td>staging</td><td>원본 하나를 깨끗하게 한 것</td><td><code>stg_customers</code>, <code>stg_orders</code>, <code>stg_payments</code></td><td>원본과 같음 (고객 1명 / 주문 1건 / 결제 1건)</td></tr>
+<tr><td><code>int_</code></td><td>intermediate</td><td>조립 중간 단계. 이름에 동사·목적을 담는다</td><td><code>int_order_payments</code></td><td>주문 1건 (결제를 주문 단위로 합침)</td></tr>
+<tr><td><code>fct_</code></td><td>marts</td><td><b>사실(fact)</b>: 일어난 일·사건. 행이 계속 쌓인다. 숫자(금액·건수)가 많다</td><td><code>fct_orders</code></td><td>주문 1건</td></tr>
+<tr><td><code>dim_</code></td><td>marts</td><td><b>차원(dimension)</b>: 사람·상품·매장 같은 대상. 사실을 "누가/무엇을" 로 잘라 보는 기준</td><td><code>dim_customers</code></td><td>고객 1명</td></tr>
+</table>
+</div>
+
+<h3>grain(그레인) — 모델마다 꼭 한 줄로 말할 수 있어야 하는 것</h3>
+
+<p><b>grain</b>은 "이 테이블의 한 행이 무엇을 뜻하는가"입니다. 오늘 리팩터링에서 가장 중요한 결정이 여기서 나옵니다.</p>
+
+<p>어제 <code>stg_payments</code>는 <code>group by order_id</code>로 <b>주문 단위로 합친</b> 모델이었습니다. 그런데 원본 <code>raw_payments</code>의 한 행은 <b>결제 1건</b>이고, 주문 5번과 18번은 카드 + 포인트 10,000원으로 나눠 낸 분할 결제입니다. staging은 원본과 grain이 같아야 하므로, 오늘 <code>stg_payments</code>는 <b>결제 1건 = 1행</b>으로 되돌리고, 합치는 일은 <code>int_order_payments</code>로 옮깁니다.</p>
+
+<pre class="diagram">raw_payments (결제 1건 = 1행, 32행)          int_order_payments (주문 1건 = 1행, 30행)
+┌────────────┬──────────┬────────┬───────┐     ┌──────────┬──────────────┬───────────────┐
+│ payment_id │ order_id │ method │ amount│     │ order_id │ total_amount │ payment_count │
+├────────────┼──────────┼────────┼───────┤     ├──────────┼──────────────┼───────────────┤
+│     5      │    5     │ card   │ 49000 │ ──▶ │    5     │    59000     │       2       │
+│     6      │    5     │ point  │ 10000 │     │    ...   │     ...      │      ...      │
+└────────────┴──────────┴────────┴───────┘     └──────────┴──────────────┴───────────────┘</pre>
+
+<p>왜 이게 중요할까요? 나중에 누군가 "결제수단별 매출"을 보고 싶어 하면, 어제의 <code>stg_payments</code>에서는 이미 결제수단 정보가 합쳐져 사라졌습니다. <b>staging에서 정보를 버리면 그 아래 층은 영영 되살릴 수 없습니다.</b> 4일차에 결제수단 pivot 매크로를 만들 때 바로 이 <code>stg_payments</code>를 씁니다.</p>
+
+<div class="box tip">
+<span class="box-title">이름 규칙 조금 더</span>
+<ul>
+<li>dbt Labs 가이드는 staging에 <code>stg_&lt;원본묶음&gt;__&lt;테이블&gt;</code>(밑줄 두 개)을 권합니다. 예: <code>stg_shop__orders</code>. 원본 묶음이 여러 개인 큰 프로젝트에서 유용합니다. 이번 실습은 묶음이 하나라 <code>stg_orders</code>로 짧게 씁니다.</li>
+<li>컬럼 이름도 규칙을 정해 두면 좋습니다. 기본 키·외래 키는 <code>&lt;대상&gt;_id</code>, 시각은 <code>_at</code>(<code>updated_at</code>), 날짜는 <code>_date</code>, 참·거짓은 <code>is_</code>/<code>has_</code>, 금액은 단위를 정해 두기(여기선 원).</li>
+<li>staging에서 원본의 애매한 이름을 고칩니다. 오늘 <code>name</code> → <code>customer_name</code>, <code>method</code> → <code>payment_method</code>로 바꿉니다. 여러 테이블을 조인했을 때 <code>name</code>이 어느 테이블의 이름인지 헷갈리지 않게요.</li>
+</ul>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>BigQuery 마트를 만들 때 "이 테이블 PK가 뭐지?"를 늘 확인하셨을 겁니다. grain은 그 질문을 <b>모델마다 미리 문서로 답해 두는 것</b>입니다. 조인 후 행 수가 갑자기 늘었다면(팬아웃) 거의 항상 grain이 다른 두 테이블을 그냥 붙였기 때문입니다. 3일차에 <code>unique</code> 테스트로 이걸 자동으로 잡습니다.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+모델 이름은 <b>층(접두어) + 대상</b>, 그리고 모델마다 <b>“한 행 = ○○ 1개”</b>를 말할 수 있어야 한다. staging은 원본과 grain이 같다.
+</div>
+
+<h2 id="materialization">materialization — 결과를 어떤 모양으로 남길까</h2>
+
+<p>모델에는 SELECT만 씁니다. 그 SELECT를 DB에 <b>무엇으로 만들지</b>(뷰? 테이블? 아무것도 안 남기기?)를 정하는 설정이 materialization입니다. SELECT는 그대로 두고 설정 한 줄만 바꾸면 dbt가 감싸는 SQL을 바꿔 줍니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>dbt가 DB에 보내는 것</th><th>장점</th><th>단점</th><th>어울리는 곳</th></tr>
+<tr><td><b>view</b> (기본값)</td><td><code>create view ... as select ...</code></td><td>저장 공간 0, 만드는 데 1초. 항상 최신</td><td>읽을 때마다 SELECT를 다시 계산 → 무거운 로직이면 느림</td><td>staging</td></tr>
+<tr><td><b>table</b></td><td>임시 테이블로 <code>create table as</code> 후 이름 바꿔치기</td><td>읽기 빠름. BI가 바로 붙기 좋음</td><td>매번 전체를 다시 만듦. 원본이 바뀌어도 다시 돌리기 전엔 옛날 값</td><td>marts</td></tr>
+<tr><td><b>ephemeral</b></td><td><b>아무것도 안 만든다.</b> 이 모델을 <code>ref()</code>한 쪽 SQL에 <code>with __dbt__cte__이름 as (...)</code>로 끼워 넣음</td><td>DB에 쓸데없는 객체가 안 생김</td><td>DB에서 직접 조회 불가. 여러 곳에서 쓰면 그만큼 반복 계산. 디버깅이 조금 불편</td><td>가벼운 intermediate</td></tr>
+<tr><td><b>incremental</b></td><td>처음엔 table, 다음부터는 <b>새로 생긴·바뀐 행만</b> <code>merge</code>/<code>insert</code></td><td>큰 테이블을 빨리 갱신</td><td>설계가 까다로움(어떤 행이 "새것"인가). 가끔 <code>--full-refresh</code> 필요</td><td>큰 fct — <b>4일차</b></td></tr>
+</table>
+</div>
+
+<p>ephemeral이 실제로 어떻게 되는지는 오늘 실습에서 직접 봅니다. <code>int_order_payments</code>를 ephemeral로 두면, <code>fct_orders</code>의 컴파일 결과 맨 위에 이런 CTE가 붙습니다(실제 결과).</p>
+
+<pre data-file="target/compiled/shop/models/marts/fct_orders.sql"><code>with __dbt__cte__int_order_payments as (
+select
+    order_id,
+    sum(amount)  as total_amount,
+    count(*)     as payment_count
+from "shop"."main"."stg_payments"
+group by order_id
+) select
+    o.order_id,
+    ...
+from "shop"."main"."stg_orders" o
+left join __dbt__cte__int_order_payments p
+    on o.order_id = p.order_id</code></pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<ul>
+<li><b>view</b> = 레시피 카드만 붙여 둔 것. 누가 달라고 할 때마다 그 자리에서 만듭니다. 늘 신선하지만 손님이 기다립니다.</li>
+<li><b>table</b> = 미리 만들어 냉장고에 넣어 둔 요리. 바로 꺼내 주지만, 아침에 만든 거라 점심 재료 변화는 반영 안 됩니다.</li>
+<li><b>ephemeral</b> = 따로 그릇에 담지 않고 요리하면서 바로 냄비에 넣는 밑준비. 냉장고(DB)에는 남지 않습니다.</li>
+<li><b>incremental</b> = 어제 만든 큰 솥 요리에 오늘 들어온 재료만 더 넣어 끓이기.</li>
+</ul>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<ul>
+<li>view → <code>CREATE OR REPLACE VIEW</code></li>
+<li>table → <code>CREATE OR REPLACE TABLE ... AS SELECT</code> (dbt는 안전하게 임시 이름으로 먼저 만들고 바꿔치기)</li>
+<li>ephemeral → 프로시저 안의 <code>WITH</code> 절. 혹은 세션이 끝나면 사라지는 <code>TEMP TABLE</code>에 가깝지만, 실제로는 테이블조차 만들지 않음</li>
+<li>incremental → <code>DELETE + INSERT</code> 또는 <code>MERGE</code>로 그날 것만 갈아 끼우던 프로시저. 1일차 맨 위 <code>sp_build_daily_sales</code>가 바로 이 패턴입니다.</li>
+</ul>
+</div>
+
+<h3>어디에 설정하나 — 세 군데, 가까운 쪽이 이긴다</h3>
+
+<p>materialization 같은 설정은 세 곳에 쓸 수 있고, <b>모델에 가까울수록 우선</b>합니다.</p>
+
+<pre class="diagram">  약함 ◀──────────────────────────────────────────────────────▶ 강함
+
+  ① dbt_project.yml          ② 모델 YAML (schema.yml)        ③ 모델 파일 맨 위
+  폴더 단위 기본값             config: 블록                     {{ config(materialized='table') }}
+  models:
+    shop:
+      marts:
+        +materialized: table</pre>
+
+<p>실무에서는 ①로 <b>폴더마다 기본값</b>을 정하고, 예외만 ③으로 덮어씁니다. 실제로 <code>dim_customers.sql</code> 맨 위에 <code>{{ config(materialized='view') }}</code>를 넣으면 marts 폴더 기본값(table)을 무시하고 view가 됩니다.</p>
+
+<pre data-file="dbt_project.yml (맨 아래 models: 부분)"><code>models:
+  shop:                     # 프로젝트 이름 (name: 'shop')
+    staging:                # models/staging/ 폴더
+      +materialized: view
+    intermediate:           # models/intermediate/ 폴더
+      +materialized: ephemeral
+    marts:                  # models/marts/ 폴더
+      +materialized: table</code></pre>
+
+<div class="box tip">
+<span class="box-title">왜 앞에 + 를 붙이나</span>
+<p><code>dbt_project.yml</code>의 <code>models:</code> 아래에서는 "폴더 이름"과 "설정 이름"이 같은 들여쓰기에 섞여 나옵니다. 만약 폴더 이름이 우연히 <code>materialized</code>라면 dbt가 헷갈리겠죠. <code>+</code>는 "이건 폴더가 아니라 <b>설정</b>이고, 이 아래 모든 모델에 적용해"라는 표시입니다. 설정 앞에는 항상 <code>+</code>를 붙이는 습관을 들이세요.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">"unused configuration paths" 경고</span>
+<p>1일차 <code>dbt run</code> 때 이런 경고를 보셨을 겁니다: <code>Configuration paths exist in your dbt_project.yml file which do not apply to any resources. - models.shop.example</code>. <code>example</code> 폴더를 지웠는데 설정은 남아 있어서입니다. 오늘 <code>models:</code> 블록을 바꾸면 사라집니다. 폴더 이름을 잘못 적었을 때도 같은 경고가 나오므로, 이 경고는 무시하지 말고 꼭 읽으세요.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+SELECT는 그대로, <b>만드는 방식만 설정으로</b> 바꾼다. staging=view, intermediate=ephemeral, marts=table을 <code>dbt_project.yml</code>에 폴더별로 적는다.
+</div>
+
+<h2 id="select">선택자 기초 — 필요한 것만 돌리기</h2>
+
+<p>모델이 수백 개가 되면 매번 전부 돌릴 수 없습니다. "방금 고친 모델과 그 아래만", "이 마트를 만드는 데 필요한 것만" 같은 선택이 필요합니다. <code>dbt run</code>, <code>dbt ls</code>, <code>dbt test</code>, <code>dbt build</code> 모두 <code>--select</code>(줄여서 <code>-s</code>)를 받습니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>쓰는 법</th><th>뜻</th><th>shop에서 실제로 고른 것 (<code>dbt ls</code> 결과)</th></tr>
+<tr><td><code>-s fct_orders</code></td><td>그 모델 하나</td><td>fct_orders</td></tr>
+<tr><td><code>-s +fct_orders</code></td><td>그 모델 + <b>위쪽(부모·조상) 전부</b></td><td>fct_orders, int_order_payments, stg_orders, stg_payments, source 2개</td></tr>
+<tr><td><code>-s stg_orders+</code></td><td>그 모델 + <b>아래쪽(자식·자손) 전부</b></td><td>stg_orders, fct_orders, dim_customers</td></tr>
+<tr><td><code>-s 1+dim_customers</code></td><td>위쪽으로 <b>한 단계만</b></td><td>dim_customers, fct_orders, stg_customers</td></tr>
+<tr><td><code>-s path:models/staging</code></td><td>폴더 안 전부</td><td>stg 3개 + 그 폴더 sources.yml의 source 3개</td></tr>
+<tr><td><code>-s config.materialized:table</code></td><td>설정값으로 고르기</td><td>fct_orders, dim_customers</td></tr>
+<tr><td><code>-s stg_orders stg_payments</code></td><td>띄어쓰기 = <b>합집합</b>(또는)</td><td>둘 다</td></tr>
+<tr><td><code>-s "+fct_orders,path:models/staging"</code></td><td>쉼표 = <b>교집합</b>(그리고)</td><td>fct_orders 조상 중 staging 폴더에 있는 것</td></tr>
+<tr><td><code>--exclude dim_customers</code></td><td>빼기</td><td>나머지 전부</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>가계도를 떠올리면 쉽습니다. <code>+나</code>는 "나와 부모·조부모…", <code>나+</code>는 "나와 자식·손자…". <code>+</code>가 <b>어느 쪽에 붙었는지</b>가 방향입니다. 기호가 이름 <b>앞</b>이면 위(과거, 재료 쪽), <b>뒤</b>면 아래(미래, 완성품 쪽).</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+<p>"<code>stg_orders</code> 정제 규칙을 고쳤으니 이걸 쓰는 마트를 다 다시 돌려야 하는데, 뭐가 이걸 쓰지?" — 프로시저 세계에서는 코드 검색으로 찾던 질문입니다. dbt에서는 <code>dbt run -s stg_orders+</code> 한 줄이 답입니다. 반대로 "이 마트 숫자가 이상한데 재료부터 다시 만들어 보자"는 <code>dbt run -s +fct_orders</code>.</p>
+</div>
+
+<div class="box tip">
+<span class="box-title">실행 전에 dbt ls 로 먼저 확인</span>
+<p>선택자가 헷갈리면 <code>dbt run</code> 대신 <code>dbt ls -s ...</code>를 먼저 쳐 보세요. 아무것도 실행하지 않고 "무엇이 골라지는지"만 보여 줍니다. 6일차에 Airflow에서 계층별로 나눠 돌릴 때, 그리고 CI에서 바뀐 모델만 돌리는 <code>state:modified+</code>를 배울 때 이 문법을 그대로 씁니다.</p>
+</div>
+
+<h2 id="lab">실습: shop 프로젝트를 층으로 다시 짓기</h2>
+
+<p>어제의 <code>$HOME\dbt-practice\shop</code>에서 이어갑니다. 끝나면 모델 6개(stg 3 · int 1 · fct 1 · dim 1)와 source 3개가 있는 프로젝트가 됩니다.</p>
+
+<pre class="diagram">오늘 끝난 뒤 폴더 모양
+
+shop/
+├── dbt_project.yml          ← models: 아래 폴더별 materialization
+├── data/                    ← raw_*.csv 3개 (어제 그대로)
+└── models/
+    ├── staging/
+    │   ├── sources.yml      ← 원본 주소록
+    │   ├── stg_customers.sql
+    │   ├── stg_orders.sql
+    │   └── stg_payments.sql ← grain: 결제 1건 (어제와 달라짐!)
+    ├── intermediate/
+    │   └── int_order_payments.sql
+    └── marts/
+        ├── fct_orders.sql
+        └── dim_customers.sql
+                             ← daily_sales.sql 은 지운다</pre>
+
+<div class="lab">
+
+<div class="step" data-id="start">
+<div class="step-title">1. 출발점 확인</div>
+<pre><code>cd $HOME\dbt-practice
+.\.venv\Scripts\Activate.ps1
+cd shop
+dbt run</code></pre>
+<p>어제처럼 <code>PASS=3</code>이 나오면 출발 준비 완료입니다. 혹시 어제 커밋을 안 했다면 지금 해 두세요 — 오늘 파일을 많이 옮기기 때문에 돌아갈 지점이 있어야 합니다.</p>
+</div>
+
+<div class="step" data-id="folders">
+<div class="step-title">2. 층별 폴더 만들고 파일 옮기기</div>
+<pre><code>mkdir models\staging, models\intermediate, models\marts
+Move-Item models\stg_orders.sql   models\staging\
+Move-Item models\stg_payments.sql models\staging\
+Remove-Item models\daily_sales.sql
+Get-ChildItem -Recurse models</code></pre>
+<p><code>daily_sales</code>는 왜 지울까요? "완료 주문의 날짜별 매출"은 오늘 만들 <code>fct_orders</code>에서 <code>group by</code> 한 번이면 나옵니다(8단계에서 확인). 집계 결과를 미리 마트로 만들어 두는 건 실제로 자주 쓰는 사람이 생겼을 때 하면 됩니다.</p>
+</div>
+
+<div class="step" data-id="sources">
+<div class="step-title">3. sources.yml 만들기</div>
+<p><code>models/staging/sources.yml</code>을 새로 만듭니다. 설정 파일이라 그대로 보여드립니다.</p>
+<pre data-file="models/staging/sources.yml"><code>sources:
+  - name: shop_raw
+    meta:
+      external_location: "read_csv('data/{name}.csv', header = true)"
+    tables:
+      - name: raw_customers
+      - name: raw_orders
+      - name: raw_payments</code></pre>
+<p>YAML은 <b>들여쓰기(공백 2칸)</b>가 문법입니다. 탭 문자를 쓰면 에러가 납니다. 확인: <code>dbt ls --resource-type source</code> 를 치면 <code>source:shop.shop_raw.raw_customers</code> 등 3줄이 나와야 합니다.</p>
+</div>
+
+<div class="step" data-id="staging">
+<div class="step-title">4. 직접 해보기: staging 3개를 source()로</div>
+<p>세 모델을 만들거나 고칩니다. 규칙: <b>원본 하나당 모델 하나, 조인·집계·필터 없음, grain은 원본과 같게.</b></p>
+<ul>
+<li><code>stg_orders.sql</code> — <code>read_csv(...)</code>를 <code>source()</code>로 바꾸고, <code>updated_at</code>을 timestamp로 추가 (3일차 신선도 검사에 씁니다)</li>
+<li><code>stg_payments.sql</code> — <b>group by를 없애고</b> 결제 1건 = 1행으로. <code>payment_id</code>, <code>order_id</code>, <code>method</code>→<code>payment_method</code>, <code>amount</code></li>
+<li><code>stg_customers.sql</code> (새로) — <code>customer_id</code>, <code>name</code>→<code>customer_name</code>, <code>email</code>, <code>city</code>, <code>membership</code>, <code>updated_at</code>(timestamp)</li>
+</ul>
+<details class="hint"><summary>힌트 1</summary>
+<p><code>from {{ source('shop_raw', 'raw_orders') }}</code> 처럼 첫 인자는 <code>sources.yml</code>의 <code>name</code>, 둘째 인자는 <code>tables:</code> 아래 <code>name</code>입니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>이름 바꾸기는 <code>method as payment_method</code>, 형 변환은 <code>cast(updated_at as timestamp) as updated_at</code>. 어제 있던 <code>sum(amount)</code>와 <code>group by</code>는 5단계의 <code>int_order_payments</code>로 이사 갑니다.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="models/staging/stg_orders.sql"><code>select
+    order_id,
+    customer_id,
+    cast(order_date as date)      as order_date,
+    lower(trim(status))           as status,
+    cast(updated_at as timestamp) as updated_at
+from {{ source('shop_raw', 'raw_orders') }}</code></pre>
+<pre data-file="models/staging/stg_payments.sql"><code>select
+    payment_id,
+    order_id,
+    method  as payment_method,
+    amount
+from {{ source('shop_raw', 'raw_payments') }}</code></pre>
+<pre data-file="models/staging/stg_customers.sql"><code>select
+    customer_id,
+    name                          as customer_name,
+    email,
+    city,
+    membership,
+    cast(updated_at as timestamp) as updated_at
+from {{ source('shop_raw', 'raw_customers') }}</code></pre>
+</details>
+</div>
+
+<div class="step" data-id="intermediate">
+<div class="step-title">5. 직접 해보기: int_order_payments</div>
+<p><code>models/intermediate/int_order_payments.sql</code>을 만듭니다. <code>stg_payments</code>를 주문 단위로 합쳐 <code>order_id</code>, <code>total_amount</code>(결제 금액 합계), <code>payment_count</code>(결제 건수)를 내는 모델입니다. 합계 컬럼 이름을 <code>amount</code> 그대로 두지 않고 <code>total_amount</code>로 바꾸는 건, "결제 1건 금액"과 "주문의 합계"를 이름만 보고 구분하기 위해서입니다. grain: <b>주문 1건 = 1행</b>.</p>
+<details class="hint"><summary>힌트 1</summary>
+<p>이제 원본이 아니라 모델을 읽으므로 <code>source()</code>가 아니라 <code>ref()</code>입니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>결제 건수는 <code>count(*)</code>. 분할 결제인 주문 5, 18번은 2가 나와야 합니다.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="models/intermediate/int_order_payments.sql"><code>select
+    order_id,
+    sum(amount)  as total_amount,
+    count(*)     as payment_count
+from {{ ref('stg_payments') }}
+group by order_id</code></pre>
+</details>
+</div>
+
+<div class="step" data-id="marts">
+<div class="step-title">6. 직접 해보기: fct_orders 와 dim_customers</div>
+<ul>
+<li><code>models/marts/fct_orders.sql</code> — 주문 1건 = 1행. <code>stg_orders</code>에 <code>int_order_payments</code>를 붙여 <code>order_id</code>, <code>customer_id</code>, <code>order_date</code>, <code>status</code>, <code>total_amount</code>, <code>updated_at</code>. 결제가 없는 주문이 생겨도 <b>주문은 빠지지 않게</b>(그때 금액은 0). <code>updated_at</code>은 4일차 incremental에서 "바뀐 주문"을 고르는 기준으로 씁니다.</li>
+<li><code>models/marts/dim_customers.sql</code> — 고객 1명 = 1행. <code>stg_customers</code>의 <code>customer_id</code>, <code>customer_name</code>, <code>city</code>, <code>membership</code>에 주문 요약 <code>first_order_date</code>, <code>last_order_date</code>, <code>order_count</code>, <code>lifetime_value</code>(completed 주문 금액 합)를 붙입니다. 주문이 없는 고객도 남겨야 합니다.</li>
+</ul>
+<details class="hint"><summary>힌트 1</summary>
+<p>"빠지지 않게" = <code>left join</code>. 비어 있는 숫자는 <code>coalesce(값, 0)</code>.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p><code>dim_customers</code>는 <code>fct_orders</code>를 <code>ref()</code>해서 고객별로 먼저 집계(CTE)한 뒤 <code>stg_customers</code>에 left join 하면 깔끔합니다. completed만 더할 때는 <code>sum(case when status = 'completed' then total_amount else 0 end)</code>.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre data-file="models/marts/fct_orders.sql"><code>select
+    o.order_id,
+    o.customer_id,
+    o.order_date,
+    o.status,
+    coalesce(p.total_amount, 0) as total_amount,
+    o.updated_at
+from {{ ref('stg_orders') }} o
+left join {{ ref('int_order_payments') }} p
+    on o.order_id = p.order_id</code></pre>
+<pre data-file="models/marts/dim_customers.sql"><code>with orders as (
+    select
+        customer_id,
+        min(order_date)                                   as first_order_date,
+        max(order_date)                                   as last_order_date,
+        count(*)                                          as order_count,
+        sum(case when status = 'completed' then total_amount else 0 end) as lifetime_value
+    from {{ ref('fct_orders') }}
+    group by customer_id
+)
+
+select
+    c.customer_id,
+    c.customer_name,
+    c.city,
+    c.membership,
+    o.first_order_date,
+    o.last_order_date,
+    coalesce(o.order_count, 0)    as order_count,
+    coalesce(o.lifetime_value, 0) as lifetime_value
+from {{ ref('stg_customers') }} c
+left join orders o
+    on c.customer_id = o.customer_id</code></pre>
+</details>
+</div>
+
+<div class="step" data-id="project-config">
+<div class="step-title">7. dbt_project.yml 에 폴더별 materialization</div>
+<p><code>dbt_project.yml</code> 맨 아래의 <code>models:</code> 블록(예제용 <code>example:</code>이 들어 있는 부분)을 통째로 아래로 바꿉니다.</p>
+<pre data-file="dbt_project.yml (맨 아래)"><code>models:
+  shop:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table</code></pre>
+</div>
+
+<div class="step" data-id="run">
+<div class="step-title">8. 실행하고 결과 확인</div>
+<pre><code>dbt run</code></pre>
+<p>이렇게 나오면 성공입니다(시각은 다름).</p>
+<pre><code>Found 6 models, 3 sources, ...
+1 of 5 START sql view model main.stg_customers ....... [RUN]
+2 of 5 START sql view model main.stg_orders .......... [RUN]
+3 of 5 START sql view model main.stg_payments ........ [RUN]
+...
+4 of 5 OK created sql table model main.fct_orders .... [OK in 0.08s]
+5 of 5 OK created sql table model main.dim_customers . [OK in 0.03s]
+Done. PASS=5 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=5</code></pre>
+<p>세 가지를 눈여겨보세요.</p>
+<ul>
+<li>모델은 6개인데 실행은 <b>5개</b>입니다. ephemeral인 <code>int_order_payments</code>는 따로 만들어지지 않기 때문입니다. <code>target/compiled/shop/models/marts/fct_orders.sql</code>을 열어 맨 위의 <code>__dbt__cte__int_order_payments</code>를 확인하세요.</li>
+<li>stg 세 개는 서로 의존하지 않아서 <b>동시에 START</b>했습니다(threads 4).</li>
+<li>staging은 <code>view</code>, marts는 <code>table</code>로 만들어졌습니다.</li>
+</ul>
+<pre><code>dbt show --select fct_orders --limit 6
+dbt show --select int_order_payments --limit 30</code></pre>
+<p><code>int_order_payments</code>에서 주문 5번은 <code>total_amount = 59000</code>(49,000 + 10,000), <code>payment_count = 2</code>여야 합니다. 18번도 2건입니다. ephemeral 모델도 <code>dbt show</code>로는 미리 볼 수 있습니다(dbt가 그 자리에서 SELECT를 돌려 줌).</p>
+</div>
+
+<div class="step" data-id="leftover">
+<div class="step-title">9. 남아 있는 옛 뷰 치우기</div>
+<p>DB 안에 무엇이 있는지 봅니다.</p>
+<pre><code>dbt show --inline "select table_name, table_type from information_schema.tables order by 1" --limit 20</code></pre>
+<pre><code>| table_name    | table_type |
+| daily_sales   | VIEW       |   ← 파일은 지웠는데 아직 있다!
+| dim_customers | BASE TABLE |
+| fct_orders    | BASE TABLE |
+| stg_customers | VIEW       |
+| stg_orders    | VIEW       |
+| stg_payments  | VIEW       |</code></pre>
+<p><b>dbt는 모델 파일을 지워도 DB 객체를 지우지 않습니다.</b> dbt가 아는 건 "지금 있는 파일"뿐이라서, 예전에 만든 것을 누가 쓰고 있는지 알 수 없기 때문입니다. 직접 지웁니다(<code>dbt-duckdb</code>와 함께 설치된 duckdb 파이썬 패키지 사용).</p>
+<pre><code># duckdb 파일에 접속해서(= DBeaver에서 연결 열기) DROP VIEW 한 줄 실행
+python -c "import duckdb; con = duckdb.connect('shop.duckdb'); con.execute('drop view if exists main.daily_sales')"</code></pre>
+<p>회사 BigQuery에서도 마찬가지입니다. 모델 이름을 바꾸거나 지우면 옛 테이블이 고아로 남으니, 정리 계획을 같이 세워야 합니다.</p>
+</div>
+
+<div class="step" data-id="selectors">
+<div class="step-title">10. 선택자 연습</div>
+<p>아래를 하나씩 치고, 결과를 이론의 표와 비교해 보세요. <code>dbt ls</code>는 실행하지 않고 목록만 보여 줍니다.</p>
+<pre><code>dbt ls -s +fct_orders
+dbt ls -s stg_orders+
+dbt ls -s 1+dim_customers
+dbt ls -s path:models/staging
+dbt run -s stg_orders+</code></pre>
+<p>마지막 줄은 실제 실행입니다. <code>stg_orders</code>, <code>fct_orders</code>, <code>dim_customers</code> 세 개만 돌고 <code>PASS=3</code>이 나와야 합니다. "정제 규칙을 고쳤을 때 영향받는 것만 다시 만들기"가 바로 이것입니다.</p>
+</div>
+
+<div class="step" data-id="daily">
+<div class="step-title">11. 직접 해보기: daily_sales 는 이제 쿼리 한 줄</div>
+<p>지운 <code>daily_sales</code>와 같은 결과(completed 주문의 날짜별 주문 수·매출)를 <code>fct_orders</code>에서 뽑아 보세요. <code>dbt show --inline</code>은 파일 없이 SELECT를 바로 돌려 봅니다. 안에서 <code>ref()</code>도 쓸 수 있습니다.</p>
+<details class="hint"><summary>힌트</summary>
+<p><code>dbt show --inline "select ... from {{ ref('fct_orders') }} where ... group by 1 order by 1"</code></p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre><code>dbt show --inline "select order_date, count(*) as orders, sum(total_amount) as revenue from {{ ref('fct_orders') }} where status = 'completed' group by 1 order by 1" --limit 20</code></pre>
+<p>10월 4일은 주문 6번과 7번(원본은 대문자 <code>COMPLETED</code>)이 합쳐져 <code>orders = 2</code>, <code>revenue = 188000</code>이 나옵니다. staging의 <code>lower(trim())</code>이 제대로 일하고 있다는 증거입니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="commit">
+<div class="step-title">12. 커밋</div>
+<pre><code>git add .
+git commit -m "2일차: source, 계층 구조, 폴더별 materialization"</code></pre>
+<p><code>git status</code>에서 <code>stg_orders.sql</code>이 "삭제 + 새 파일"로 보이면, <code>git add .</code> 후에는 rename으로 인식됩니다.</p>
+</div>
+
+</div>
+
+<div class="box warn">
+<span class="box-title">자주 막히는 곳</span>
+<ul>
+<li><code>Model 'model.shop.stg_orders' (models\staging\stg_orders.sql) depends on a source named 'shop_raw.raw_order' which was not found</code> → <code>source()</code> 인자의 철자가 <code>sources.yml</code>과 다릅니다. 이름은 대소문자·복수형까지 똑같아야 합니다.</li>
+<li><code>Model 'model.shop.fct_orders' (...) depends on a node named 'int_order_payment' which was not found</code> → <code>ref()</code> 안 이름이 파일 이름(확장자 뺀 것)과 다릅니다.</li>
+<li><code>Found a cycle</code> → 두 모델이 서로를 <code>ref()</code>합니다. 주석 안의 <code>{{ ref() }}</code>도 셉니다.</li>
+<li>YAML 에러(<code>mapping values are not allowed here</code> 등) → 들여쓰기가 어긋났거나 탭이 섞였습니다. VS Code 오른쪽 아래가 "Spaces: 2"인지 보세요.</li>
+<li>stg 모델은 바뀌었는데 marts가 옛 값 → marts는 <b>table</b>이라 다시 돌리기 전엔 그대로입니다. <code>dbt run -s 고친모델+</code>.</li>
+<li><code>No such file: data/raw_orders.csv</code> → <code>external_location</code>의 경로도 <code>dbt</code>를 실행한 폴더 기준입니다. <code>shop</code> 폴더 안에서 실행하세요.</li>
+</ul>
+</div>
+
+<h2 id="recap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+원본은 <b><code>source()</code>로 이름 붙이고</b>, 모델은 <b><code>ref()</code>로 잇고</b>, 층마다 <b>할 일과 materialization을 정해 두면</b>, 프로젝트가 커져도 순서·영향 범위를 dbt가 알아서 계산한다.
+</div>
+
+<ul>
+<li>source = dbt 밖에서 온 원본(읽기만), ref = dbt가 만든 모델. source는 staging에서만 쓴다</li>
+<li>staging: 원본 1:1, 정제만 / intermediate: 조립 / marts: fct(사건)·dim(대상)</li>
+<li>모델마다 grain(한 행 = 무엇)을 말할 수 있어야 한다. staging에서 정보를 버리지 않는다</li>
+<li>view·table·ephemeral·incremental — 폴더 기본값은 <code>dbt_project.yml</code>의 <code>+materialized</code>, 예외는 파일 안 <code>config()</code></li>
+<li><code>+모델</code>은 위(재료)쪽, <code>모델+</code>는 아래(완성품)쪽. 헷갈리면 <code>dbt ls</code>로 먼저 확인</li>
+<li>dbt는 지운 모델의 DB 객체를 치우지 않는다</li>
+</ul>
+
+<h3>스스로 설명해 보기</h3>
+<p>노트를 보지 않고 소리 내어 답해 보세요. 막히면 위로 돌아가 다시 읽습니다.</p>
+<ol>
+<li>어제의 <code>stg_payments</code>(주문별 합계)를 오늘 결제 1건 단위로 바꾼 이유는 무엇인가요? 그대로 뒀다면 무엇을 잃었을까요?</li>
+<li><code>int_order_payments</code>를 ephemeral로 했을 때, DB에는 무엇이 생기고 <code>fct_orders</code>의 SQL은 어떻게 달라지나요?</li>
+<li>원본 위치가 CSV에서 BigQuery 테이블로 바뀐다면, 오늘 만든 파일 중 무엇을 고쳐야 하나요?</li>
+</ol>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="2">
+<p class="q-text"><code>source()</code>와 <code>ref()</code>에 대한 설명으로 옳은 것은?</p>
+<ol class="q-opts">
+<li>둘은 같은 기능이고 이름만 다르다</li>
+<li><code>source()</code>는 dbt 밖에서 만들어진 원본을, <code>ref()</code>는 dbt가 만든 모델을 가리킨다</li>
+<li><code>source()</code>를 쓰면 dbt가 원본 테이블을 새로 만든다</li>
+<li><code>ref()</code>는 YAML에, <code>source()</code>는 SQL 파일 이름으로 정의된다</li>
+</ol>
+<div class="q-explain">source는 수집 도구 등이 넣어 둔 원본을 YAML에 등록해 이름으로 부르는 것이고, dbt는 읽기만 합니다. ref는 <code>models/</code> 안의 다른 모델 파일을 가리키며 dbt가 직접 만듭니다. 4번은 정의 위치를 거꾸로 적었습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">staging 모델에서 하기에 <b>알맞지 않은</b> 일은?</p>
+<ol class="q-opts">
+<li><code>method</code> 컬럼 이름을 <code>payment_method</code>로 바꾸기</li>
+<li><code>updated_at</code>을 timestamp로 형 변환하기</li>
+<li><code>lower(trim(status))</code>로 값 정리하기</li>
+<li><code>where status = 'completed'</code>로 완료 주문만 남기기</li>
+</ol>
+<div class="q-explain">staging은 원본과 grain이 같아야 하고, 이름·형·값 정리만 합니다. "완료 주문만"은 비즈니스 규칙이라 marts(또는 분석 쿼리)에서 합니다. staging에서 걸러 버리면 반품·배송 중 주문을 봐야 하는 다른 마트가 그 행을 되살릴 수 없습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text"><code>int_order_payments</code>를 <code>ephemeral</code>로 설정하고 <code>dbt run</code>을 하면?</p>
+<ol class="q-opts">
+<li>DB에 아무 객체도 생기지 않고, 이를 <code>ref()</code>한 <code>fct_orders</code>의 SQL 안에 CTE로 들어간다</li>
+<li>세션이 끝나면 사라지는 임시 테이블이 DB에 생긴다</li>
+<li>view가 만들어진다</li>
+<li>에러가 난다 — intermediate는 table이어야 한다</li>
+</ol>
+<div class="q-explain">ephemeral은 아무것도 만들지 않습니다. 실습에서 모델은 6개인데 실행은 5개였고, <code>fct_orders</code> 컴파일 결과 맨 위에 <code>with __dbt__cte__int_order_payments as (...)</code>가 붙었습니다. 임시 테이블조차 없다는 점이 프로시저의 TEMP TABLE과 다릅니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text"><code>stg_orders</code>의 정제 규칙을 고쳤습니다. 이 변경의 영향을 받는 모델만 다시 만들려면?</p>
+<ol class="q-opts">
+<li><code>dbt run -s +stg_orders</code></li>
+<li><code>dbt run -s path:models/staging</code></li>
+<li><code>dbt run -s stg_orders+</code></li>
+<li><code>dbt run --exclude stg_orders</code></li>
+</ol>
+<div class="q-explain"><code>+</code>가 이름 <b>뒤</b>에 붙으면 아래쪽(자손)입니다. <code>stg_orders+</code> = stg_orders, fct_orders, dim_customers. 1번은 위쪽(재료 쪽)이라 stg_orders와 그 source만 고르고, 2번은 staging 모델만 돌려 marts가 옛 값으로 남습니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text"><code>dbt_project.yml</code>에서 <code>marts: +materialized: table</code>로 정했는데, <code>dim_customers.sql</code> 맨 위에 <code>{{ config(materialized='view') }}</code>가 있다면?</p>
+<ol class="q-opts">
+<li>충돌이라 에러가 난다</li>
+<li><code>dbt_project.yml</code>이 이겨서 table이 된다</li>
+<li>모델 파일 안 설정이 이겨서 view가 된다</li>
+<li>table과 view가 둘 다 만들어진다</li>
+</ol>
+<div class="q-explain">설정은 모델에 가까울수록 우선합니다: <code>dbt_project.yml</code>(폴더 기본값) &lt; 모델 YAML <code>config:</code> &lt; 파일 안 <code>config()</code>. 실제로 넣어 보면 <code>dbt ls -s config.materialized:view</code>에 dim_customers가 나옵니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">"이 테이블의 한 행이 무엇을 뜻하는가"를 가리키는 말은?</p>
+<ol class="q-opts">
+<li>grain</li>
+<li>materialization</li>
+<li>lineage</li>
+<li>source</li>
+</ol>
+<div class="q-explain">grain입니다. <code>stg_payments</code>는 결제 1건, <code>int_order_payments</code>와 <code>fct_orders</code>는 주문 1건, <code>dim_customers</code>는 고객 1명. grain이 다른 테이블을 그냥 조인하면 행이 불어나는(팬아웃) 사고가 납니다. lineage는 모델 간 연결(계보), materialization은 만드는 방식입니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">모델 파일 <code>daily_sales.sql</code>을 지우고 <code>dbt run</code>을 했습니다. DB 안의 <code>daily_sales</code> 뷰는?</p>
+<ol class="q-opts">
+<li>dbt가 자동으로 지운다</li>
+<li>dbt가 빈 뷰로 바꾼다</li>
+<li><code>dbt run</code>이 에러를 낸다</li>
+<li>그대로 남아 있다 — 직접 지워야 한다</li>
+</ol>
+<div class="q-explain">dbt는 현재 있는 파일만 알고, 예전에 만든 객체를 누가 쓰는지 모르기 때문에 지우지 않습니다. 실습 9단계에서 <code>information_schema.tables</code>에 <code>daily_sales</code>가 남아 있는 걸 확인하고 직접 DROP 했습니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text"><code>dbt_project.yml</code>의 <code>models:</code> 아래 설정 이름 앞에 <code>+</code>를 붙이는 이유는?</p>
+<ol class="q-opts">
+<li>설정을 더 강하게(우선순위 높게) 만들기 위해</li>
+<li>폴더 이름과 설정 이름을 구분해, 그 아래 모든 모델에 적용되는 <b>설정</b>임을 표시하려고</li>
+<li>YAML 문법상 반드시 필요해서</li>
+<li>table materialization에만 붙인다</li>
+</ol>
+<div class="q-explain"><code>models:</code> 아래에는 폴더 이름과 설정 이름이 같은 들여쓰기에 섞입니다. <code>+</code>는 "이건 폴더가 아니라 설정"이라는 표시입니다. 우선순위를 바꾸지는 않으며(1번), YAML 문법이 아니라 dbt의 약속입니다(3번).</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>
