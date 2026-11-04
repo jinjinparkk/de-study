@@ -33,9 +33,9 @@
   top.className = "topbar";
   const links = DAYS.map((d, i) => {
     const done = store.get(d.id + ":done", false);
-    return `<a href="${href(d.file)}" class="${d.id === page ? "active" : ""} ${done ? "done" : ""}" title="${d.title}">${i + 1}일차</a>`;
+    return `<a href="${href(d.file)}" class="${d.id === page ? "active" : ""} ${done ? "done" : ""}" title="${d.title}">${i + 1}</a>`;
   }).concat(EXTRA.map((e) => `<a href="${href(e.file)}" class="${e.id === page ? "active" : ""}">${e.title}</a>`));
-  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${root}index.html">dbt · Airflow · Spark 7일</a><nav class="topnav">${links.join("")}</nav></div>`;
+  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${root}index.html">DAS</a><nav class="topnav">${links.join("")}</nav></div>`;
   body.prepend(top);
 
   const main = document.querySelector("main");
@@ -166,7 +166,7 @@
     const paint = () => {
       const done = store.get(page + ":done", false);
       btn.className = done ? "btn" : "btn primary";
-      btn.textContent = done ? "✓ 완료함 (취소하려면 클릭)" : `${di + 1}일차 학습 완료로 표시`;
+      btn.textContent = done ? "✓ 완료함 (취소하려면 클릭)" : "학습 완료로 표시";
     };
     btn.addEventListener("click", () => {
       store.set(page + ":done", !store.get(page + ":done", false));
@@ -181,8 +181,8 @@
     pager.className = "pager";
     const prev = DAYS[di - 1], next = DAYS[di + 1];
     pager.innerHTML =
-      (prev ? `<a href="${prev.file}">← ${di}일차 ${prev.title}</a>` : `<a href="../index.html">← 전체 커리큘럼</a>`) +
-      (next ? `<a href="${next.file}">${di + 2}일차 ${next.title} →</a>` : `<a href="../index.html">전체 커리큘럼 →</a>`);
+      (prev ? `<a href="${prev.file}">← ${di} · ${prev.title}</a>` : `<a href="../index.html">← 전체 커리큘럼</a>`) +
+      (next ? `<a href="${next.file}">${di + 2} · ${next.title} →</a>` : `<a href="../index.html">전체 커리큘럼 →</a>`);
     main.appendChild(pager);
   }
 

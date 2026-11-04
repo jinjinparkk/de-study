@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dbt · Airflow · Spark 7일</title>
+<title>DAS · dbt · Airflow · Spark</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body data-page="home">
@@ -11,7 +11,7 @@
 <main>
 
 <div class="eyebrow">프로시저에서 모던 데이터 스택으로</div>
-<h1>dbt · Airflow · Spark 7일</h1>
+<h1>DAS</h1>
 <p class="lead">프로시저로 마트를 만들어 온 analytics engineer를 위한 학습 코스입니다. 하루에 이론 1시간 남짓 + 내 PC 실습 1시간, 7일 동안 dbt를 중심으로 Airflow와 Spark까지 연결합니다.</p>
 
 <div style="margin:24px 0 8px; display:flex; justify-content:space-between; font-size:14.5px; color:var(--muted)">
@@ -39,11 +39,11 @@
 <h2 id="setup">준비물</h2>
 <div class="table-wrap">
 <table>
-<tr><th>무엇</th><th>언제부터</th><th>비고</th></tr>
-<tr><td>Python 3.10 이상</td><td>1일차</td><td><code>python --version</code> 으로 확인</td></tr>
-<tr><td>dbt-duckdb</td><td>1일차</td><td>가상환경에 <code>pip install dbt-duckdb</code>. DB 서버·클라우드 계정 필요 없음, 0원</td></tr>
-<tr><td>Docker Desktop</td><td>5일차</td><td>Airflow(웹 화면 <code>localhost:8083</code>)와 Spark를 컨테이너로 띄움</td></tr>
-<tr><td>VS Code 같은 편집기</td><td>1일차</td><td>SQL·YAML 편집용</td></tr>
+<tr><th>무엇</th><th>언제부터 (일차)</th><th>비고</th></tr>
+<tr><td>Python 3.10 이상</td><td>1</td><td><code>python --version</code> 으로 확인</td></tr>
+<tr><td>dbt-duckdb</td><td>1</td><td>가상환경에 <code>pip install dbt-duckdb</code>. DB 서버·클라우드 계정 필요 없음, 0원</td></tr>
+<tr><td>Docker Desktop</td><td>5</td><td>Airflow(웹 화면 <code>localhost:8083</code>)와 Spark를 컨테이너로 띄움</td></tr>
+<tr><td>VS Code 같은 편집기</td><td>1</td><td>SQL·YAML 편집용</td></tr>
 </table>
 </div>
 <p>실습 파일: <a href="practice/">practice 폴더</a> (데이터 CSV, Airflow·Spark 설정). <a href="https://github.com/jinjinparkk/de-study">GitHub 저장소</a>에서도 받을 수 있습니다.</p>
@@ -77,7 +77,7 @@ dbt로 <b>SELECT를 레시피 카드처럼 나누고 테스트를 붙이고</b>,
       ? `✓ 완료 ${S.get(d.id + ":doneAt", "")}`
       : st ? `실습 ${st.steps}/${st.stepsTotal}<br>퀴즈 ${st.quiz}/${st.quizTotal}` : "시작 전";
     const li = document.createElement("li");
-    li.innerHTML = `<div class="dnum">${i + 1}일차</div>
+    li.innerHTML = `<div class="dnum">${i + 1}</div>
       <div><span class="tool-tag ${d.tool}">${d.tool === "dbt" ? "dbt" : d.tool === "airflow" ? "Airflow" : "Spark"}</span><a class="dtitle" href="days/${d.file}">${d.title}</a><p class="ddesc">${d.desc}</p></div>
       <div class="dprog">${prog}</div>`;
     list.appendChild(li);

@@ -1,4 +1,4 @@
-# dbt · Airflow · Spark 7일
+# DAS — dbt · Airflow · Spark
 
 프로시저로 마트를 만들어 온 analytics engineer를 위한 7일 학습 사이트입니다.
 이론(비유·프로시저 비교·구조도) + 내 PC 실습(dbt-duckdb, Docker로 Airflow·Spark) + 퀴즈.
