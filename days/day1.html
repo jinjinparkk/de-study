@@ -261,11 +261,74 @@ from read_csv('data/raw_orders.csv')</code></pre>
 
 <div class="step" data-id="second-model">
 <div class="step-title">6. 직접 해보기: 결제 모델과 일별 매출 모델</div>
-<p>프로시저의 2)와 3)을 같은 방식으로 옮겨 보세요.</p>
-<ul>
-<li><code>models/stg_payments.sql</code> — 주문별 결제 합계 (<code>order_id</code>, <code>amount</code>)</li>
-<li><code>models/daily_sales.sql</code> — 완료(<code>completed</code>) 주문만, 날짜별 주문 수·매출. <b>앞의 두 모델을 <code>ref()</code>로 참조</b>할 것</li>
-</ul>
+<p>5단계에서 프로시저의 "1) 정제" 블록을 <code>stg_orders.sql</code>로 옮겼습니다. 이번엔 같은 방식으로 나머지 두 블록을 옮겨서, <b>모델 3개가 서로 이어진 작은 파이프라인</b>을 완성합니다.</p>
+<pre class="diagram">  프로시저 블록                      →  만들 dbt 모델 파일
+  ─────────────────────────────────────────────────────────────────────
+  1) CREATE TEMP TABLE tmp_orders    →  models\stg_orders.sql    (5단계에서 완료 ✓)
+  2) CREATE TEMP TABLE tmp_pay       →  models\stg_payments.sql  (6-1 지금 만들 것)
+  3) DELETE + INSERT daily_sales     →  models\daily_sales.sql   (6-2 지금 만들 것)
+
+  완성되면 이렇게 연결됩니다:
+  raw_orders.csv   ──▶ stg_orders   ──┐
+                                      ├──▶ daily_sales
+  raw_payments.csv ──▶ stg_payments ──┘</pre>
+
+<h3>6-1. <code>stg_payments.sql</code> 만들기</h3>
+<ol>
+<li><code>models</code> 폴더에 새 파일 <code>stg_payments.sql</code>을 만듭니다 (<code>stg_orders.sql</code> 옆). 메모장이면: <code>notepad models\stg_payments.sql</code></li>
+<li>안에 <b>SELECT 문 하나</b>만 씁니다. 하는 일은 프로시저 2) 블록과 같습니다: <code>data/raw_payments.csv</code>를 읽어서 <b>주문(order_id)별로 결제 금액(amount)을 합칩니다.</b></li>
+<li>결과 컬럼은 두 개: <code>order_id</code>, <code>amount</code></li>
+</ol>
+<p><b>왜 합치나요?</b> 결제 파일은 "결제 1건 = 1행"이라, 5번·18번 주문처럼 카드 + 포인트로 나눠 낸 주문은 2행입니다. 주문과 그냥 조인하면 그 주문이 두 번 세어집니다. 그래서 먼저 주문당 1행으로 줄입니다.</p>
+<pre class="diagram">  raw_payments.csv (원본)              stg_payments (만들 결과)
+  payment_id order_id method amount     order_id  amount
+  ────────── ──────── ────── ──────     ────────  ──────
+       5         5    card    49000  ┐
+       6         5    point   10000  ┴─▶    5      59000
+       ...                                ...</pre>
+<p>틀만 드리면 이렇습니다. <code>____</code> 칸을 채워 보세요.</p>
+<pre data-file="models/stg_payments.sql (빈칸 채우기)"><code>select
+    order_id,
+    ____(amount) as amount
+from read_csv('data/raw_payments.csv')
+group by ____</code></pre>
+<p>저장하고 <code>dbt run</code> → <code>dbt show --select stg_payments --limit 6</code>. <b>5번 주문이 59000</b>으로 한 줄이면 성공입니다 (전체 30행).</p>
+
+<h3>6-2. <code>daily_sales.sql</code> 만들기</h3>
+<ol>
+<li><code>models</code> 폴더에 새 파일 <code>daily_sales.sql</code></li>
+<li>프로시저 3) 블록의 <b>INSERT 안의 SELECT 부분만</b> 가져옵니다. <code>DELETE</code>와 <code>INSERT INTO</code> 줄은 버립니다 — 테이블을 지우고 다시 만드는 건 dbt가 합니다.</li>
+<li>테이블 이름 자리에 <code>tmp_orders</code>, <code>tmp_pay</code> 대신 <b>앞에서 만든 모델을 <code>{{ ref('...') }}</code>로</b> 씁니다. 이게 이 단계의 핵심입니다.</li>
+<li>조건: 상태가 <code>completed</code>인 주문만, 날짜별로 <b>주문 수(orders)</b>와 <b>매출(revenue)</b></li>
+</ol>
+<div class="compare">
+<div>
+<div class="label">프로시저 3) 블록</div>
+<pre><code>DELETE FROM dm.daily_sales WHERE ...;   -- 버림
+INSERT INTO dm.daily_sales               -- 버림
+SELECT o.order_date, COUNT(*) AS orders,
+       SUM(p.amount) AS revenue
+FROM tmp_orders o JOIN tmp_pay p USING (order_id)
+WHERE o.status = 'completed'
+GROUP BY o.order_date;</code></pre>
+</div>
+<div>
+<div class="label">dbt 모델 (빈칸 채우기)</div>
+<pre data-file="models/daily_sales.sql"><code>select
+    o.order_date,
+    count(*)       as orders,
+    sum(p.amount)  as revenue
+from {{ ref('____') }} o
+join {{ ref('____') }} p using (order_id)
+where o.status = 'completed'
+group by o.order_date</code></pre>
+</div>
+</div>
+<p><b>왜 그냥 <code>from stg_orders</code>라고 안 쓰고 <code>ref()</code>를 쓰나요?</b> 테이블 이름을 직접 써도 이번엔 돌아갑니다. 하지만 그러면 dbt는 "daily_sales가 stg_orders를 필요로 한다"는 걸 <b>모릅니다.</b> <code>ref()</code>로 써야 ① 실행 순서를 dbt가 알아서 정하고 ② 리니지 그래프에 선이 그어지고 ③ dev/prod 환경에 맞는 실제 테이블 이름으로 바꿔 줍니다.</p>
+<p>저장하고 아래를 실행하세요. 기대 결과: <b>12행</b>(날짜 12일), 주문 수 합계 14건, 매출 합계 906,000원. 예를 들어 10-02는 <code>1 | 19000</code>, 10-04는 <code>2 | 188000</code>. (<code>order by</code>가 없어서 날짜 순서는 섞여 나올 수 있습니다. 정상입니다.)</p>
+<pre><code>dbt run
+dbt show --select daily_sales --limit 20</code></pre>
+
 <details class="hint"><summary>힌트 1</summary>
 <p>다른 모델을 쓰려면 테이블 이름 대신 <code>{{ ref('모델파일이름') }}</code> 을 씁니다. 확장자 <code>.sql</code>은 빼고요.</p>
 </details>
@@ -287,8 +350,7 @@ join {{ ref('stg_payments') }} p using (order_id)
 where o.status = 'completed'
 group by o.order_date</code></pre>
 </details>
-<pre><code>dbt run</code></pre>
-<p>출력 순서를 보세요. 파일 이름은 알파벳순으로 <code>daily_sales</code>가 먼저지만, dbt는 <code>ref()</code>를 읽고 <b>stg 두 개를 먼저, daily_sales를 마지막에</b> 실행합니다. 순서를 적은 적이 없는데도요.</p>
+<p><code>dbt run</code> 출력 순서를 보세요. 파일 이름은 알파벳순으로 <code>daily_sales</code>가 먼저지만, dbt는 <code>ref()</code>를 읽고 <b>stg 두 개를 먼저, daily_sales를 마지막에</b> 실행합니다. 순서를 적은 적이 없는데도요.</p>
 </div>
 
 <div class="step" data-id="compiled">
