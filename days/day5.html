@@ -524,21 +524,69 @@ check(path) ◀──────────────── 같은 값을 �
 <li>같은 버전(Airflow 3.3.2)을 Windows 파이썬 3.12에 설치해(공식 지원 환경이 아니라 호환용 임시 패치를 덧댐) 아래 DAG 파일들의 <b>파싱(import 오류 0)</b>, <code>airflow dags test</code> <b>성공</b>, <code>airflow backfill create --dry-run</code> 출력을 확인. 페이지의 "실측" 블록이 그 출력입니다.</li>
 </ul>
 <p><b>미검증</b>: 컨테이너 기동과 8083 접속, 새 화면(UI)의 정확한 버튼 이름, 스케줄러가 백필을 실제로 돌리는 과정. 화면 문구가 조금 다르면 비슷한 이름을 찾아 주세요.</p>
+<p>2026-11-09에 실습 안내를 단계별로 자세히 고쳐 쓸 때도 Docker 엔진이 꺼져 있어(1단계의 "엔진이 꺼져 있을 때" 메시지가 그때 본 것) 컨테이너로는 여전히 확인하지 못했습니다. <code>docker compose ps</code> 출력 모양, 컨테이너 이름, 메모리 사용량도 미검증입니다.</p>
 </div>
 
 <div class="lab">
 
+<div class="step" data-id="docker">
+<div class="step-title">1. Docker Desktop 켜고 엔진 확인하기</div>
+<p><b>목표</b>: Airflow를 담을 "컨테이너"를 돌릴 엔진(Docker)이 켜져 있는지 확인합니다. 오늘 실습의 모든 <code>docker ...</code> 명령은 이 엔진이 돌고 있어야 동작합니다.</p>
+<pre class="diagram">  내 PC (Windows)
+  ┌──────────────────────────────────────────────┐
+  │ PowerShell ── docker 명령 ──▶ Docker 엔진     │  ← 1단계: 이게 켜져 있나?
+  │                               └─ 컨테이너      │
+  │                                  "airflow"     │  ← 3단계에서 띄움
+  └──────────────────────────────────────────────┘</pre>
+<ol>
+<li>시작 메뉴에서 <b>Docker Desktop</b>을 실행합니다. 처음 1분 정도는 엔진이 준비되는 중이라 명령이 실패할 수 있습니다.</li>
+<li>PowerShell을 열고(시작 → "PowerShell") 아래를 칩니다.
+<pre><code>docker info --format "{{.ServerVersion}}"</code></pre></li>
+<li><b>결과 읽기</b>
+<ul>
+<li><code>28.3.2</code>처럼 <b>숫자 한 줄</b>이 나오면 엔진이 돌고 있습니다. 다음 단계로.</li>
+<li>아래처럼 나오면 엔진이 꺼져 있습니다(이 페이지 작성 PC에서 실제로 본 메시지). Docker Desktop을 켜고 1분 기다린 뒤 다시 칩니다.
+<pre data-file="실측: 엔진이 꺼져 있을 때"><code>failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.</code></pre></li>
+</ul></li>
+<li>지금 떠 있는 컨테이너를 봅니다. 다른 실습에서 띄워 둔 게 있으면 메모리를 같이 먹습니다.
+<pre><code>docker ps</code></pre>
+제목 줄(<code>CONTAINER ID   IMAGE ...</code>)만 나오면 아무것도 안 떠 있는 것입니다.</li>
+</ol>
+<div class="box warn">
+<span class="box-title">메모리가 부족한 PC라면</span>
+<p>이 PC는 가끔 메모리가 모자랍니다. Airflow <code>standalone</code>은 프로세스 4개(scheduler·dag-processor·api-server·triggerer)를 한 컨테이너에서 돌려서 가볍지 않습니다(정확한 사용량은 작성자가 재 보지 못함). 실습 전에 안 쓰는 프로그램을 닫고, <b>실습이 끝나면 반드시 11단계대로 컨테이너를 내리세요</b>(<code>docker compose stop</code> 또는 <code>docker compose down</code>). 오늘 Docker를 더 안 쓸 거면 작업 표시줄 고래 아이콘 → Quit Docker Desktop까지 하면 메모리가 가장 많이 돌아옵니다.</p>
+</div>
+</div>
+
 <div class="step" data-id="folder">
-<div class="step-title">1. 작업 폴더와 설정 파일 준비</div>
-<p>dbt 프로젝트와 섞이지 않게 새 폴더를 만듭니다. <code>dags</code>(내 DAG 파일), <code>data</code>(입력), <code>output</code>(DAG가 쓰는 결과), <code>logs</code>(태스크 로그) 네 폴더를 컨테이너와 연결합니다.</p>
+<div class="step-title">2. 작업 폴더와 설정 파일 준비</div>
+<p><b>목표</b>: dbt 프로젝트와 섞이지 않는 새 폴더 <code>C:\Users\&lt;내이름&gt;\airflow-practice</code>를 만들고, 그 안에 설정 파일 1개 + 폴더 4개 + 입력 CSV 1개를 둡니다. 폴더 4개는 3단계에서 컨테이너 안 경로와 <b>연결(mount)</b>됩니다 — 한쪽에서 파일을 바꾸면 다른 쪽에서도 바로 보입니다.</p>
+<pre class="diagram">  내 PC (Windows)                                  컨테이너 안 (Linux)
+  C:\Users\&lt;내이름&gt;\airflow-practice\
+  ├─ docker-compose.yml   설정 파일. docker compose 가 읽기만 함 (연결 안 됨)
+  ├─ dags\     ◀────────────▶  /opt/airflow/dags     내가 쓰는 DAG .py 파일
+  ├─ data\     ─────────────▶  /opt/airflow/data     입력 (컨테이너는 읽기만)
+  │   └─ raw_orders.csv
+  ├─ output\   ◀────────────   /opt/airflow/output   DAG 가 쓰는 결과 파일
+  └─ logs\     ◀────────────   /opt/airflow/logs     태스크 로그</pre>
+<p>DAG 코드 안에서는 <b>오른쪽(컨테이너) 경로</b>를 씁니다. 코드는 컨테이너 안에서 돌기 때문입니다. 내 PC에서 파일을 열어 볼 때는 왼쪽 경로를 씁니다.</p>
+<ol>
+<li><b>폴더 만들기</b> — PowerShell에 한 줄씩 붙여 넣습니다. <code>$HOME</code>은 <code>C:\Users\&lt;내이름&gt;</code>을 뜻합니다.
 <pre><code>mkdir $HOME\airflow-practice
 cd $HOME\airflow-practice
-mkdir dags, data, output, logs
-$base = "https://jinjinparkk.github.io/de-study/practice/airflow"
-curl.exe -sL "$base/docker-compose.yml" -o docker-compose.yml
-Copy-Item $HOME\dbt-practice\shop\data\raw_orders.csv .\data\
-Get-ChildItem -Recurse</code></pre>
-<p>파일 직접 받기: <a href="../practice/airflow/docker-compose.yml">docker-compose.yml</a> · 전체 설명 <a href="../practice/airflow/README.md">README.md</a></p>
+mkdir dags, data, output, logs</code></pre></li>
+<li><b>설정 파일 받기</b> — 실습 사이트에서 <code>docker-compose.yml</code>을 받습니다. <code>-f</code>는 "주소가 틀리면 조용히 넘어가지 말고 오류 내기"입니다.
+<pre><code>$base = "https://jinjinparkk.github.io/de-study/practice/airflow"
+curl.exe -fsSL "$base/docker-compose.yml" -o docker-compose.yml</code></pre></li>
+<li><b>입력 CSV 넣기</b> — 1일차에 쓰던 주문 원본을 <code>data</code> 폴더에 복사합니다. 1일차 폴더가 없으면 두 번째 줄로 사이트에서 받습니다(내용은 같음).
+<pre><code>Copy-Item $HOME\dbt-practice\shop\data\raw_orders.csv .\data\
+# 또는:  curl.exe -fsSL "https://jinjinparkk.github.io/de-study/practice/data/raw_orders.csv" -o data\raw_orders.csv</code></pre></li>
+<li><b>확인</b>
+<pre><code>Get-ChildItem -Recurse | Select-Object FullName
+(Get-Content data\raw_orders.csv).Count</code></pre>
+기대 결과: 폴더 4개(<code>dags</code>, <code>data</code>, <code>logs</code>, <code>output</code>) + <code>docker-compose.yml</code> + <code>data\raw_orders.csv</code>, 줄 수는 <b>31</b>(헤더 1 + 주문 30건, 10-01~10-19).</li>
+</ol>
+<p>파일 직접 보기: <a href="../practice/airflow/docker-compose.yml">docker-compose.yml</a> · 전체 설명 <a href="../practice/airflow/README.md">README.md</a></p>
 <pre data-file="docker-compose.yml"><code># 5일차: Airflow 3 를 컨테이너 하나(standalone)로 띄우는 설정
 # 실행:  docker compose up -d      →  http://localhost:8083
 # 끄기:  docker compose stop       (기록 유지)   /   docker compose down  (컨테이너 삭제 → 실행 기록도 사라짐)
@@ -564,46 +612,123 @@ services:
 <li><code>command: standalone</code> — 위 아키텍처 그림의 프로세스를 한 컨테이너에서 같이 띄움</li>
 <li><code>"8083:8080"</code> — 왼쪽이 내 PC 포트. 8000·8001·8081은 이미 쓰고 있어서 8083</li>
 <li><code>SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True"</code> — 로그인 화면 없이 모두 관리자. <b>내 PC 연습용에서만</b> 쓰는 설정</li>
-<li><code>./dags:/opt/airflow/dags</code> — 내 PC의 <code>dags</code> 폴더 = 컨테이너 안 <code>/opt/airflow/dags</code>. 파일을 저장하면 컨테이너도 바로 봅니다</li>
+<li><code>./dags:/opt/airflow/dags</code> — 콜론 왼쪽이 내 PC(compose 파일 기준 상대 경로), 오른쪽이 컨테이너 안. 위 그림의 화살표가 이 줄입니다</li>
+<li><code>:ro</code> — read only. 컨테이너가 입력 파일을 실수로 고치지 못하게</li>
 <li><code>REFRESH_INTERVAL: "30"</code> — 새 DAG 파일을 30초마다 찾음 (기본 300초라 새 파일이 5분 동안 안 보일 수 있음)</li>
 </ul>
 </details>
 </div>
 
 <div class="step" data-id="up">
-<div class="step-title">2. Airflow 띄우기</div>
-<p>Docker Desktop을 켠 뒤, 엔진이 돌고 있는지 먼저 확인합니다.</p>
-<pre><code>docker info --format "{{.ServerVersion}}"   # 숫자가 나오면 OK. 오류면 Docker Desktop 을 켜고 1분 기다리기
-docker compose up -d
-docker compose logs -f airflow</code></pre>
-<p>처음엔 이미지(약 1GB대)를 받느라 몇 분 걸립니다. 로그에 <code>Airflow is ready</code>가 보이면 <code>Ctrl+C</code>로 로그 보기만 끄고(컨테이너는 계속 돎), 브라우저에서 <a href="http://localhost:8083">http://localhost:8083</a> 을 엽니다.</p>
-<details class="hint"><summary>로그에 색깔별로 섞여 나오는 이름들</summary>
-<p><code>scheduler</code>, <code>dag-processor</code>, <code>api-server</code>, <code>triggerer</code>가 줄마다 앞에 붙어 나옵니다. 위 아키텍처 그림의 프로세스들이 실제로 따로 돌고 있다는 증거입니다. <code>standalone</code> 소스에서 이 네 개를 띄우고, 모두 준비되면 <code>Airflow is ready</code>를 찍는 것을 확인했습니다.</p>
+<div class="step-title">3. Airflow 띄우기</div>
+<p><b>목표</b>: compose 파일대로 컨테이너를 하나 띄우고, 브라우저로 Airflow 화면(<code>http://localhost:8083</code>)에 들어갑니다.</p>
+<ol>
+<li><b>반드시 <code>airflow-practice</code> 폴더에서</b> 실행합니다. <code>docker compose</code>는 <b>지금 폴더</b>의 <code>docker-compose.yml</code>을 읽고, <code>./dags</code> 같은 상대 경로도 이 폴더 기준입니다.
+<pre><code>cd $HOME\airflow-practice
+docker compose up -d</code></pre>
+<code>-d</code>는 "뒤에서 돌려 두고 PowerShell은 돌려줘"입니다. 처음엔 이미지(1GB대)를 받느라 몇 분 걸립니다. 끝에 <code>Container de-airflow-airflow-1  Started</code> 비슷한 줄이 나옵니다.</li>
+<li><b>준비될 때까지 로그 보기</b>
+<pre><code>docker compose logs -f airflow</code></pre>
+로그에 <code>Airflow is ready</code>가 보이면 <code>Ctrl+C</code>로 <b>로그 보기만</b> 끕니다(컨테이너는 계속 돎).</li>
+<li><b>상태 확인</b>
+<pre><code>docker compose ps</code></pre>
+<code>STATUS</code>가 <code>Up ...</code>, <code>PORTS</code>에 <code>0.0.0.0:8083-&gt;8080/tcp</code>가 보이면 정상입니다. <code>Exited (137)</code>이면 메모리가 모자라 강제 종료된 것입니다 — 다른 프로그램·컨테이너를 닫고 다시 <code>docker compose up -d</code>.</li>
+<li>브라우저에서 <a href="http://localhost:8083">http://localhost:8083</a> 을 엽니다. 로그인 화면 없이 바로 들어가져야 합니다(<code>ALL_ADMINS</code> 설정).</li>
+</ol>
+<details class="hint"><summary>로그에 섞여 나오는 이름들</summary>
+<p><code>scheduler</code>, <code>dag-processor</code>, <code>api-server</code>, <code>triggerer</code>가 줄마다 앞에 붙어 나옵니다. 위 아키텍처 그림의 프로세스들이 실제로 따로 돌고 있다는 증거입니다. <code>standalone</code> 소스에서 이 네 개를 띄우고, 모두 준비되면 <code>Airflow is ready</code>를 찍는 것까지는 작성자가 확인했습니다(컨테이너로 직접 띄워 본 것은 아님).</p>
 </details>
 </div>
 
 <div class="step" data-id="ui">
-<div class="step-title">3. 빈 화면 둘러보기</div>
-<p>예제 DAG를 껐기 때문에(<code>LOAD_EXAMPLES=False</code>) DAG 목록이 비어 있습니다. 메뉴에서 <b>Admin</b> 아래 Variables·Connections·Pools가 있는지, 그리고 DAG 목록 화면의 위치를 눈에 익혀 두세요. 이후 단계는 이 목록에 내 DAG가 나타나는 것부터 시작합니다.</p>
+<div class="step-title">4. 빈 화면 둘러보기</div>
+<p><b>목표</b>: 이후 단계에서 누를 메뉴 위치를 미리 익힙니다. 아직 DAG 파일이 없으니 목록은 비어 있는 게 정상입니다(<code>LOAD_EXAMPLES=False</code>).</p>
+<p>아래 메뉴 이름은 Airflow 3 새 화면 기준이며 <b>작성자가 화면으로 확인하지 못했습니다(미검증)</b>. 이름이 조금 달라도 비슷한 것을 찾으면 됩니다.</p>
+<ol>
+<li>왼쪽 메뉴의 <b>Dags</b> — DAG 목록. 5단계부터 여기에 내 DAG가 나타납니다.</li>
+<li><b>Admin</b> 아래 <b>Variables · Connections · Pools</b> — 6일차에 Pools를 씁니다.</li>
+<li><b>Assets</b> — 6일차 "데이터가 들어오면 실행"에서 씁니다.</li>
+</ol>
 </div>
 
 <div class="step" data-id="hello">
-<div class="step-title">4. 직접 해보기: 첫 TaskFlow DAG (태스크 3개)</div>
-<p><code>dags\hello_taskflow.py</code>를 만들어 다음을 만족하게 써 보세요.</p>
+<div class="step-title">5. 직접 해보기: 첫 TaskFlow DAG (태스크 3개)</div>
+<p><b>목표</b>: 태스크 3개가 차례로 도는 가장 작은 DAG를 직접 써서, Airflow 목록에 나타나게 합니다. 프로시저로 치면 "블록 3개짜리 프로시저를 만들고 등록하기"입니다.</p>
+<pre class="diagram">  extract ──▶ transform ──▶ load
+  주문 3건     amount 합계     합계 출력
+  return rows  return total    print
+
+  파일 위치:  내 PC  airflow-practice\dags\hello_taskflow.py
+              = 컨테이너  /opt/airflow/dags/hello_taskflow.py   (2단계의 연결)</pre>
+
+<h3>5-1. 파일 만들기</h3>
+<ol>
+<li><code>airflow-practice</code> 폴더에서 메모장으로 새 파일을 엽니다. "새 파일을 만드시겠습니까?"가 뜨면 <b>예</b>.
+<pre><code>notepad dags\hello_taskflow.py</code></pre>
+VS Code를 쓰면 <code>code dags\hello_taskflow.py</code>도 됩니다.</li>
+<li>아래 <b>빈칸 틀</b>을 통째로 붙여 넣고 <code>____</code> 8곳을 채웁니다.</li>
+<li><code>Ctrl+S</code>로 저장. 메모장의 "다른 이름으로 저장"을 쓴다면 파일 형식을 <b>모든 파일</b>로 두세요(아니면 <code>hello_taskflow.py.txt</code>가 됩니다).</li>
+</ol>
+
+<h3>5-2. 빈칸 틀</h3>
+<p>요구사항: <code>dag_id</code>는 <code>hello_taskflow</code>, 자동 실행 없음, 지난 날짜 몰아서 채우지 않기, 태스크 순서 extract → transform → load.</p>
+<pre data-file="dags/hello_taskflow.py (빈칸 채우기)"><code>import pendulum
+from airflow.sdk import dag, task
+
+
+@dag(
+    dag_id="____",                      # ① 화면에 보일 이름
+    schedule=____,                      # ② 자동 실행 없음 (파이썬의 NULL)
+    start_date=pendulum.datetime(2026, 10, 1, tz="Asia/Seoul"),
+    catchup=____,                       # ③ 지난 날짜 몰아서 채우지 않기 (참/거짓)
+    tags=["day5"],
+)
+def hello_taskflow():
+
+    @____                               # ④ 이 함수가 태스크라는 표시
+    def extract() -&gt; list[dict]:
+        rows = [
+            {"order_id": 1, "amount": 39000},
+            {"order_id": 2, "amount": 59000},
+            {"order_id": 3, "amount": 19000},
+        ]
+        print(f"extract: {len(rows)}건 읽음")
+        return ____                     # ⑤ 다음 태스크에 넘길 값
+
+    @task
+    def transform(rows: list[dict]) -&gt; int:
+        total = ____(r["amount"] for r in rows)   # ⑥ SELECT SUM(amount) FROM rows
+        print(f"transform: 합계 {total}원")
+        return total
+
+    @task
+    def load(total: int) -&gt; None:
+        print(f"load: 오늘 매출 {total:,}원 을 적재했다고 칩시다")
+
+    load(____(extract()))               # ⑦ 순서: extract → transform → load
+
+
+____()                                  # ⑧ 맨 아래, 들여쓰기 없이: DAG 함수를 한 번 부르기</code></pre>
+
+<h3>5-3. 왜 이렇게 쓰나 (줄별로 SQL에 빗대기)</h3>
 <ul>
-<li><code>dag_id="hello_taskflow"</code>, 자동 실행 없음(<code>schedule=None</code>), 시작일 2026-10-01, catchup 끔</li>
-<li><code>extract</code>: 주문 3건(<code>order_id</code>, <code>amount</code>)을 리스트로 return</li>
-<li><code>transform</code>: 받은 리스트의 amount 합계를 return</li>
-<li><code>load</code>: 합계를 print</li>
-<li>순서: extract → transform → load</li>
+<li><code>@dag(...)</code> + <code>def hello_taskflow():</code> — <code>CREATE PROCEDURE hello_taskflow</code>의 선언부. 괄호 안 설정들이 프로시저 옵션입니다.</li>
+<li><code>@task</code> + <code>def extract():</code> — 프로시저 안의 <b>블록 하나</b>. 블록마다 성공/실패 기록과 로그가 따로 남습니다.</li>
+<li><b>들여쓰기(스페이스 4칸)</b> — 파이썬에서는 <code>BEGIN … END</code> 대신 들여쓰기로 "이 안에 속한다"를 표시합니다. 틀의 들여쓰기를 그대로 두세요.</li>
+<li><code>return rows</code> — 다음 블록에 넘기는 값. SQL로 치면 아주 작은 임시 테이블입니다. Airflow는 이걸 <b>XCom</b>에 저장합니다(그래서 큰 데이터는 넘기지 않음).</li>
+<li><code>sum(r["amount"] for r in rows)</code> — <code>rows</code>의 각 행 <code>r</code>에서 <code>amount</code> 컬럼만 꺼내 더하기 = <code>SELECT SUM(amount) FROM rows</code>. <code>r["amount"]</code>는 "행 r의 amount 컬럼"입니다.</li>
+<li><code>load(transform(extract()))</code> — 여기서 실제로 실행되는 게 아니라 <b>순서도</b>가 그려집니다. 안쪽부터 바깥으로: extract의 결과를 transform이 받고, 그 결과를 load가 받으니 순서가 저절로 생깁니다.</li>
+<li>맨 아래 <code>hello_taskflow()</code> — 선언한 프로시저를 Airflow에 <b>등록</b>하는 줄. 빼먹으면 파일은 있어도 목록에 안 나옵니다.</li>
 </ul>
+
 <details class="hint"><summary>힌트 1</summary>
-<p>맨 위에 <code>import pendulum</code>, <code>from airflow.sdk import dag, task</code>. DAG 함수에 <code>@dag(...)</code>, 안쪽 함수 세 개에 <code>@task</code>를 붙입니다. 파일 맨 아래에서 DAG 함수를 한 번 불러야 합니다.</p>
+<p>①은 요구사항의 이름 그대로 문자열. ② 파이썬에서 "값 없음"은 <code>None</code>, ③ 참/거짓은 <code>True</code>/<code>False</code>(첫 글자 대문자). ④는 위 <code>from airflow.sdk import dag, task</code>에서 가져온 두 이름 중 하나입니다.</p>
 </details>
 <details class="hint"><summary>힌트 2</summary>
-<p>순서는 <code>&gt;&gt;</code>를 쓰지 않아도, 값을 넘기는 모양 <code>load(transform(extract()))</code> 한 줄로 생깁니다. 합계는 SQL의 <code>SUM(amount)</code> = 파이썬 <code>sum(r["amount"] for r in rows)</code>.</p>
+<p>⑤는 바로 위에서 만든 리스트 변수 이름. ⑥은 SQL의 <code>SUM</code>에 해당하는 파이썬 내장 함수(소문자). ⑦은 가운데 단계 태스크 함수 이름, ⑧은 <code>def</code> 뒤의 DAG 함수 이름입니다.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
+<p>빈칸: ① <code>hello_taskflow</code> ② <code>None</code> ③ <code>False</code> ④ <code>task</code> ⑤ <code>rows</code> ⑥ <code>sum</code> ⑦ <code>transform</code> ⑧ <code>hello_taskflow</code>. 주석까지 달린 완성본은 아래와 같고, 그대로 받으려면 <code>curl.exe -fsSL "https://jinjinparkk.github.io/de-study/practice/airflow/dags/hello_taskflow.py" -o dags\hello_taskflow.py</code>.</p>
 <pre data-file="dags/hello_taskflow.py"><code># 5일차 첫 DAG: 태스크 3개 (extract → transform → load)
 # SQL 로 치면 "프로시저 하나를 3단계 블록으로 나누고, 단계마다 실행 기록이 남는 것"
 
@@ -645,22 +770,37 @@ def hello_taskflow():                            # 이 함수 몸통은 "순서�
 
 hello_taskflow()                                 # 맨 아래에서 한 번 불러 줘야 Airflow 가 DAG 로 등록한다</code></pre>
 </details>
-<p>저장하고 30초쯤 기다리면 목록에 <code>hello_taskflow</code>가 나타납니다. 안 나타나면 파싱 오류부터 확인합니다.</p>
-<pre><code>docker compose exec airflow airflow dags list-import-errors   # "No data found" 면 오류 없음
+
+<h3>5-4. 확인</h3>
+<p>저장하고 <b>30초</b>쯤 기다린 뒤(<code>REFRESH_INTERVAL</code>) 아래 두 줄을 칩니다.</p>
+<pre><code>docker compose exec airflow airflow dags list-import-errors
 docker compose exec airflow airflow dags list</code></pre>
+<ul>
+<li>첫 줄: <code>No data found</code>면 파싱 오류 없음. 오류가 있으면 파일 경로와 <code>SyntaxError</code>/<code>IndentationError</code>/<code>NameError</code> 같은 메시지와 <b>줄 번호</b>가 나옵니다 — 그 줄을 틀과 비교하세요.</li>
+<li>둘째 줄: 표에 <code>hello_taskflow</code> 한 줄이 있으면 성공. 화면의 Dags 목록에도 같은 이름이 보입니다.</li>
+</ul>
+<p><code>docker compose exec airflow …</code>는 "떠 있는 airflow 컨테이너 <b>안에서</b> 뒤의 명령을 실행"입니다. 앞의 <code>airflow</code>는 서비스 이름, 뒤의 <code>airflow</code>는 Airflow 명령어입니다.</p>
 </div>
 
 <div class="step" data-id="trigger">
-<div class="step-title">5. 실행하고 로그·XCom 읽기</div>
-<p>화면에서 <code>hello_taskflow</code>의 <b>토글을 켜고(unpause)</b>, <b>Trigger</b> 버튼으로 실행합니다. 실행 하나(DagRun)를 누르고 태스크 칸(TaskInstance)을 하나씩 눌러 보세요.</p>
+<div class="step-title">6. 실행하고 로그·XCom 읽기</div>
+<p><b>목표</b>: 5단계 DAG를 실제로 한 번 돌리고, 태스크마다 남은 <b>로그</b>와 <b>XCom</b>(태스크끼리 넘긴 값)을 눈으로 봅니다.</p>
+<h3>6-1. 화면에서 (버튼 이름 미검증)</h3>
+<ol>
+<li>Dags 목록에서 <code>hello_taskflow</code> 줄의 <b>토글</b>을 켭니다(unpause). 꺼져 있으면 실행이 <code>queued</code>에서 멈춥니다.</li>
+<li><code>hello_taskflow</code> 이름을 눌러 들어가 오른쪽 위 <b>Trigger</b> 버튼 → 확인 창에서 다시 <b>Trigger</b>.</li>
+<li>실행(DagRun) 하나가 생기고, 태스크 칸 3개가 차례로 초록색(<code>success</code>)이 되면 성공입니다.</li>
+<li>태스크 칸을 하나씩 눌러 봅니다.
 <ul>
-<li><b>Logs</b>: <code>print</code>한 내용이 그대로 보입니다</li>
-<li><b>XCom</b>: <code>extract</code>가 return한 리스트가 <code>return_value</code>라는 이름으로 저장돼 있습니다</li>
-<li><b>Graph</b> 보기: 세 칸이 화살표로 이어져 있는지</li>
-</ul>
-<p>같은 걸 명령으로도 할 수 있습니다. <code>dags test</code>는 스케줄러 없이 <b>그 자리에서 한 번</b> 돌려 보는 개발용 명령입니다(토글이 꺼져 있어도 됨).</p>
+<li><b>Logs</b>: <code>extract</code>에는 <code>extract: 3건 읽음</code>, <code>transform</code>에는 <code>transform: 합계 117000원</code>, <code>load</code>에는 <code>load: 오늘 매출 117,000원 …</code></li>
+<li><b>XCom</b>: <code>extract</code>의 <code>return_value</code>에 주문 3건 리스트, <code>transform</code>의 <code>return_value</code>에 <code>117000</code></li>
+<li><b>Graph</b>: 세 칸이 화살표로 이어져 있는지</li>
+</ul></li>
+</ol>
+<h3>6-2. 명령으로 (화면이 헷갈리면 이것만 해도 됨)</h3>
+<p><code>dags test</code>는 스케줄러를 거치지 않고 <b>그 자리에서 한 번</b> 돌려 보는 개발용 명령입니다(토글이 꺼져 있어도 됨). 프로시저를 <code>EXEC</code>로 직접 돌려 보는 것과 비슷합니다.</p>
 <pre><code>docker compose exec airflow airflow dags test hello_taskflow</code></pre>
-<pre data-file="실측 출력 (긴 로그 중 일부)"><code>[DAG TEST] starting task_id=extract map_index=-1
+<pre data-file="실측 출력 (긴 로그 중 일부, 작성자 PC의 파이썬에서 돌린 것)"><code>[DAG TEST] starting task_id=extract map_index=-1
 extract: 3건 읽음
 Done. Returned value was: [{'order_id': 1, 'amount': 39000}, {'order_id': 2, 'amount': 59000}, {'order_id': 3, 'amount': 19000}]
 Pushing xcom
@@ -669,30 +809,122 @@ transform: 합계 117000원
 [DAG TEST] starting task_id=load map_index=-1
 load: 오늘 매출 117,000원 을 적재했다고 칩시다
 Marking run &lt;DagRun hello_taskflow @ 2026-11-04 06:57:38 ...: manual__2026-11-04T06:57:38...&gt; successful</code></pre>
-<p>로그 파일은 내 PC의 <code>logs\dag_id=hello_taskflow\run_id=…\task_id=extract\attempt=1.log</code>에도 생깁니다(경로 규칙은 3.3.2 기본 설정 <code>log_filename_template</code>).</p>
+<p>마지막 줄이 <code>successful</code>이면 성공. 로그 파일은 내 PC의 <code>logs\dag_id=hello_taskflow\run_id=…\task_id=extract\attempt=1.log</code>에도 생깁니다(경로 규칙은 3.3.2 기본 설정 <code>log_filename_template</code>). 탐색기에서 열어 보세요 — 2단계의 <code>logs</code> 연결 덕분입니다.</p>
 </div>
 
 <div class="step" data-id="partition">
-<div class="step-title">6. 직접 해보기: 날짜별 파일을 멱등하게 쓰는 DAG</div>
-<p><code>dags\daily_orders_partition.py</code>를 만듭니다. 요구사항:</p>
+<div class="step-title">7. 직접 해보기: 날짜별 파일을 멱등하게 쓰는 DAG</div>
+<p><b>목표</b>: 실행마다 Airflow가 넣어 주는 날짜(<code>ds</code>)로 그날 주문만 골라 <b>날짜별 폴더</b>에 파일로 씁니다. 같은 날짜로 다시 돌려도 결과가 같아야 합니다(멱등). 프로시저로 치면 <code>p_date</code> 인자를 받아 <code>DELETE … WHERE dt = p_date; INSERT … WHERE order_date = p_date;</code> 하는 것과 같습니다.</p>
+<pre class="diagram">  data\raw_orders.csv  (30건, 10-01 ~ 10-19)
+        │
+        │  ds = 2026-10-03 인 실행  →  WHERE order_date = '2026-10-03'
+        ▼
+  output\orders\dt=2026-10-03\orders.csv   (1건)
+  output\orders\dt=2026-10-04\orders.csv   (2건)
+  ...                                         날짜마다 폴더 하나. 다시 돌리면 그 폴더 파일만 통째로 교체
+
+  태스크 순서:  show_dates ──▶ extract_day ──▶ check ──▶ list_files
+               날짜 출력       파일 쓰기       건수 세기    ls -l (BashOperator)</pre>
+
+<h3>7-1. 파일 만들기</h3>
+<ol>
+<li><code>notepad dags\daily_orders_partition.py</code> → <b>예</b></li>
+<li>아래 빈칸 틀을 붙여 넣고 <code>____</code> 7곳을 채운 뒤 저장</li>
+</ol>
+<pre data-file="dags/daily_orders_partition.py (빈칸 채우기)"><code>import csv
+import os
+import pendulum
+from airflow.sdk import dag, task, get_current_context, CronDataIntervalTimetable
+from airflow.providers.standard.operators.bash import BashOperator
+
+SRC = "/opt/airflow/data/raw_orders.csv"         # 컨테이너 안 경로 (2단계 그림의 오른쪽)
+OUT_ROOT = "/opt/airflow/output/orders"
+
+
+@dag(
+    dag_id="daily_orders_partition",
+    schedule=CronDataIntervalTimetable("____", timezone="UTC"),   # ① 매일 00:00 (cron 5칸)
+    start_date=pendulum.datetime(2026, 10, 1, tz="UTC"),
+    catchup=False,
+    max_active_runs=3,
+    params={"min_amount": 0},
+    tags=["day5"],
+)
+def daily_orders_partition():
+
+    @task
+    def show_dates(ds=None, data_interval_start=None, data_interval_end=None, logical_date=None):
+        print(f"logical_date        = {logical_date}")
+        print(f"data_interval_start = {data_interval_start}")
+        print(f"data_interval_end   = {data_interval_end}")
+        print(f"ds                  = {ds}")
+
+    @task
+    def extract_day(____=None) -&gt; str:             # ② Airflow 가 날짜 문자열을 채워 줄 인자 이름
+        out_dir = f"{OUT_ROOT}/dt={ds}"
+        os.makedirs(out_dir, exist_ok=True)
+        tmp = f"{out_dir}/orders.csv.tmp"
+        final = f"{out_dir}/orders.csv"
+
+        with open(SRC, newline="", encoding="utf-8") as f:
+            rows = [r for r in csv.DictReader(f)
+                    if r["____"] == ds]              # ③ WHERE ____ = ds
+
+        with open(____, "w", newline="", encoding="utf-8") as f:   # ④ 어느 파일에 먼저 쓰나?
+            w = csv.DictWriter(f, fieldnames=["order_id", "customer_id", "order_date", "status"],
+                               extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        os.replace(____, ____)                       # ⑤ 임시 파일 → 진짜 이름 (통째로 교체)
+
+        print(f"{ds}: {len(rows)}건 → {final}")
+        return final
+
+    @task
+    def check(path: str) -&gt; int:
+        ctx = get_current_context()
+        min_amount = ctx["params"]["min_amount"]
+        with open(path, encoding="utf-8") as f:
+            n = sum(1 for _ in f) - 1
+        print(f"검사: {path} 에 {n}건 (params.min_amount={min_amount})")
+        return n
+
+    list_files = BashOperator(
+        task_id="list_files",
+        bash_command="ls -l {{ params.out_root }}/dt={{ ds }}",
+        params={"out_root": OUT_ROOT},
+    )
+
+    path = extract_day()
+    show_dates() &gt;&gt; ____                          # ⑥ show_dates 다음에 extract_day
+    check(path) &gt;&gt; ____                           # ⑦ check 다음에 list_files
+
+
+daily_orders_partition()</code></pre>
+
+<h3>7-2. 왜 이렇게 쓰나</h3>
 <ul>
-<li>스케줄: 매일 00:00 UTC, <b>구간 있는</b> 시간표(<code>CronDataIntervalTimetable</code>), 시작일 2026-10-01 UTC, catchup 끔</li>
-<li><code>show_dates</code>: logical_date·data_interval_start·data_interval_end·ds를 print</li>
-<li><code>extract_day</code>: <code>/opt/airflow/data/raw_orders.csv</code>에서 <code>order_date == ds</code>인 행만 골라 <code>/opt/airflow/output/orders/dt={ds}/orders.csv</code>로 저장. <b>같은 날짜로 다시 돌리면 파일을 통째로 교체</b>. 경로를 return</li>
-<li><code>check</code>: 경로를 받아 행 수를 세어 print</li>
-<li><code>list_files</code>: BashOperator로 <code>ls -l …/dt={{ ds }}</code></li>
-<li>순서: show_dates → extract_day → check → list_files</li>
+<li><code>def extract_day(ds=None)</code> — 인자 이름을 <code>ds</code>로 적어 두면 Airflow가 실행마다 <code>"2026-10-03"</code> 같은 날짜 문자열을 넣어 줍니다. 프로시저의 <code>p_date</code> 인자를 스케줄러가 대신 넣어 주는 것.</li>
+<li><code>with open(SRC, …) as f:</code> — 파일 열기. <code>with</code> 블록이 끝나면 자동으로 닫힙니다(커서 <code>OPEN … CLOSE</code>를 알아서 해 줌).</li>
+<li><code>[r for r in csv.DictReader(f) if r["order_date"] == ds]</code> — 한 줄씩 읽어(<code>FROM</code>) 조건에 맞는 행만 남기기(<code>WHERE</code>). 결과는 행 목록.</li>
+<li><code>os.makedirs(out_dir, exist_ok=True)</code> — <code>CREATE SCHEMA IF NOT EXISTS</code>처럼 "있으면 그냥 두고 없으면 만들기".</li>
+<li><b>임시 파일에 쓰고 <code>os.replace</code></b> — 같은 이름 파일이 있으면 한 번에 바꿔치기 = <code>DELETE + INSERT</code>를 한 트랜잭션으로. 쓰다가 죽어도 <code>orders.csv</code>는 이전 상태 그대로라 "반쪽 파일"이 안 남습니다.</li>
+<li><code>return final</code> — 데이터가 아니라 <b>파일 경로</b>만 다음 태스크에 넘깁니다. XCom은 작은 쪽지라서요.</li>
+<li><code>BashOperator</code>의 <code>{{ ds }}</code> — 실행 직전에 날짜로 바뀌는 템플릿(이론 절 참고). 이 태스크는 <code>@task</code>가 아니라 전통적인 Operator라 <code>&gt;&gt;</code>로 순서를 붙입니다.</li>
+<li><code>a &gt;&gt; b</code> — "a가 끝나야 b 시작". <code>path = extract_day()</code>로 받아 둔 칸에 화살표를 연결합니다.</li>
 </ul>
-<details class="hint"><summary>힌트 1 — 날짜 받기</summary>
-<p><code>@task</code> 함수 인자 이름을 <code>ds=None</code>으로 두면 Airflow가 채워 줍니다. 시간표는 <code>from airflow.sdk import CronDataIntervalTimetable</code> 후 <code>schedule=CronDataIntervalTimetable("0 0 * * *", timezone="UTC")</code>.</p>
+
+<details class="hint"><summary>힌트 1 — 날짜 받기·스케줄</summary>
+<p>① cron은 "분 시 일 월 요일" 5칸, 매일 0시 0분은 <code>0 0 * * *</code>. ② 이론 절 "템플릿과 컨텍스트"에서 본 날짜 키 이름(두 글자). ③ <code>raw_orders.csv</code>의 날짜 컬럼 이름(헤더: <code>order_id,customer_id,order_date,status,updated_at</code>).</p>
 </details>
 <details class="hint"><summary>힌트 2 — 멱등하게 쓰기</summary>
-<p>CSV는 표준 모듈 <code>csv.DictReader</code>로 읽고(<code>FROM</code>), 리스트 컴프리헨션의 <code>if</code>로 거르고(<code>WHERE</code>), <code>csv.DictWriter</code>로 씁니다. 먼저 <code>orders.csv.tmp</code>에 쓰고 마지막에 <code>os.replace(tmp, final)</code>로 이름을 바꾸면 "통째로 교체(DELETE+INSERT)"이면서 중간에 죽어도 반쪽 파일이 남지 않습니다. 폴더는 <code>os.makedirs(..., exist_ok=True)</code>.</p>
+<p>④ 바로 <code>final</code>에 쓰지 않고 먼저 <code>tmp</code>에 씁니다. ⑤ <code>os.replace(원래이름, 바꿀이름)</code> 순서 — 임시 파일을 진짜 이름으로.</p>
 </details>
 <details class="hint"><summary>힌트 3 — 순서 잇기</summary>
-<p><code>path = extract_day()</code>로 받아 두고 <code>show_dates() &gt;&gt; path</code>, <code>check(path) &gt;&gt; list_files</code>. <code>show_dates() &gt;&gt; check(extract_day())</code>처럼 한 줄로 쓰면 show_dates가 check 앞에만 붙고 extract_day 앞에는 안 붙습니다(작성자가 실제로 처음에 이렇게 틀렸습니다).</p>
+<p>⑥ <code>path</code>(extract_day 칸), ⑦ <code>list_files</code>. <code>show_dates() &gt;&gt; check(extract_day())</code>처럼 한 줄로 쓰면 show_dates가 check 앞에만 붙고 extract_day 앞에는 안 붙습니다(작성자가 실제로 처음에 이렇게 틀렸습니다).</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
+<p>빈칸: ① <code>0 0 * * *</code> ② <code>ds</code> ③ <code>order_date</code> ④ <code>tmp</code> ⑤ <code>tmp, final</code> ⑥ <code>path</code> ⑦ <code>list_files</code>. 주석 달린 완성본은 아래와 같고, 그대로 받으려면 <code>curl.exe -fsSL "https://jinjinparkk.github.io/de-study/practice/airflow/dags/daily_orders_partition.py" -o dags\daily_orders_partition.py</code>.</p>
 <pre data-file="dags/daily_orders_partition.py"><code># 5일차: logical date 별로 파일을 "덮어써서" 멱등하게 만드는 DAG
 # 프로시저로 치면:  DELETE FROM t WHERE dt = p_date;  INSERT INTO t SELECT ... WHERE order_date = p_date;
 # p_date 를 사람이 넣는 대신 Airflow 가 실행마다 {{ ds }} 로 넣어 준다.
@@ -772,10 +1004,23 @@ def daily_orders_partition():
 
 daily_orders_partition()</code></pre>
 </details>
+
+<h3>7-3. 확인</h3>
+<p>30초 뒤 파싱 오류를 보고, 10월 3일 하루를 직접 돌려 봅니다(날짜를 맨 뒤에 주면 그 날짜의 실행으로 돕니다).</p>
+<pre><code>docker compose exec airflow airflow dags list-import-errors
+docker compose exec airflow airflow dags test daily_orders_partition 2026-10-03
+Get-ChildItem output\orders
+Get-Content output\orders\dt=2026-10-03\orders.csv</code></pre>
+<p>기대 결과:</p>
+<ul>
+<li>로그에 <code>ds                  = 2026-10-03</code>, <code>2026-10-03: 1건 → /opt/airflow/output/orders/dt=2026-10-03/orders.csv</code>, <code>검사: … 에 1건</code>, 그리고 <code>list_files</code>의 <code>ls -l</code> 결과(<code>orders.csv</code> 한 줄)</li>
+<li>내 PC에 <code>output\orders\dt=2026-10-03\orders.csv</code>가 생기고, 내용은 헤더 + 1행(<code>updated_at</code> 컬럼은 빠짐)</li>
+</ul>
 </div>
 
 <div class="step" data-id="idempotent">
-<div class="step-title">7. 같은 날짜를 두 번 돌려 멱등성 확인</div>
+<div class="step-title">8. 같은 날짜를 두 번 돌려 멱등성 확인</div>
+<p><b>목표</b>: 같은 날짜를 몇 번 돌려도 파일 내용이 같다는 것(멱등)을 눈으로 보고, 일부러 망가뜨려 "멱등이 아니면 어떻게 되는지"도 봅니다.</p>
 <pre><code>docker compose exec airflow airflow dags test daily_orders_partition 2026-10-05
 docker compose exec airflow airflow dags test daily_orders_partition 2026-10-05
 Get-Content output\orders\dt=2026-10-05\orders.csv</code></pre>
@@ -786,12 +1031,23 @@ ds                  = 2026-10-05
 
 order_id,customer_id,order_date,status
 8,6,2026-10-05,completed</code></pre>
-<p>(실측은 Windows 경로로 찍혔고, 컨테이너에서는 위처럼 <code>/opt/airflow/...</code>로 나옵니다.) 이번엔 <code>extract_day</code>를 일부러 망가뜨려 보세요. <code>os.replace</code> 대신 <code>open(final, "a")</code>(append)로 바꿔 두 번 돌리면 같은 행이 두 번 쌓입니다. 확인했으면 원래대로 돌려놓습니다.</p>
+<p>(실측은 Windows 경로로 찍혔고, 컨테이너에서는 위처럼 <code>/opt/airflow/...</code>로 나옵니다.)</p>
+<h3>일부러 망가뜨려 보기</h3>
+<ol>
+<li><code>dags\daily_orders_partition.py</code>의 <code>extract_day</code>에서 두 군데를 바꿉니다.
+<pre><code>        with open(final, "a", newline="", encoding="utf-8") as f:   # tmp, "w" → final, "a"(이어 쓰기)
+        ...
+        # os.replace(tmp, final)                                    # 맨 앞에 # 를 붙여 끄기</code></pre></li>
+<li>저장, 30초 기다린 뒤 위 <code>dags test … 2026-10-05</code>를 두 번 더 돌리고 <code>Get-Content</code>.</li>
+<li>기대 결과: 돌릴 때마다 <b>헤더와 8번 주문 줄이 한 쌍씩 더 쌓입니다</b>(6줄, 그다음 실행 땐 8줄…). <code>INSERT</code>만 하고 <code>DELETE</code>를 안 한 프로시저와 같은 상태입니다.</li>
+<li>확인했으면 두 줄을 원래대로(<code>open(tmp, "w", …)</code>, <code># </code> 지우기) 돌려놓고 한 번 더 돌려 파일이 2줄로 돌아오는지 봅니다.</li>
+</ol>
 </div>
 
 <div class="step" data-id="dates">
-<div class="step-title">8. logical date 눈으로 확인하기</div>
-<p>화면에서 <code>daily_orders_partition</code> 토글을 켜세요. catchup이 꺼져 있으니 <b>가장 최근 구간 하나</b>만 바로 돕니다. 그 실행의 <code>show_dates</code> 로그를 열고, 아래 질문에 먼저 답한 뒤 확인합니다.</p>
+<div class="step-title">9. logical date 눈으로 확인하기</div>
+<p><b>목표</b>: 스케줄러가 "자동으로" 만든 실행에서 <code>ds</code>와 구간이 이론 절 설명대로 찍히는지 봅니다.</p>
+<p>화면 Dags 목록에서 <code>daily_orders_partition</code> 토글을 켜세요. catchup이 꺼져 있으니 <b>가장 최근 구간 하나</b>만 바로 돕니다. 그 실행의 <code>show_dates</code> 태스크 → Logs를 열고, 아래 질문에 먼저 답한 뒤 확인합니다.</p>
 <ol>
 <li>오늘(실습하는 날) 09:00 KST 이후라면 <code>ds</code>는 며칠일까? (힌트: 00:00 UTC = 09:00 KST, 직전 구간)</li>
 <li><code>data_interval_end</code>와 실제 실행 시각은 얼마나 차이 날까?</li>
@@ -803,23 +1059,39 @@ order_id,customer_id,order_date,status
 </div>
 
 <div class="step" data-id="backfill">
-<div class="step-title">9. 백필: 10월 1~5일 다시 만들기</div>
-<p>먼저 어떤 실행이 만들어질지 봅니다.</p>
+<div class="step-title">10. 백필: 10월 1~5일 다시 만들기</div>
+<p><b>목표</b>: 지난 날짜 5일치를 명령 한 번으로 다시 만듭니다. 프로시저로 치면 <code>p_date</code>를 10-01부터 10-05까지 바꿔 가며 다섯 번 <code>EXEC</code> 하는 일을 Airflow에 맡기는 것입니다.</p>
+<ol>
+<li><b>먼저 미리보기</b> — 어떤 날짜 실행이 만들어질지 목록만 봅니다(<code>--dry-run</code> = 실제로 돌리지 않음).
 <pre><code>docker compose exec airflow airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --dry-run</code></pre>
-<p>7단계에서 10-05를 <code>dags test</code>로 돌렸다면 그 날짜는 목록에서 빠질 수 있습니다(기록이 있으면 건너뛰는 기본 동작 — 이론 절의 실측 참고). 전부 다시 만들려면 <code>--reprocess-behavior completed</code>를 붙입니다. 이제 <code>--dry-run</code>을 빼고 실제로 실행합니다. <b>DAG 토글이 켜져 있어야</b> 돕니다.</p>
-<pre><code>docker compose exec airflow airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --reprocess-behavior completed
-Get-ChildItem output\orders</code></pre>
-<p>화면에서 실행 목록에 백필 실행들이 생기고(<code>max_active_runs=3</code>이라 최대 3개씩 동시에), 끝나면 <code>dt=2026-10-01</code>~<code>dt=2026-10-05</code> 폴더가 있어야 합니다. 원본 기준 건수는 10-01: 2, 10-02: 2, 10-03: 1, 10-04: 2, 10-05: 1건입니다.</p>
+8단계에서 10-05를 <code>dags test</code>로 돌렸다면 그 날짜는 목록에서 빠질 수 있습니다(기록이 있으면 건너뛰는 기본 동작 — 이론 절의 실측 참고).</li>
+<li><b>실제 실행</b> — <code>--dry-run</code>을 빼고, 이미 돈 날짜도 다시 만들도록 <code>--reprocess-behavior completed</code>를 붙입니다. <b>9단계에서 켠 DAG 토글이 켜져 있어야</b> 스케줄러가 돌립니다.
+<pre><code>docker compose exec airflow airflow backfill create --dag-id daily_orders_partition --from-date 2026-10-01 --to-date 2026-10-05 --reprocess-behavior completed</code></pre></li>
+<li>화면에서 <code>daily_orders_partition</code>의 실행 목록에 백필 실행 5개가 생기고(<code>max_active_runs=3</code>이라 최대 3개씩 동시에) 모두 초록색이 될 때까지 기다립니다(1~2분).</li>
+<li><b>날짜별 건수 확인</b> — 폴더마다 행 수를 세는 한 줄입니다(헤더 1줄을 뺌).
+<pre><code>Get-ChildItem output\orders -Recurse -Filter orders.csv | ForEach-Object { "{0}: {1}건" -f $_.Directory.Name, ((Get-Content $_.FullName).Count - 1) }</code></pre>
+기대 결과(원본 기준):
+<pre><code>dt=2026-10-01: 2건
+dt=2026-10-02: 2건
+dt=2026-10-03: 1건
+dt=2026-10-04: 2건
+dt=2026-10-05: 1건</code></pre>
+9단계에서 생긴 "어제 날짜" 폴더(0건)도 같이 나올 수 있습니다.</li>
+</ol>
 <details class="hint"><summary>이 단계에서 확인할 것 (실제 스케줄러 실행은 작성자가 검증하지 못함)</summary>
 <p>각 백필 실행의 <code>show_dates</code> 로그에서 <code>ds</code>가 그 날짜와 같고, <code>data_interval_start</code>도 같은 날짜 00:00인지 보세요. 구간 시간표의 스케줄·백필 실행에서는 둘이 같아야 합니다(시간표 계산은 실측 확인). 만약 하루씩 어긋나 있다면 이 페이지의 설명이 틀린 것이니 알려 주세요.</p>
 </details>
 </div>
 
 <div class="step" data-id="stop">
-<div class="step-title">10. 정리하고 끄기</div>
-<pre><code>docker compose stop        # 컨테이너 멈춤. 실행 기록(SQLite)은 컨테이너 안에 남아 있음
-# docker compose down      # 컨테이너 삭제 → 실행 기록도 사라짐. DAG 파일·output·logs 는 내 PC 에 남음</code></pre>
-<p>내일은 <code>docker compose start</code>(또는 <code>up -d</code>)로 이어서 합니다.</p>
+<div class="step-title">11. 정리하고 끄기 (메모리 돌려주기)</div>
+<p><b>목표</b>: 실습이 끝나면 컨테이너를 내려 메모리를 돌려줍니다. <b>이 PC는 메모리가 부족할 때가 있으니 꼭 하세요.</b> 두 가지 중 고릅니다.</p>
+<pre><code>cd $HOME\airflow-practice
+docker compose stop        # ① 멈추기만. 실행 기록(컨테이너 안 SQLite)은 남음 → 내일 docker compose start 로 이어 하기
+docker compose down        # ② 컨테이너 삭제. 메모리·디스크 조금 더 돌아옴. 실행 기록·토글 상태는 사라짐</code></pre>
+<p>둘 다 메모리는 돌려줍니다. 내일(6일차) 어차피 새 이미지로 컨테이너를 다시 만드므로 <b>②를 써도 잃는 건 화면의 실행 기록뿐</b>입니다. <code>dags\</code>, <code>output\</code>, <code>logs\</code>는 내 PC 폴더라 그대로 남습니다.</p>
+<pre><code>docker ps</code></pre>
+<p>제목 줄만 나오면 다 내려간 것입니다. 오늘 Docker를 더 안 쓰면 작업 표시줄의 고래 아이콘 → <b>Quit Docker Desktop</b>까지 하세요(엔진이 쓰던 메모리까지 돌아옵니다).</p>
 </div>
 
 </div>
@@ -827,12 +1099,18 @@ Get-ChildItem output\orders</code></pre>
 <div class="box warn">
 <span class="box-title">자주 막히는 곳</span>
 <ul>
-<li><b>DAG가 목록에 안 나온다</b> → ① 30초 기다림 ② <code>airflow dags list-import-errors</code> ③ 파일 맨 아래에서 DAG 함수를 불렀는지 ④ 파일이 정말 <code>dags</code> 폴더에 있는지(<code>docker compose exec airflow ls /opt/airflow/dags</code>)</li>
+<li><b><code>failed to connect to the docker API at npipe:…</code></b> → Docker 엔진이 꺼져 있습니다. Docker Desktop을 켜고 1분 뒤 <code>docker info --format "{{.ServerVersion}}"</code>로 확인(1단계).</li>
+<li><b><code>no configuration file provided: not found</code></b> → <code>docker-compose.yml</code>이 없는 폴더에서 <code>docker compose</code>를 쳤습니다. <code>cd $HOME\airflow-practice</code> 후 다시.</li>
+<li><b><code>docker compose ps</code>에 <code>Exited (137)</code>, 화면이 갑자기 안 열림</b> → 메모리 부족으로 컨테이너가 강제 종료됨. 브라우저 탭·다른 컨테이너(<code>docker ps</code>로 확인)를 닫고 <code>docker compose up -d</code>.</li>
+<li><b>DAG가 목록에 안 나온다</b> → ① 30초 기다림 ② <code>airflow dags list-import-errors</code> ③ 파일 맨 아래에서 DAG 함수를 불렀는지 ④ 파일이 정말 <code>dags</code> 폴더에 있는지(<code>docker compose exec airflow ls /opt/airflow/dags</code>) ⑤ 이름이 <code>.py.txt</code>로 저장되지 않았는지(<code>Get-ChildItem dags</code>).</li>
+<li><b><code>IndentationError</code></b> → 들여쓰기가 틀어짐. 틀을 복사할 때 탭과 스페이스가 섞였거나 한 칸 밀렸습니다. 오류에 나온 줄 번호를 틀과 비교하세요.</li>
+<li><b><code>NameError: name 'false' is not defined</code></b> → 파이썬의 참/거짓·없음은 <code>True</code>/<code>False</code>/<code>None</code>(첫 글자 대문자).</li>
 <li><b>Trigger 했는데 queued에서 안 움직인다</b> → DAG 토글이 꺼져(paused) 있습니다.</li>
 <li><b><code>ModuleNotFoundError: airflow.decorators</code> 등</b> → Airflow 2 예제를 옮긴 것. <code>from airflow.sdk import dag, task</code>, <code>schedule=</code>로 바꾸세요.</li>
 <li><b>날짜가 하루 어긋난다</b> → 시간표가 <code>"@daily"</code>(구간 없음)인지 <code>CronDataIntervalTimetable</code>인지, 시간대가 서울인지 UTC인지 확인. <code>show_dates</code> 같은 태스크를 하나 두면 원인을 바로 봅니다.</li>
-<li><b>포트 충돌 <code>bind: address already in use</code></b> → 8083을 다른 프로그램이 쓰고 있습니다. compose의 <code>"8083:8080"</code> 왼쪽 숫자를 바꾸세요.</li>
-<li><b>로그에 <code>FileNotFoundError: /opt/airflow/data/raw_orders.csv</code></b> → 1단계의 <code>Copy-Item</code>을 빼먹었거나 다른 폴더에서 <code>docker compose up</code>을 했습니다.</li>
+<li><b>포트 충돌 <code>bind: address already in use</code></b> → 8083을 다른 프로그램이 쓰고 있습니다. compose의 <code>"8083:8080"</code> 왼쪽 숫자를 바꾸고 브라우저 주소도 그 숫자로.</li>
+<li><b>로그에 <code>FileNotFoundError: /opt/airflow/data/raw_orders.csv</code></b> → 2단계의 CSV 복사를 빼먹었거나 다른 폴더에서 <code>docker compose up</code>을 했습니다.</li>
+<li><b><code>curl: (22) The requested URL returned error: 404</code></b> → 주소 오타. <code>$base</code>를 같은 창에서 먼저 정의했는지 확인하세요(새 창을 열면 변수가 사라집니다).</li>
 </ul>
 </div>
 

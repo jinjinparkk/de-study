@@ -437,73 +437,245 @@ AdaptiveSparkPlan isFinalPlan=false
 
 <h2 id="lab">실습: shop 데이터를 Spark로</h2>
 
-<p>1~4일차의 shop CSV를 Spark로 읽고, dbt에서 만든 <code>fct_orders</code>·<code>daily_sales</code>와 같은 결과를 만든 다음, parquet로 써서 DuckDB·dbt로 다시 읽습니다. 컨테이너 하나에 Spark·Java·Jupyter가 다 들어 있는 공식 이미지를 씁니다.</p>
+<p>1~4일차의 shop CSV를 Spark로 읽고, dbt에서 만든 <code>fct_orders</code>·<code>daily_sales</code>와 같은 결과를 만든 다음, parquet로 써서 DuckDB·dbt로 다시 읽습니다. 컨테이너 하나에 Spark·Java·Jupyter가 다 들어 있는 공식 이미지를 씁니다. 전체 흐름은 이렇습니다.</p>
+
+<pre class="diagram">  1단계         2~6단계 (Jupyter 노트북 안)                  8단계            9단계 (컨테이너 밖)
+  ┌────────┐   ┌──────────────────────────────────────┐   ┌───────────┐   ┌──────────────────┐
+  │ 컨테이너 │──▶│ CSV 읽기 → stg → fct_orders → daily    │──▶│ parquet 쓰기 │──▶│ DuckDB·dbt 로 읽기 │
+  │ 띄우기   │   │ DataFrame·SQL 비교 → explain → 파티션    │   │ out\       │   │ daily_sales 비교   │
+  └────────┘   └──────────────────────────────────────┘   └───────────┘   └──────────────────┘
+                        7단계: 그동안 Spark UI(4040) 구경             10단계: 컨테이너 멈추기</pre>
 
 <div class="box spark">
 <span class="box-title">이 페이지의 실행 결과에 대해</span>
-<p>이 페이지의 출력 중 <b>2~6단계</b>(행 수, 집계 결과, DataFrame과 SQL의 차이 0행, 세 가지 explain, 파티션 수)는 <code>shop_spark.py</code>를 Spark 4.0.5 local 모드(Java 17)로 실제 실행한 결과를 그대로 옮긴 것입니다(경로·plan_id만 줄임). 다만 작성 환경에서 Docker를 쓸 수 없어 컨테이너가 아닌 Windows에서 직접 돌렸고, Windows에서는 Spark의 parquet 쓰기·읽기가 Hadoop 네이티브 파일(<code>winutils.exe</code>·<code>hadoop.dll</code>) 없이는 실패합니다. 그래서 <b>8단계의 폴더 구조와 PartitionFilters 출력은 Spark가 내는 형태를 보여 주는 예시</b>(직접 확인 못 함)이고, <b>9단계 dbt 결과는 같은 데이터·같은 Hive 파티션 구조의 parquet로 실제 실행한 값</b>입니다. 컨테이너 이미지의 Spark 버전에 따라 explain 세부 표기는 조금 다를 수 있습니다.</p>
+<p>이 페이지의 출력 중 <b>2~7단계</b>(스키마, 행 수, 집계 결과, DataFrame과 SQL의 차이 0행, explain, 파티션 수, Spark UI 탭 이름·Environment·Executors 값)는 <code>shop_spark.py</code>와 같은 코드를 Spark 4.0.5 local 모드(Java 17)로 실제 실행한 결과를 옮긴 것입니다(경로·plan_id만 줄임). 다만 작성 환경에서 Docker를 쓸 수 없어(Docker Desktop이 꺼져 있었음) 컨테이너가 아닌 Windows에서 직접 돌렸고, Windows에서는 Spark의 parquet 쓰기가 Hadoop 네이티브 파일(<code>winutils.exe</code>·<code>hadoop.dll</code>) 없이는 실패합니다. 그래서 <b>1단계의 <code>docker logs</code> 화면, 8단계의 폴더 구조와 PartitionFilters 출력은 "이런 모양이 나온다"는 예시</b>(직접 확인 못 함)이고, <b>9단계 dbt 결과는 같은 데이터·같은 Hive 파티션 구조의 parquet로 실제 실행한 값</b>입니다. 컨테이너 이미지의 Spark 버전에 따라 explain 세부 표기는 조금 다를 수 있습니다.</p>
 </div>
 
 <div class="lab">
 
 <div class="step" data-id="docker">
-<div class="step-title">1. 컨테이너 띄우기</div>
-<p>Docker Desktop을 켜고 PowerShell에서 실행합니다. shop 폴더를 컨테이너의 <code>/home/jovyan/work</code>로 연결(마운트)합니다. 컨테이너 안에서 쓴 파일이 내 PC의 shop 폴더에 그대로 생깁니다.</p>
+<div class="step-title">1. 컨테이너 띄우고 Jupyter 열기</div>
+<p><b>목표</b>: 내 PC 안에 Spark가 설치된 작은 리눅스 컴퓨터(컨테이너) <code>de-spark</code>를 띄우고, shop 폴더를 그 안에 연결한 뒤, 브라우저로 Jupyter 노트북 화면을 엽니다. Windows에 Java·Spark를 설치하지 않아도 됩니다.</p>
+<pre class="diagram">  내 PC (Windows)                                  컨테이너 de-spark (리눅스)
+  ─────────────────────────────────────            ─────────────────────────────────
+  C:\Users\(나)\dbt-practice\shop\    ◀── -v ──▶   /home/jovyan/work/
+  ├─ data\raw_orders.csv ...           같은 폴더     ├─ data/raw_orders.csv ...
+  ├─ spark\shop_spark.py               (한쪽에서      ├─ spark/shop_spark.py
+  │       shop_spark.ipynb  ← 2단계     쓰면 다른       │       shop_spark.ipynb
+  └─ out\fct_orders\       ← 8단계     쪽에도 보임)    └─ out/fct_orders/
+
+  브라우저 http://127.0.0.1:8888 ── -p 8888:8888 ──▶ Jupyter (코드 쓰는 화면)
+  브라우저 http://localhost:4040 ── -p 4040:4040 ──▶ Spark UI (SparkSession이 살아 있을 때만)</pre>
+<p>Windows 경로(<code>\</code>)와 컨테이너 경로(<code>/</code>)가 다른 것에 주의하세요. <b>PowerShell 명령에는 Windows 경로, 노트북 코드에는 <code>/home/jovyan/work/...</code></b>를 씁니다.</p>
+
+<div class="box warn">
+<span class="box-title">먼저 읽기: 메모리와 디스크</span>
+<ul>
+<li>이 PC는 가끔 메모리가 부족합니다. Spark는 Java로 돌아서 메모리를 꽤 씁니다. <b>5·6일차 Airflow 컨테이너가 떠 있다면 먼저 멈추세요</b>(<code>docker ps</code>로 확인 → Airflow 폴더에서 <code>docker compose down</code>).</li>
+<li>이미지가 <b>수 GB</b>입니다. 처음 한 번은 내려받는 데 몇 분~수십 분 걸리고 디스크도 그만큼 씁니다. 회사 네트워크가 느리면 시간 여유가 있을 때 시작하세요.</li>
+<li>실습이 끝나면 <b>10단계에서 반드시 컨테이너를 멈춥니다</b>. 켜 둔 채로 두면 메모리를 계속 차지합니다.</li>
+</ul>
+</div>
+
+<h3>1-1. Docker Desktop 켜고 확인</h3>
+<ol>
+<li>시작 메뉴에서 <b>Docker Desktop</b>을 실행합니다. 창 아래쪽에 엔진이 실행 중(Engine running)이라고 나올 때까지 1~2분 기다립니다.</li>
+<li>PowerShell을 새로 열고 확인합니다.
+<pre><code>docker info</code></pre>
+<code>Server:</code> 아래에 <code>Server Version</code>, <code>Containers</code> 같은 줄이 나오면 준비된 것입니다. 아래처럼 나오면 Docker Desktop이 아직 안 켜진 것이니 조금 더 기다렸다 다시 실행하세요(작성 환경에서 실제로 본 메시지입니다).
+<pre data-file="Docker Desktop이 꺼져 있을 때"><code>failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; ...
+The system cannot find the file specified.</code></pre></li>
+</ol>
+
+<h3>1-2. 원본 데이터(30행) 되돌리기 — 꼭 확인</h3>
+<p>4일차와 6일차에 <code>shop\data</code>의 CSV를 "다음 날" 파일(주문 40행)로 덮어썼습니다. 이 페이지의 기대 결과(30·32·15행, 906,000원)는 <b>원래 파일</b> 기준이라 먼저 확인합니다.</p>
 <pre><code>cd $HOME\dbt-practice\shop
-mkdir spark, out -ErrorAction SilentlyContinue
-curl.exe -sL https://jinjinparkk.github.io/de-study/practice/spark/shop_spark.py -o spark\shop_spark.py   # 실습 스크립트
-docker run -d --name de-spark `
+(Get-Content data\raw_orders.csv | Measure-Object -Line).Lines   # 31 이면 원본(헤더+30행), 41 이면 다음 날 파일</code></pre>
+<p><code>41</code>이 나오면 4일차에 백업해 둔 원본으로 되돌립니다. 백업 폴더(<code>data_day3</code>)가 없다면 아래 두 번째 방법으로 다시 받습니다.</p>
+<pre><code># 방법 1: 4일차 백업에서 되돌리기
+Copy-Item data_day3\*.csv data\ -Force
+
+# 방법 2: 원본을 다시 받기
+$base = "https://jinjinparkk.github.io/de-study/practice/data"
+foreach ($f in "raw_customers.csv","raw_orders.csv","raw_payments.csv") {
+  curl.exe -sL "$base/$f" -o "data\$f"
+}
+
+(Get-Content data\raw_orders.csv | Measure-Object -Line).Lines   # 31 이 나오면 OK</code></pre>
+<p>dbt 쪽 테이블은 다음에 <code>dbt run</code>을 할 때까지 그대로이니 걱정하지 않아도 됩니다. 나중에 다시 "다음 날" 상태로 하고 싶으면 <code>Copy-Item data\next\*.csv data\ -Force</code>.</p>
+
+<h3>1-3. 폴더 만들고 실습 스크립트 받기</h3>
+<pre><code>cd $HOME\dbt-practice\shop
+mkdir spark, out -ErrorAction SilentlyContinue      # spark\ = 코드 둘 곳, out\ = parquet 결과 둘 곳
+curl.exe -sL https://jinjinparkk.github.io/de-study/practice/spark/shop_spark.py -o spark\shop_spark.py
+Get-ChildItem data\*.csv, spark                     # CSV 3개와 shop_spark.py 가 보이면 OK</code></pre>
+<p><code>shop_spark.py</code>는 2~8단계 전체를 한 파일에 담은 "정답 스크립트"입니다(<a href="../practice/spark/shop_spark.py">보기</a>, 사용법은 <a href="../practice/spark/README.md">README</a>). 오늘은 노트북에서 한 셀씩 직접 쓰고, 막히면 이 파일과 비교하세요.</p>
+
+<h3>1-4. 포트가 비어 있는지 확인</h3>
+<pre><code>docker ps                                  # 이미 떠 있는 컨테이너 목록. de-spark 가 이미 있으면 1-5 대신 docker start de-spark
+netstat -ano | findstr ":8888 :4040"       # 아무것도 안 나오면 두 포트 모두 비어 있음</code></pre>
+<p>무언가 나오면 그 포트는 다른 프로그램이 쓰는 중입니다. 1-5에서 앞쪽 숫자를 바꿉니다(예: <code>-p 8890:8888 -p 4041:4040</code>). 그러면 아래의 모든 주소도 <code>8890</code>, <code>4041</code>로 바꿔 읽으세요.</p>
+
+<h3>1-5. 컨테이너 띄우기</h3>
+<pre><code>docker run -d --name de-spark `
   -p 8888:8888 -p 4040:4040 `
   -v "${HOME}\dbt-practice\shop:/home/jovyan/work" `
-  quay.io/jupyter/pyspark-notebook
-docker logs de-spark</code></pre>
-<p>이미지가 수 GB라 처음엔 몇 분 걸립니다. 로그에 <code>http://127.0.0.1:8888/lab?token=...</code>이 보이면 그 주소로 Jupyter에 들어갈 수 있습니다. 8888·4040이 이미 쓰이고 있다면 앞쪽 숫자만 바꾸세요(<code>-p 8890:8888 -p 4041:4040</code>).</p>
-<details class="hint"><summary>포트·마운트 뜻이 궁금하다면</summary>
-<p><code>-p 내PC포트:컨테이너포트</code>입니다. 8888은 Jupyter, 4040은 Spark UI. <code>-v 내PC폴더:컨테이너폴더</code>는 폴더 공유입니다. 컨테이너를 지워도 shop 폴더의 결과는 남습니다.</p>
+  quay.io/jupyter/pyspark-notebook</code></pre>
+<p>줄 끝의 <code>`</code>(백틱, 키보드 숫자 1 왼쪽)는 "다음 줄에 이어짐"입니다. 백틱 뒤에 공백이 있으면 오류가 나니 한 줄로 이어 붙여 써도 됩니다. 각 부분의 뜻:</p>
+<ul>
+<li><code>-d</code>: 백그라운드로 실행(창을 점유하지 않음)</li>
+<li><code>--name de-spark</code>: 컨테이너 이름. 이후 모든 명령에서 이 이름을 씁니다</li>
+<li><code>-p 8888:8888</code>: <code>내PC포트:컨테이너포트</code>. 8888은 Jupyter, 4040은 Spark UI</li>
+<li><code>-v "내PC폴더:컨테이너폴더"</code>: 폴더 공유(마운트). 컨테이너를 지워도 shop 폴더에 쓴 결과는 남습니다</li>
+<li><code>quay.io/jupyter/pyspark-notebook</code>: 쓸 이미지. 내 PC에 없으면 이때 내려받습니다</li>
+</ul>
+<p>처음이면 <code>Unable to find image ... locally</code> 다음에 내려받기 진행 줄이 한참 나오고, 끝나면 긴 영숫자(컨테이너 ID) 한 줄이 출력됩니다. 확인:</p>
+<pre><code>docker ps --filter name=de-spark           # STATUS 가 Up ... 이면 실행 중</code></pre>
+
+<h3>1-6. 로그에서 접속 주소(토큰) 찾기</h3>
+<pre><code>docker logs de-spark</code></pre>
+<p>맨 아래쪽에 아래와 비슷한 줄이 있습니다(형태 예시, 토큰 값은 매번 다름). 아직 없으면 10초쯤 뒤에 다시 실행하세요.</p>
+<pre data-file="docker logs de-spark — 형태 예시 (작성 환경에서 미검증)"><code>    To access the server, open this file in a browser:
+        file:///home/jovyan/.local/share/jupyter/runtime/jpserver-7-open.html
+    Or copy and paste one of these URLs:
+        http://(컨테이너ID):8888/lab?token=3f9c1e...
+        http://127.0.0.1:8888/lab?token=3f9c1e...</code></pre>
+<p><b><code>http://127.0.0.1:8888/lab?token=...</code> 줄 전체</b>를 복사해 브라우저 주소창에 붙여 넣습니다. 앞의 <code>file:///...</code>이나 <code>(컨테이너ID)</code> 주소는 컨테이너 안에서만 통하는 주소라 Windows 브라우저에선 안 열립니다. 1-4에서 포트를 8890으로 바꿨다면 주소의 <code>8888</code>만 <code>8890</code>으로 고칩니다.</p>
+
+<h3>1-7. 노트북 만들기</h3>
+<ol>
+<li>JupyterLab 화면 왼쪽 파일 목록에 <code>work</code> 폴더가 보입니다. 더블클릭 → <code>spark</code> 폴더 더블클릭. <code>shop_spark.py</code>가 보이면 마운트가 제대로 된 것입니다.</li>
+<li>오른쪽 Launcher 화면의 <b>Notebook</b> 줄에서 <b>Python 3 (ipykernel)</b>을 누릅니다. <code>Untitled.ipynb</code>가 생깁니다.</li>
+<li>왼쪽 목록의 <code>Untitled.ipynb</code>를 우클릭 → <b>Rename</b> → <code>shop_spark.ipynb</code>. Windows 탐색기의 <code>shop\spark\</code>에도 같은 파일이 생긴 걸 확인해 보세요.</li>
+<li>Jupyter 기본 조작: 회색 칸(셀)에 코드를 쓰고 <b>Shift + Enter</b>로 실행. 실행 중엔 셀 왼쪽이 <code>[*]</code>, 끝나면 <code>[1]</code>처럼 번호가 붙습니다. 새 셀은 실행하면 아래에 자동으로 생깁니다.</li>
+</ol>
+<details class="hint"><summary>work 폴더가 비어 있다면</summary>
+<p><code>-v</code> 경로가 틀렸습니다. <code>docker exec de-spark ls /home/jovyan/work</code>로 확인하고, 비어 있으면 <code>docker rm -f de-spark</code>로 지운 뒤 1-5를 다시 합니다(경로의 <code>${HOME}</code>, 따옴표, 콜론 위치 확인).</p>
 </details>
 </div>
 
 <div class="step" data-id="session">
 <div class="step-title">2. SparkSession 만들고 CSV 읽기</div>
-<p>Jupyter에서 새 노트북(Python 3)을 열고 셀에 씁니다. 스크립트 전체는 <a href="../practice/spark/shop_spark.py">practice/spark/shop_spark.py</a>에 있습니다(명령 사용법은 <a href="../practice/spark/README.md">README</a>).</p>
-<pre data-file="셀 1"><code>from pyspark.sql import SparkSession          # Spark 입구 (DB 커넥션 같은 것)
-from pyspark.sql import functions as F        # lower, trim, sum ... SQL 함수 모음
+<p><b>목표</b>: Spark에 "접속"하고, CSV 세 개를 테이블처럼 정의한 뒤 행 수를 셉니다. SQL로 치면 아래 세 줄입니다.</p>
+<pre class="diagram">  SQL 감각                                   PySpark (노트북 셀)
+  ─────────────────────────────────────      ───────────────────────────────────────────
+  DB에 접속                                  spark = SparkSession.builder ... .getOrCreate()
+  CREATE EXTERNAL TABLE raw_orders (...)     orders_raw = spark.read.csv(경로, schema="...")
+  SELECT count(*) FROM raw_orders            orders_raw.count()</pre>
 
-spark = (SparkSession.builder
-         .appName("shop_spark")               # Spark UI에 보일 이름
-         .master("local[*]")                  # 내 컴퓨터 코어 전부 사용
-         .config("spark.sql.shuffle.partitions", "8")  # 셔플 후 파티션 수 (기본 200)
-         .getOrCreate())
+<h3>2-1. 셀 1: Spark 접속</h3>
+<p>1단계에서 만든 <code>shop_spark.ipynb</code>의 첫 셀에 아래를 그대로 쓰고 Shift + Enter. 설정이라 그대로 따라 쓰면 됩니다.</p>
+<pre data-file="셀 1"><code>from pyspark.sql import SparkSession          # Spark 입구를 가져온다 (DB 드라이버 import 같은 것)
+from pyspark.sql import functions as F        # lower, trim, sum ... SQL 함수 모음을 F 라는 짧은 이름으로
 
-DATA = "/home/jovyan/work/data"
+spark = (SparkSession.builder                 # "접속 설정을 시작합니다"
+         .appName("shop_spark")               # Spark UI에 보일 작업 이름
+         .master("local[*]")                  # 클러스터 대신 이 컨테이너의 CPU 코어 전부를 사용
+         .config("spark.sql.shuffle.partitions", "8")  # 셔플 후 조각 수 (기본 200은 30행에 과함)
+         .getOrCreate())                      # 이미 접속돼 있으면 그걸 쓰고, 없으면 새로 접속
+
+print(spark.version)                          # Spark 버전 문자열 (예: 4.0.x, 이미지 시기에 따라 다름)</code></pre>
+<p><b>왜 이렇게 쓰나요?</b> <code>( ... )</code> 괄호로 감싸면 파이썬에서 여러 줄을 한 문장으로 이어 쓸 수 있고, <code>.설정()</code>을 점으로 계속 이어 붙이는 방식(메서드 체인)은 SQL에서 절을 위에서 아래로 쌓는 것과 같습니다. 첫 실행은 Java를 띄우느라 10~30초 걸립니다. 버전 숫자가 출력되면 성공이고, 이 순간부터 <code>http://localhost:4040</code>(Spark UI)도 열립니다.</p>
+
+<h3>2-2. 셀 2: CSV 세 개 정의하고 세기</h3>
+<p>orders·payments는 드립니다. <b>customers는 직접</b> 써 보세요. 컬럼은 <code>customer_id, name, email, city, membership, updated_at</code>입니다(15행).</p>
+<pre data-file="셀 2 (빈칸 채우기)"><code>DATA = "/home/jovyan/work/data"               # 컨테이너 안 경로 (= 내 PC의 shop\data)
+
 # schema 문자열 = CREATE TABLE 컬럼 정의. 직접 적으면 타입 추론보다 빠르고 정확
-orders_raw = spark.read.csv(f"{DATA}/raw_orders.csv", header=True,
+orders_raw = spark.read.csv(f"{DATA}/raw_orders.csv", header=True,   # header=True: 첫 줄은 컬럼 이름
     schema="order_id INT, customer_id INT, order_date DATE, status STRING, updated_at TIMESTAMP")
 payments_raw = spark.read.csv(f"{DATA}/raw_payments.csv", header=True,
     schema="payment_id INT, order_id INT, method STRING, amount BIGINT")
+customers_raw = spark.read.csv(f"{DATA}/____.csv", header=True,
+    schema="customer_id INT, name ____, email STRING, city STRING, membership STRING, updated_at ____")
 
-orders_raw.printSchema()                      # DESCRIBE 와 같음 (계산 안 함)
-print(orders_raw.count(), payments_raw.count())  # count() = 액션 → 이때 파일을 실제로 읽음</code></pre>
-<p><code>30 32</code>가 나오면 성공입니다. <code>spark.read.csv(...)</code> 줄은 바로 끝나고 <code>count()</code>에서 시간이 걸리는 걸 느껴 보세요. 그게 지연 실행입니다.</p>
+orders_raw.printSchema()                      # DESCRIBE 와 같음 (파일을 읽지 않음)
+print(orders_raw.count(), payments_raw.count(), customers_raw.count())  # count() = 액션 → 이때 실제로 읽음</code></pre>
+<p><code>f"{DATA}/raw_orders.csv"</code>의 <code>f"..."</code>는 문자열 안의 <code>{DATA}</code>를 변수 값으로 바꿔 넣는 문법입니다(dbt의 <code>{{ var }}</code>와 비슷한 느낌).</p>
+<details class="hint"><summary>힌트 1</summary>
+<p>파일 이름은 확장자 앞까지, orders 줄과 같은 모양입니다. 텍스트 컬럼 타입은 <code>STRING</code>, 날짜+시각은 <code>TIMESTAMP</code>.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p><code>raw_customers</code>, <code>name STRING</code>, <code>updated_at TIMESTAMP</code>.</p>
+</details>
+<details class="hint"><summary>정답 보기</summary>
+<pre><code>customers_raw = spark.read.csv(f"{DATA}/raw_customers.csv", header=True,
+    schema="customer_id INT, name STRING, email STRING, city STRING, membership STRING, updated_at TIMESTAMP")</code></pre>
+</details>
+<p><b>확인</b>: 아래가 나오면 성공입니다.</p>
+<pre data-file="실제 출력">root
+ |-- order_id: integer (nullable = true)
+ |-- customer_id: integer (nullable = true)
+ |-- order_date: date (nullable = true)
+ |-- status: string (nullable = true)
+ |-- updated_at: timestamp (nullable = true)
+
+30 32 15</pre>
+<p><code>40 42 16</code>이 나오면 1-2의 원본 되돌리기를 빼먹은 것입니다. 그리고 <code>spark.read.csv(...)</code> 줄은 바로 끝나고 <code>count()</code>에서야 시간이 걸리는 걸 느껴 보세요. 그게 지연 실행입니다. 내용을 눈으로 보고 싶으면 새 셀에 <code>orders_raw.show(5)</code>(= <code>SELECT * ... LIMIT 5</code>)를 실행합니다.</p>
 </div>
 
 <div class="step" data-id="dataframe">
 <div class="step-title">3. 직접 해보기: DataFrame API로 stg → fct_orders → daily_sales</div>
-<p>dbt 모델 세 개를 DataFrame 변수 세 개로 옮겨 보세요.</p>
-<ul>
-<li><code>stg_orders</code>: <code>order_id, customer_id, order_date, lower(trim(status)) as status</code></li>
-<li><code>stg_payments</code>: 주문별 <code>sum(amount) as amount</code></li>
-<li><code>fct_orders</code>: 두 개를 <code>order_id</code>로 left join</li>
-<li><code>daily_sales_df</code>: completed만, 날짜별 <code>orders</code>, <code>revenue</code>, 날짜순 정렬 → <code>.show()</code></li>
-</ul>
+<p><b>목표</b>: 1~2일차에 SQL 파일로 만든 dbt 모델 네 개를 <b>DataFrame 변수 네 개</b>로 옮깁니다. 파일 하나 = 변수 하나라고 생각하면 됩니다.</p>
+<pre class="diagram">  dbt 모델 (SQL 파일)       →  이 셀에서 만들 변수        기대 행 수
+  ───────────────────────────────────────────────────────────────────
+  stg_orders.sql           →  stg_orders               30
+  stg_payments.sql         →  stg_payments             30  (5·18번 분할 결제가 한 줄로)
+  fct_orders.sql           →  fct_orders               30
+  daily_sales.sql          →  daily_sales_df           12  (날짜 12일)
+
+  orders_raw ───▶ stg_orders ────┐
+                                 ├─ left join ─▶ fct_orders ─▶ where · groupBy ─▶ daily_sales_df
+  payments_raw ─▶ stg_payments ──┘</pre>
+
+<h3>왜 이렇게 쓰나요 — SQL 절 ↔ 메서드 대응</h3>
+<div class="table-wrap">
+<table>
+<tr><th>SQL</th><th>PySpark</th><th>메모</th></tr>
+<tr><td><code>select a, b</code></td><td><code>.select("a", "b")</code></td><td>컬럼 이름은 따옴표 문자열</td></tr>
+<tr><td><code>lower(trim(status)) as status</code></td><td><code>F.lower(F.trim("status")).alias("status")</code></td><td>함수는 <code>F.</code>에, AS는 <code>.alias()</code></td></tr>
+<tr><td><code>where status = 'completed'</code></td><td><code>.where(F.col("status") == "completed")</code></td><td>등호 <b>두 개</b>. <code>F.col("x")</code> = 컬럼 x</td></tr>
+<tr><td><code>group by k</code> + <code>sum(v) as v</code></td><td><code>.groupBy("k").agg(F.sum("v").alias("v"))</code></td><td>집계는 <code>.agg()</code> 안에 쉼표로 여러 개</td></tr>
+<tr><td><code>count(*)</code></td><td><code>F.count("*")</code></td><td></td></tr>
+<tr><td><code>a left join b using (k)</code></td><td><code>a.join(b, on="k", how="left")</code></td><td><code>how</code>: inner·left·right·full</td></tr>
+<tr><td><code>order by k</code></td><td><code>.orderBy("k")</code></td><td></td></tr>
+</table>
+</div>
+<p>변수에 대입하는 순간에는 아무것도 계산하지 않습니다. <code>stg_orders = ...</code>는 <b>뷰(또는 CTE)를 정의하는 것</b>과 같고, 마지막 <code>.show()</code>(액션)에서 네 단계가 한 번에 계산됩니다.</p>
+
+<h3>3-1. 셀 3: 빈칸 채우기</h3>
+<p>새 셀에 아래를 옮겨 쓰고 <code>____</code>를 채운 뒤 Shift + Enter.</p>
+<pre data-file="셀 3 (빈칸 채우기)"><code># stg_orders: select order_id, customer_id, order_date, lower(trim(status)) as status from raw_orders
+stg_orders = orders_raw.select(
+    "order_id", "customer_id", "order_date",
+    F.____(F.____("status")).alias("____"),
+)
+
+# stg_payments: select order_id, sum(amount) as amount from raw_payments group by order_id
+stg_payments = (payments_raw
+    .groupBy("____")
+    .agg(F.____("amount").alias("amount")))
+
+# fct_orders: stg_orders left join stg_payments using (order_id)
+fct_orders = stg_orders.join(stg_payments, on="____", how="____")
+
+# daily_sales: where status = 'completed' group by order_date, count(*) orders, sum(amount) revenue, order by order_date
+daily_sales_df = (fct_orders
+    .where(F.col("status") ____ "completed")
+    .groupBy("____")
+    .agg(F.count("*").alias("orders"),
+         F.sum("____").alias("revenue"))
+    .orderBy("order_date"))
+
+daily_sales_df.show()                          # 액션: 여기서 계산</code></pre>
 <details class="hint"><summary>힌트 1</summary>
-<p>SQL 절 하나가 메서드 하나입니다. <code>SELECT</code> → <code>.select()</code>, <code>WHERE</code> → <code>.where()</code>, <code>GROUP BY ... 집계</code> → <code>.groupBy(...).agg(...)</code>, <code>JOIN USING</code> → <code>.join(b, on="키", how="left")</code>, <code>ORDER BY</code> → <code>.orderBy()</code>. <a href="../cheatsheet.html#spark-cmd">명령어 모음</a>에 대응표가 있습니다.</p>
+<p>위 대응표를 한 줄씩 그대로 옮기면 됩니다. 함수 이름은 SQL과 같습니다(<code>lower</code>, <code>trim</code>, <code>sum</code>). 조인 키는 두 표에 같은 이름으로 있는 컬럼, 날짜별 집계의 기준은 <code>order_date</code>입니다. <a href="../cheatsheet.html#spark-cmd">명령어 모음</a>에도 대응표가 있습니다.</p>
 </details>
 <details class="hint"><summary>힌트 2</summary>
-<p>함수는 <code>F.</code>에 있습니다: <code>F.lower(F.trim("status"))</code>, <code>F.sum("amount")</code>, <code>F.count("*")</code>. 컬럼 이름 붙이기(AS)는 <code>.alias("이름")</code>. 조건은 <code>F.col("status") == "completed"</code> (등호 두 개).</p>
+<p>빈칸 순서대로: <code>lower</code>, <code>trim</code>, <code>status</code> / <code>order_id</code>, <code>sum</code> / <code>order_id</code>, <code>left</code> / <code>==</code>, <code>order_date</code>, <code>amount</code>. 파이썬에서 <code>=</code> 하나는 "대입"이라 조건에는 못 씁니다.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
-<pre data-file="셀 2"><code>stg_orders = orders_raw.select(               # select
+<pre data-file="셀 3"><code>stg_orders = orders_raw.select(               # select
     "order_id", "customer_id", "order_date",
     F.lower(F.trim("status")).alias("status"),  # lower(trim(status)) as status
 )
@@ -522,7 +694,8 @@ daily_sales_df = (fct_orders
 
 daily_sales_df.show()                          # 액션: 여기서 계산</code></pre>
 </details>
-<p>실제 출력(앞부분):</p>
+
+<h3>3-2. 확인</h3>
 <pre data-file="daily_sales_df.show() — 실제 출력">+----------+------+-------+
 |order_date|orders|revenue|
 +----------+------+-------+
@@ -539,14 +712,35 @@ daily_sales_df.show()                          # 액션: 여기서 계산</code>
 |2026-10-17|     1|  19000|
 |2026-10-18|     1|  49000|
 +----------+------+-------+</pre>
-<p>12일, 완료 주문 14건, 매출 합계 906,000원입니다. 1일차 dbt <code>daily_sales</code>와 같은 숫자인지 <code>dbt show -s daily_sales</code>로 맞춰 보세요.</p>
+<p>12일, 완료 주문 14건, 매출 합계 906,000원입니다. 중간 단계도 맞는지 새 셀에서 확인합니다.</p>
+<pre data-file="셀 4 (확인용)"><code>print(stg_payments.count(), fct_orders.count())               # 30 30  (결제 32행 → 주문당 1행)
+stg_payments.where("order_id in (5, 18)").orderBy("order_id").show()   # 분할 결제가 합쳐졌나
+daily_sales_df.agg(F.sum("orders"), F.sum("revenue")).show()  # select sum(orders), sum(revenue)</code></pre>
+<pre data-file="실제 출력">30 30
++--------+------+
+|order_id|amount|
++--------+------+
+|       5| 59000|
+|      18| 39000|
++--------+------+
+
++-----------+------------+
+|sum(orders)|sum(revenue)|
++-----------+------------+
+|         14|      906000|
++-----------+------------+</pre>
+<p>1일차 dbt <code>daily_sales</code>의 기대 결과(12행, 14건, 906,000원)와 같은 숫자입니다. <code>.where("order_id in (5, 18)")</code>처럼 <code>where</code>에는 SQL 조건 문자열을 그대로 넣어도 됩니다.</p>
 </div>
 
 <div class="step" data-id="sql">
 <div class="step-title">4. 같은 것을 Spark SQL로 + 두 결과 비교</div>
-<p>DataFrame을 임시 뷰로 등록하면 SQL로 질의할 수 있습니다. dbt 모델 SQL을 거의 그대로 붙여 넣으면 됩니다.</p>
-<pre data-file="셀 3"><code>orders_raw.createOrReplaceTempView("raw_orders")      # CREATE TEMP VIEW raw_orders AS ...
-payments_raw.createOrReplaceTempView("raw_payments")
+<p><b>목표</b>: 같은 집계를 이번엔 <b>SQL 문자열</b>로 써서, 3단계 결과와 한 행도 다르지 않은지 확인합니다. DataFrame을 임시 뷰로 등록하면 dbt 모델 SQL을 거의 그대로 붙여 넣을 수 있습니다.</p>
+<pre class="diagram">  orders_raw   ──createOrReplaceTempView──▶ 뷰 raw_orders   ┐
+  payments_raw ──createOrReplaceTempView──▶ 뷰 raw_payments ┴─ spark.sql("with ... select ...") ─▶ daily_sales_sql
+                                                                  비교 ◀─ daily_sales_df (3단계)</pre>
+<p>새 셀에 아래를 그대로 씁니다(SQL은 이미 익숙하니 이번엔 빈칸 없이).</p>
+<pre data-file="셀 5"><code>orders_raw.createOrReplaceTempView("raw_orders")      # CREATE OR REPLACE TEMP VIEW raw_orders
+payments_raw.createOrReplaceTempView("raw_payments")  # 이 SparkSession 안에서만 보이는 뷰
 
 daily_sales_sql = spark.sql("""
     with stg_orders as (
@@ -562,52 +756,103 @@ daily_sales_sql = spark.sql("""
     where o.status = 'completed'
     group by o.order_date
     order by o.order_date
-""")                                                  # spark.sql() 도 변환. 아직 실행 안 됨
+""")                                                  # spark.sql() 결과도 DataFrame. 아직 실행 안 됨
+
+daily_sales_sql.show()                                # 3단계와 같은 12행이 나와야 함
 
 # A EXCEPT ALL B, B EXCEPT ALL A 가 둘 다 0행이면 두 결과는 같다
 diff = (daily_sales_df.exceptAll(daily_sales_sql).count()
         + daily_sales_sql.exceptAll(daily_sales_df).count())
 print("차이 행 수:", diff)</code></pre>
-<p><code>차이 행 수: 0</code>이 나오면 두 방식의 결과가 완전히 같습니다. 이제 둘의 실행 계획을 비교해 보세요.</p>
+<p><b>왜 이렇게 쓰나요?</b> <code>"""</code>(따옴표 세 개)는 파이썬에서 <b>여러 줄 문자열</b>입니다. 그 안의 SQL을 Spark가 읽어 DataFrame으로 바꿉니다. <code>exceptAll</code> = SQL의 <code>EXCEPT ALL</code>, <code>+</code>는 그냥 숫자 더하기입니다.</p>
+<p><b>확인</b>: <code>show()</code>가 3단계와 같은 12행이고, 마지막 줄이 <code>차이 행 수: 0</code>이면 성공입니다(실제로 0이 나왔습니다). 이제 두 실행 계획을 비교합니다.</p>
 <pre><code>daily_sales_df.explain()
 daily_sales_sql.explain()</code></pre>
-<p>실제로 돌려 보면 두 출력은 내부 번호(<code>plan_id</code>)만 다르고 <b>연산자와 순서가 한 줄도 다르지 않습니다</b>. Catalyst가 두 코드를 같은 계획으로 바꾼 것입니다.</p>
+<p>실제로 돌려 보면 두 출력은 내부 번호(<code>plan_id</code>, <code>#63</code> 같은 컬럼 번호)만 다르고 <b>연산자와 순서가 한 줄도 다르지 않습니다</b>. Catalyst가 두 코드를 같은 계획으로 바꾼 것입니다. 그러니 "SQL이 편하면 SQL로" 써도 성능 손해가 없습니다.</p>
+<details class="hint"><summary>더 해보기 (선택)</summary>
+<p>임시 뷰는 바로 질의할 수 있습니다. 완료 주문 수를 SQL로 세어 보세요: <code>spark.sql("select count(*) as completed from raw_orders where lower(trim(status)) = 'completed'").show()</code> → 실제 출력 <code>14</code>. 3단계 합계와 같습니다.</p>
+</details>
 </div>
 
 <div class="step" data-id="explain">
 <div class="step-title">5. 직접 해보기: explain() 에서 셔플과 조인 찾기</div>
-<p>위 <a href="#explain">explain 읽는 법</a>의 표를 옆에 두고 <code>daily_sales_df.explain()</code> 출력에서 아래 세 가지를 찾아 적어 보세요.</p>
+<p><b>목표</b>: <code>daily_sales_df.explain()</code> 출력에서 <b>셔플이 어디서 몇 번 일어나는지</b>, <b>조인을 어떤 방식으로 했는지</b> 읽어 냅니다. 위 <a href="#explain">explain 읽는 법</a>의 표를 옆에 두세요.</p>
+<p><b>읽는 법</b>: 맨 <b>아래(파일 읽기)에서 위(최종 결과)로</b> 읽습니다. <code>+-</code>는 "이 아래 것을 받아서", <code>:-</code>로 갈라진 곳은 조인의 왼쪽·오른쪽 입력입니다. 아래는 실제 출력에서 경로와 긴 꼬리만 줄인 것입니다.</p>
+<pre data-file="daily_sales_df.explain() — 실제 출력 (줄임)">== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- Sort [order_date#2 ASC NULLS FIRST], true, 0
+   +- Exchange rangepartitioning(order_date#2 ASC NULLS FIRST, 8), ENSURE_REQUIREMENTS, [plan_id=..]
+      +- HashAggregate(keys=[order_date#2], functions=[count(1), sum(amount#44L)])
+         +- Exchange hashpartitioning(order_date#2, 8), ENSURE_REQUIREMENTS, [plan_id=..]
+            +- HashAggregate(keys=[order_date#2], functions=[partial_count(1), partial_sum(amount#44L)])
+               +- Project [order_date#2, amount#44L]
+                  +- BroadcastHashJoin [order_id#0], [order_id#6], LeftOuter, BuildRight, false
+                     :- Project [order_id#0, order_date#2]
+                     :  +- Filter (lower(trim(status#3, None)) = completed)
+                     :     +- FileScan csv [order_id#0,order_date#2,status#3] ... DataFilters: [(lower(trim(status#3, None)) = completed)], ... PushedFilters: [] ...
+                     +- BroadcastExchange HashedRelationBroadcastMode(...), [plan_id=..]
+                        +- HashAggregate(keys=[order_id#6], functions=[sum(amount#8L)])
+                           +- Exchange hashpartitioning(order_id#6, 8), ENSURE_REQUIREMENTS, [plan_id=..]
+                              +- HashAggregate(keys=[order_id#6], functions=[partial_sum(amount#8L)])
+                                 +- Filter isnotnull(order_id#6)
+                                    +- FileScan csv [order_id#6,amount#8L] ... PushedFilters: [IsNotNull(order_id)] ...</pre>
+<p>위 출력을 보면서 아래 세 가지를 노트에 적어 보세요.</p>
 <ol>
 <li>셔플(<code>Exchange</code>)은 몇 번, 어떤 컬럼 기준으로 일어나나요?</li>
 <li>조인 방식은 무엇이고, 왜 그게 골라졌을까요?</li>
 <li><code>status = 'completed'</code> 조건(<code>Filter</code>)은 조인보다 위에 있나요, 아래에 있나요? 코드에 쓴 순서와 같나요?</li>
 </ol>
 <details class="hint"><summary>힌트 1</summary>
-<p><code>Exchange</code>로 시작하는 줄만 세어 보세요. <code>BroadcastExchange</code>는 셔플이 아니라 "작은 표 복사"입니다.</p>
+<p><code>Exchange</code>로 시작하는 줄만 세어 보세요. <code>BroadcastExchange</code>는 셔플이 아니라 "작은 표를 통째로 복사해 나눠 주기"입니다. <code>HashAggregate</code>가 <code>partial_sum</code> → <code>sum</code> 두 번 나오는 것은 "각 조각에서 먼저 부분합 → 셔플 → 최종합"이라는 뜻입니다.</p>
+</details>
+<details class="hint"><summary>힌트 2</summary>
+<p>조인 줄은 <code>...Join</code>으로 끝나는 연산자입니다. <code>Filter</code> 줄이 <code>BroadcastHashJoin</code> 줄보다 위에 있는지 아래에 있는지(들여쓰기가 더 깊은지) 보세요. 들여쓰기가 깊을수록 먼저 실행됩니다.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
 <ol>
-<li><b>세 번</b>: <code>hashpartitioning(order_id, 8)</code>(결제 합계용), <code>hashpartitioning(order_date, 8)</code>(일별 집계용), <code>rangepartitioning(order_date ASC, 8)</code>(정렬용). 각각이 Stage 경계입니다.</li>
-<li><b>BroadcastHashJoin</b>. 결제 합계 쪽이 수 KB라 기준(10MB)보다 훨씬 작아서 복사해 붙이는 게 싸다고 판단했습니다. 그래서 orders 쪽은 조인 때문에 셔플되지 않았습니다.</li>
+<li><b>세 번</b>: <code>hashpartitioning(order_id, 8)</code>(결제 합계용), <code>hashpartitioning(order_date, 8)</code>(일별 집계용), <code>rangepartitioning(order_date ASC, 8)</code>(정렬용). 숫자 8은 셀 1에서 정한 <code>shuffle.partitions</code>입니다. 각각이 Stage 경계입니다.</li>
+<li><b>BroadcastHashJoin</b>(<code>LeftOuter, BuildRight</code> = 왼쪽 조인, 오른쪽 표를 복사). 결제 합계 쪽이 수 KB라 기준(10MB)보다 훨씬 작아서 복사해 붙이는 게 싸다고 판단했습니다. 그래서 orders 쪽은 조인 때문에 셔플되지 않았습니다.</li>
 <li><b>조인 아래</b>, orders <code>FileScan</code> 바로 위에 있습니다. 코드에선 <code>join</code> 뒤에 <code>where</code>를 썼지만, 옵티마이저가 "orders 컬럼만 쓰는 조건이니 조인 전에 거르면 조인할 행이 줄어든다"고 판단해 앞으로 옮겼습니다(predicate pushdown). 다만 <code>lower(trim())</code> 같은 함수가 낀 조건이라 CSV 읽기 자체로는 못 내려가서 <code>PushedFilters: []</code>이고 <code>DataFilters</code>에만 적혀 있습니다. 반면 payments 쪽은 <code>PushedFilters: [IsNotNull(order_id)]</code>가 읽기 단계로 내려갔습니다.</li>
 </ol>
 </details>
-<p>이어서 브로드캐스트를 끄고 조인 방식이 바뀌는 걸 확인합니다.</p>
-<pre><code>spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")   # 브로드캐스트 끄기
+<h3>5-1. 브로드캐스트를 끄면?</h3>
+<p>새 셀에서 브로드캐스트를 끄고 조인 방식이 바뀌는 걸 확인합니다. 마지막 줄로 원래 값을 꼭 되돌려 두세요.</p>
+<pre data-file="셀 6"><code>spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")   # 브로드캐스트 끄기 (-1 = 사용 안 함)
 stg_orders.join(stg_payments, "order_id", "left").explain()      # SortMergeJoin 이 보여야 함
 spark.conf.set("spark.sql.autoBroadcastJoinThreshold", str(10 * 1024 * 1024))  # 원래대로 10MB</code></pre>
+<pre data-file="실제 출력 (줄임)">AdaptiveSparkPlan isFinalPlan=false
++- Project [order_id#0, customer_id#1, order_date#2, status#42, amount#44L]
+   +- SortMergeJoin [order_id#0], [order_id#6], LeftOuter
+      :- Sort [order_id#0 ASC NULLS FIRST], false, 0
+      :  +- Exchange hashpartitioning(order_id#0, 8), ENSURE_REQUIREMENTS, [plan_id=..]
+      :     +- Project [... lower(trim(status#3, None)) AS status#42]
+      :        +- FileScan csv [order_id#0,customer_id#1,order_date#2,status#3] ...
+      +- Sort [order_id#6 ASC NULLS FIRST], false, 0
+         +- HashAggregate(keys=[order_id#6], functions=[sum(amount#8L)])
+            +- Exchange hashpartitioning(order_id#6, 8), ENSURE_REQUIREMENTS, [plan_id=..]
+               ...</pre>
+<p><b>찾을 것</b>: <code>BroadcastHashJoin</code> → <code>SortMergeJoin</code>으로 바뀌었고, 이번엔 <b>orders 쪽에도</b> <code>Exchange hashpartitioning(order_id#0, 8)</code>이 생겼습니다. 큰 표끼리 조인하면 양쪽을 다 키 기준으로 섞고(셔플) 정렬(<code>Sort</code>)한다는 뜻입니다.</p>
 </div>
 
 <div class="step" data-id="partitions">
 <div class="step-title">6. 파티션 수 보기: repartition vs coalesce</div>
-<pre data-file="셀 4"><code>print(fct_orders.rdd.getNumPartitions())          # 지금 몇 조각인가
+<p><b>목표</b>: 데이터가 지금 몇 조각(파티션)으로 나뉘어 있는지 보고, 조각 수를 바꾸는 두 방법의 차이(셔플이 있나 없나)를 확인합니다.</p>
+<pre class="diagram">  fct_orders (1조각, 30행)
+       │ repartition(4, "order_date")   = 날짜 해시로 4조각에 다시 나눠 담기 → 셔플 O
+       ▼
+  re4  [조각0][조각1][조각2][조각3]
+       │ coalesce(1)                    = 옆 조각끼리 그냥 합치기 → 셔플 X
+       ▼
+  co1  [조각0]</pre>
+<pre data-file="셀 7"><code>print("fct_orders 파티션 수:", fct_orders.rdd.getNumPartitions())   # 지금 몇 조각인가
 re4 = fct_orders.repartition(4, "order_date")      # order_date 해시로 4조각 (셔플 O)
-print(re4.rdd.getNumPartitions())
+print("repartition(4, order_date):", re4.rdd.getNumPartitions())
 co1 = re4.coalesce(1)                              # 4조각을 1조각으로 합치기 (셔플 X)
-print(co1.rdd.getNumPartitions())
+print("coalesce(1):", co1.rdd.getNumPartitions())
 
-# 파티션마다 몇 행? = SELECT partition_id, count(*) GROUP BY partition_id
+# 파티션마다 몇 행? = SELECT partition_id, count(*) ... GROUP BY partition_id
 re4.groupBy(F.spark_partition_id().alias("partition")).count().orderBy("partition").show()</code></pre>
+<p><code>.rdd.getNumPartitions()</code>는 "조각 수 알려줘"라는 주문처럼 외워 두면 됩니다. <code>F.spark_partition_id()</code>는 각 행이 들어 있는 조각 번호를 돌려주는 함수입니다.</p>
 <pre data-file="실제 출력">fct_orders 파티션 수: 1
 repartition(4, order_date): 4
 coalesce(1): 1
@@ -619,37 +864,72 @@ coalesce(1): 1
 |        2|    9|
 |        3|    7|
 +---------+-----+</pre>
-<p>처음엔 1조각입니다. CSV가 작아서(기본 128MB 단위로 나눠 읽음) 한 조각으로 읽혔기 때문입니다. 그리고 30행이 4조각에 고르게 나뉘지 않았죠(8·6·9·7). 해시는 "같은 날짜는 같은 조각"만 보장하지 "조각 크기가 같다"는 보장하지 않습니다. 날짜 하나에 데이터가 몰리면 이게 곧 스큐입니다. <code>re4.explain()</code>과 <code>co1.explain()</code>을 비교하면 <code>coalesce</code>에는 새 <code>Exchange</code>가 없고 <code>Coalesce 1</code>만 붙는 것도 보입니다.</p>
+<p>처음엔 1조각입니다. CSV가 작아서(기본 128MB 단위로 나눠 읽음) 한 조각으로 읽혔기 때문입니다. 그리고 30행이 4조각에 고르게 나뉘지 않았죠(8·6·9·7). 해시는 "같은 날짜는 같은 조각"만 보장하지 "조각 크기가 같다"는 보장하지 않습니다. 날짜 하나에 데이터가 몰리면 이게 곧 스큐입니다.</p>
+<h3>6-1. 직접 확인: 셔플이 있나 없나</h3>
+<p>새 셀에서 <code>re4.explain()</code>과 <code>co1.explain()</code>을 차례로 실행하고, 맨 위 두세 줄을 비교하세요.</p>
+<pre data-file="실제 출력 (맨 위만)">re4.explain()
+AdaptiveSparkPlan isFinalPlan=false
++- Exchange hashpartitioning(order_date#2, 4), REPARTITION_BY_NUM, [plan_id=..]   ← 셔플 1번 더
+   +- Project [...]
+
+co1.explain()
+AdaptiveSparkPlan isFinalPlan=false
++- Coalesce 1                                                                      ← 새 Exchange 없이 합치기만
+   +- Exchange hashpartitioning(order_date#2, 4), REPARTITION_BY_NUM, [plan_id=..]
+      +- Project [...]</pre>
+<p><code>coalesce</code>는 <code>Exchange</code>를 새로 만들지 않고 <code>Coalesce 1</code>만 붙입니다. 그래서 "줄이기만 할 땐 coalesce, 다시 고르게 나눌 땐 repartition"입니다.</p>
 </div>
 
 <div class="step" data-id="ui">
 <div class="step-title">7. Spark UI(4040)에서 셔플 눈으로 보기</div>
-<p>노트북이 열려 있는 동안(SparkSession이 살아 있는 동안) 브라우저에서 <code>http://localhost:4040</code>을 엽니다.</p>
+<p><b>목표</b>: 지금까지 실행한 액션들이 Spark 안에서 어떻게 Job·Stage로 나뉘어 돌았는지, 셔플이 몇 바이트였는지 화면으로 봅니다. 노트북의 SparkSession이 살아 있는 동안(셀 1을 실행한 뒤, 커널을 끄기 전)만 열립니다.</p>
+<p>브라우저 새 탭에서 <code>http://localhost:4040</code>을 엽니다(1-4에서 포트를 바꿨다면 <code>4041</code>). 위쪽에 탭이 여섯 개 있습니다: <b>Jobs · Stages · Storage · Environment · Executors · SQL / DataFrame</b>(작성 환경 Spark 4.0.5에서 확인).</p>
 <ol>
-<li><b>Jobs</b> 탭: 액션마다 Job이 하나씩 생겼습니다. <code>count()</code>, <code>show()</code>, <code>exceptAll().count()</code>…</li>
-<li><code>daily_sales_df.show()</code> Job을 눌러 <b>DAG Visualization</b>을 펼칩니다. Stage 사이에 있는 경계가 셔플입니다.</li>
-<li><b>Stages</b> 탭: <code>Shuffle Write</code>, <code>Shuffle Read</code> 열에 바이트 수가 찍힌 Stage가 셔플을 한 곳입니다. 몇 KB뿐이지만, 데이터가 TB면 이 열이 몇백 GB가 됩니다.</li>
-<li><b>SQL / DataFrame</b> 탭: 쿼리를 누르면 explain 계획이 그림으로, 연산자마다 실제 행 수와 함께 나옵니다. AQE가 셔플 파티션을 몇 개로 줄였는지(<code>AQEShuffleRead</code>)도 보입니다.</li>
+<li><b>Jobs</b> 탭: 액션(<code>count()</code>, <code>show()</code>, <code>exceptAll().count()</code>…)을 실행할 때마다 Job이 생겼습니다. 액션 하나에 Job이 여러 개 생기기도 합니다. 작성 환경에서 <code>daily_sales_df.show()</code> 하나에 Job 4개가 생겼는데, AQE가 셔플 단위로 끊어 실행하기 때문입니다. 맨 아래가 가장 오래된 Job입니다.</li>
+<li>Job 하나를 눌러 <b>DAG Visualization</b>을 펼칩니다. 상자(Stage) 사이의 경계가 셔플입니다. 회색으로 <code>skipped</code>라 적힌 Stage는 이미 계산해 둔 셔플 결과를 재사용해서 건너뛴 것입니다.</li>
+<li><b>Stages</b> 탭: <code>Shuffle Write</code>, <code>Shuffle Read</code> 열에 바이트 수가 찍힌 Stage가 셔플을 한 곳입니다. 작성 환경에선 수백 B(예: 807 B, 562 B)였습니다. 데이터가 TB면 이 열이 몇백 GB가 됩니다.</li>
+<li><b>SQL / DataFrame</b> 탭: <code>showString</code>, <code>count</code> 같은 이름의 쿼리를 누르면 explain 계획이 그림으로, 연산자마다 실제 행 수와 함께 나옵니다. <code>AQEShuffleRead</code> 상자를 찾아 보세요. 작성 환경에서는 <code>number of coalesced partitions: 1</code>, 즉 AQE가 "데이터가 작으니 셔플 조각 8개를 1개로 합치자"고 실행 중에 바꿨습니다.</li>
+<li><b>Environment</b> 탭: Spark Properties에서 <code>spark.sql.shuffle.partitions = 8</code>을 찾아 보세요. 셀 1의 설정이 들어간 걸 확인할 수 있습니다.</li>
+<li><b>Executors</b> 탭: <code>driver</code> 한 줄만 있습니다. local 모드는 드라이버가 익스큐터 역할까지 혼자 한다는 뜻입니다.</li>
 </ol>
-<p>스크립트로 실행할 때는 끝나면 UI도 닫힙니다. 보고 싶다면 <code>KEEP_UI=1</code>로 실행해 Enter를 누르기 전까지 열어 둡니다(README 참고).</p>
-<p class="meta-line">참고: 이 단계의 화면 설명은 Spark 4.0 UI의 탭 이름 기준이며, 페이지 작성 때 화면을 직접 캡처해 확인하지는 못했습니다.</p>
+<p>스크립트(<code>spark-submit</code>)로 실행할 때는 끝나면 UI도 닫힙니다. 보고 싶다면 <code>KEEP_UI=1</code>로 실행해 Enter를 누르기 전까지 열어 둡니다(README 참고). 단, 노트북의 SparkSession이 이미 4040을 쓰고 있으면 스크립트 쪽은 컨테이너 안에서 4041을 쓰는데, 4041은 연결(<code>-p</code>)하지 않았으니 안 보입니다. 이럴 땐 노트북 커널을 먼저 끄세요(Kernel → Shut Down Kernel).</p>
+<p class="meta-line">참고: 탭 이름·Environment·Executors·AQEShuffleRead·Shuffle 바이트 값은 작성 환경(Windows, Spark 4.0.5 local)에서 UI의 REST API로 확인한 값이고, 컨테이너 화면을 직접 캡처해 보지는 못했습니다. 바이트 수와 Job 개수는 실행 순서에 따라 조금 다를 수 있습니다.</p>
 </div>
 
 <div class="step" data-id="write">
 <div class="step-title">8. 직접 해보기: order_date 로 나눈 parquet 쓰기</div>
-<p><code>fct_orders</code>를 <code>/home/jovyan/work/out/fct_orders</code>에 parquet로 쓰세요. 조건은 두 가지입니다.</p>
+<p><b>목표</b>: <code>fct_orders</code>를 날짜별 폴더로 나눈 parquet 파일로 저장합니다. 9단계에서 DuckDB·dbt가 이 파일을 읽습니다. 실무에서 Spark 잡이 레이크에 결과를 남기는 바로 그 모양입니다.</p>
+<pre class="diagram">  컨테이너 안 경로                                 내 PC 에서 보이는 곳
+  /home/jovyan/work/out/fct_orders/       =       shop\out\fct_orders\
+  ├─ _SUCCESS                (다 썼다는 표시, 0바이트)
+  ├─ order_date=2026-10-01/part-00000-....snappy.parquet
+  ├─ order_date=2026-10-02/part-00000-....snappy.parquet
+  └─ ... 날짜 19개 폴더, 폴더마다 파일 1개</pre>
+<p>조건은 두 가지입니다.</p>
 <ul>
-<li>날짜별 폴더(<code>order_date=2026-10-01/</code> …)로 나눌 것</li>
-<li>날짜 폴더마다 파일이 <b>하나씩만</b> 생기게 할 것 (작은 파일 문제 피하기)</li>
+<li>날짜별 폴더(<code>order_date=2026-10-01/</code> …)로 나눌 것 — 날짜 조건으로 읽을 때 폴더 하나만 열게 하려고</li>
+<li>날짜 폴더마다 파일이 <b>하나씩만</b> 생기게 할 것 — 작은 파일이 수백 개 생기는 문제 피하기</li>
 </ul>
+<h3>8-1. 셀 8: 빈칸 채우기</h3>
+<pre data-file="셀 8 (빈칸 채우기)"><code>out = "/home/jovyan/work/out/fct_orders"     # 컨테이너 안 경로 (= 내 PC의 shop\out\fct_orders)
+(fct_orders
+    .repartition("____")              # 같은 날짜끼리 한 조각으로 모으기 → 폴더마다 파일 1개
+    .write
+    .mode("____")                     # 이미 있으면 갈아엎기 (CREATE OR REPLACE)
+    .partitionBy("____")              # 이 컬럼 값별로 폴더 나누기
+    .parquet(out))                    # 파일 형식 + 경로. write 는 액션이라 여기서 실행됨
+
+back = spark.read.parquet(out)        # 방금 쓴 폴더를 다시 읽기 (order_date 는 폴더 이름에서 복원)
+print(back.count())                   # 30 이어야 함
+back.where(F.col("order_date") == "2026-10-05").explain()   # PartitionFilters 확인</code></pre>
 <details class="hint"><summary>힌트 1</summary>
-<p>쓰기는 <code>df.write.mode("overwrite").partitionBy("컬럼").parquet("경로")</code> 모양입니다. <code>mode("overwrite")</code>는 <code>CREATE OR REPLACE</code>입니다.</p>
+<p>쓰기는 <code>df.write.mode("...").partitionBy("컬럼").parquet("경로")</code> 모양입니다. <code>mode</code>에는 <code>overwrite</code>(덮어쓰기), <code>append</code>(이어 붙이기), <code>error</code>(있으면 오류, 기본값)가 있습니다. 다시 실행해도 같은 결과가 나오게(멱등) 하려면 어느 쪽일까요?</p>
 </details>
 <details class="hint"><summary>힌트 2</summary>
-<p>메모리 파티션마다 날짜 폴더마다 파일이 하나씩 생깁니다. 쓰기 직전에 같은 날짜를 한 메모리 파티션으로 모아 두면(<code>repartition("order_date")</code>) 폴더마다 파일이 하나가 됩니다.</p>
+<p>파일은 "메모리 조각 × 날짜 폴더"마다 하나씩 생깁니다. 쓰기 직전에 같은 날짜를 한 조각으로 모아 두면(<code>repartition("order_date")</code>) 폴더마다 파일이 하나가 됩니다. 세 빈칸 중 두 개가 같은 컬럼입니다.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
-<pre data-file="셀 5"><code>out = "/home/jovyan/work/out/fct_orders"
+<pre data-file="셀 8"><code>out = "/home/jovyan/work/out/fct_orders"
 (fct_orders
     .repartition("order_date")        # 같은 날짜끼리 한 조각으로 (셔플) → 폴더마다 파일 1개
     .write
@@ -661,13 +941,19 @@ back = spark.read.parquet(out)        # 다시 읽기. order_date 는 폴더 이
 print(back.count())                   # 30
 back.where(F.col("order_date") == "2026-10-05").explain()   # PartitionFilters 확인</code></pre>
 </details>
-<p>PowerShell에서 결과 폴더를 확인합니다: <code>Get-ChildItem -Recurse out\fct_orders | Select-Object -First 8</code></p>
+<h3>8-2. 확인</h3>
+<p>셀 출력에 <code>30</code>이 나오면 다시 읽기까지 성공입니다. 그다음 PowerShell(내 PC)에서 실제 파일이 생겼는지 봅니다.</p>
+<pre><code>cd $HOME\dbt-practice\shop
+(Get-ChildItem out\fct_orders -Directory).Count                          # 날짜 폴더 수 → 19
+(Get-ChildItem out\fct_orders -Recurse -Filter *.parquet).Count           # parquet 파일 수 → 19 (폴더마다 1개)
+Get-ChildItem -Recurse out\fct_orders | Select-Object -First 8 FullName</code></pre>
+<p>원본 주문 날짜가 19일(10-01~10-19)이라 폴더도 19개입니다. 파일 수가 19보다 많으면 <code>repartition("order_date")</code>를 빼먹은 것입니다. 이름이 <code>.crc</code>로 끝나는 작은 파일도 함께 보일 수 있는데, Spark가 남기는 체크섬 파일이라 정상입니다.</p>
 <pre data-file="폴더 구조 — Spark가 만드는 형태 예시 (작성 환경에서 미검증)">out\fct_orders\_SUCCESS
 out\fct_orders\order_date=2026-10-01\part-00000-(uuid).c000.snappy.parquet
 out\fct_orders\order_date=2026-10-02\part-00000-(uuid).c000.snappy.parquet
 out\fct_orders\order_date=2026-10-03\part-00000-(uuid).c000.snappy.parquet
 ...   (날짜 폴더 19개)</pre>
-<p>읽을 때의 계획에서 날짜 조건이 <code>PartitionFilters</code>로 들어간 것을 확인하세요. 19개 폴더 중 하나만 엽니다.</p>
+<p>읽을 때의 계획에서는 <code>FileScan parquet</code> 줄의 <b><code>PartitionFilters</code></b>에 날짜 조건이 들어갔는지 확인하세요. 들어가 있으면 19개 폴더 중 하나만 엽니다(파티션 가지치기). <code>order_date</code>가 <code>ReadSchema</code>에 없는 것도 보세요. 파일 안이 아니라 폴더 이름에 있는 컬럼이라서입니다.</p>
 <pre data-file="back.where(order_date = '2026-10-05').explain() — 형태 예시 (작성 환경에서 미검증)">== Physical Plan ==
 *(1) ColumnarToRow
 +- FileScan parquet [order_id#..,customer_id#..,status#..,amount#..,order_date#..] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/home/jovyan/work/out/fct_orders], PartitionFilters: [isnotnull(order_date#..), (order_date#.. = 2026-10-05)], PushedFilters: [], ReadSchema: struct&lt;order_id:int,customer_id:int,status:string,amount:bigint&gt;</pre>
@@ -675,7 +961,14 @@ out\fct_orders\order_date=2026-10-03\part-00000-(uuid).c000.snappy.parquet
 
 <div class="step" data-id="duckdb">
 <div class="step-title">9. 직접 해보기: Spark가 쓴 parquet를 DuckDB·dbt 에서 읽기</div>
-<p>이제 컨테이너 밖, 평소 쓰던 dbt 가상환경으로 돌아옵니다. 먼저 DuckDB로 바로 읽어 보고, 그다음 dbt source로 등록합니다.</p>
+<p><b>목표</b>: Spark가 만든 파일을 <b>다른 엔진(DuckDB)이 변환 없이</b> 읽는지 확인하고, dbt source로 등록해 마트 모델을 만듭니다. 오늘 배운 "Spark → parquet → dbt" 연결을 손으로 해 보는 단계입니다.</p>
+<pre class="diagram">  shop\out\fct_orders\order_date=...\*.parquet      (8단계, Spark가 씀)
+          │  sources.yml 의 source lake.fct_orders_spark
+          │  external_location = read_parquet('out/fct_orders/*/*.parquet', hive_partitioning = true)
+          ▼
+  models\marts\daily_sales_from_spark.sql  ──dbt run──▶  shop.duckdb 의 daily_sales_from_spark</pre>
+<h3>9-1. DuckDB로 바로 읽어 보기</h3>
+<p><b>새 PowerShell 창</b>을 열고(컨테이너 밖, 평소 쓰던 dbt 가상환경) 실행합니다. 노트북은 그대로 두어도 됩니다.</p>
 <pre><code>cd $HOME\dbt-practice
 .\.venv\Scripts\Activate.ps1
 cd shop
@@ -687,16 +980,35 @@ dbt show --inline "select * from read_parquet('out/fct_orders/*/*.parquet', hive
 |        3 |          12 | completed |  19000 | 2026-10-02 |
 |        4 |           8 | placed    |  89000 | 2026-10-02 |
 |        5 |           8 | completed |  59000 | 2026-10-03 |</code></pre>
-<p><code>order_date</code>가 맨 끝 컬럼으로 붙어 있습니다. 파일 안에는 없고 폴더 이름에서 살려 낸 컬럼이기 때문입니다. 행 수 제한은 SQL 안의 <code>limit</code>이 아니라 <code>--limit</code> 옵션으로 줍니다(<code>dbt show</code>가 자기 limit을 덧붙여서, SQL에 <code>limit</code>을 쓰면 문법 오류가 납니다).</p>
-<p>과제: <code>sources.yml</code>에 <code>lake</code>라는 source를 추가하고 테이블 <code>fct_orders_spark</code>가 이 parquet를 가리키게 하세요. 그리고 그걸 읽어 일별 매출을 내는 모델 <code>models/marts/daily_sales_from_spark.sql</code>을 만들고, 1일차 <code>daily_sales</code>와 숫자가 같은지 확인하세요.</p>
+<p><code>order_date</code>가 맨 끝 컬럼으로 붙어 있습니다. 파일 안에는 없고 폴더 이름에서 살려 낸 컬럼이기 때문입니다. 경로의 <code>*/*.parquet</code>는 "아무 날짜 폴더 / 아무 parquet 파일"이고, <code>_SUCCESS</code>·<code>.crc</code> 파일은 <code>.parquet</code>로 끝나지 않아 빠집니다. 행 수 제한은 SQL 안의 <code>limit</code>이 아니라 <code>--limit</code> 옵션으로 줍니다(<code>dbt show</code>가 자기 limit을 덧붙여서, SQL에 <code>limit</code>을 쓰면 문법 오류가 납니다).</p>
+<h3>9-2. 과제: source 등록 + 모델 만들기</h3>
+<ol>
+<li><code>models\staging\sources.yml</code>(2일차에 만든 파일)을 엽니다: <code>notepad models\staging\sources.yml</code></li>
+<li>기존 <code>shop_raw</code> 블록 <b>아래에</b>, 같은 들여쓰기(<code>  - name:</code>)로 <code>lake</code>라는 source를 추가합니다. 테이블 이름은 <code>fct_orders_spark</code>, 위치는 8단계 parquet.</li>
+<li><code>models\marts\daily_sales_from_spark.sql</code>을 새로 만들고, 이 source를 읽어 일별 매출(완료 주문만, <code>orders</code>, <code>revenue</code>)을 내는 SELECT 하나를 씁니다.</li>
+<li><code>dbt run -s daily_sales_from_spark</code> → <code>dbt show -s daily_sales_from_spark --limit 20</code></li>
+</ol>
+<pre data-file="models/staging/sources.yml 에 추가 (빈칸 채우기)"><code>  - name: ____
+    tables:
+      - name: ____
+        meta:
+          external_location: "____('out/fct_orders/*/*.parquet', hive_partitioning = ____)"</code></pre>
+<pre data-file="models/marts/daily_sales_from_spark.sql (빈칸 채우기)"><code>select
+    order_date,
+    count(*)     as orders,
+    sum(amount)  as revenue
+from {{ source('____', '____') }}
+where status = 'completed'
+group by order_date
+order by order_date</code></pre>
 <details class="hint"><summary>힌트 1</summary>
 <p>2일차 <code>shop_raw</code> source의 <code>meta.external_location</code>에 <code>read_csv(...)</code>를 썼던 것처럼, 이번엔 <code>read_parquet(...)</code>를 씁니다. 폴더 이름 <code>order_date=...</code>를 컬럼으로 살리려면 <code>hive_partitioning = true</code>가 필요합니다.</p>
 </details>
 <details class="hint"><summary>힌트 2</summary>
-<p>external_location 안의 <code>{name}</code>은 테이블 이름으로 바뀝니다. 이번엔 폴더 이름(<code>fct_orders</code>)과 테이블 이름(<code>fct_orders_spark</code>)이 달라서 경로를 직접 적는 게 간단합니다. 테이블 단위로 <code>meta</code>를 둘 수 있습니다.</p>
+<p>external_location 안의 <code>{name}</code>은 테이블 이름으로 바뀝니다. 이번엔 폴더 이름(<code>fct_orders</code>)과 테이블 이름(<code>fct_orders_spark</code>)이 달라서 경로를 직접 적는 게 간단합니다. 그래서 source 단위가 아니라 테이블 단위로 <code>meta</code>를 둡니다. <code>source()</code>의 두 인자는 <code>('source 이름', '테이블 이름')</code>.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
-<pre data-file="models/sources.yml (추가)"><code>  - name: lake
+<pre data-file="models/staging/sources.yml (추가)"><code>  - name: lake
     tables:
       - name: fct_orders_spark
         meta:
@@ -712,7 +1024,8 @@ order by order_date</code></pre>
 <pre><code>dbt run -s daily_sales_from_spark
 dbt show -s daily_sales_from_spark --limit 20</code></pre>
 </details>
-<p><code>dbt show -s daily_sales_from_spark</code>의 실제 출력입니다.</p>
+<h3>9-3. 확인</h3>
+<p><code>dbt show -s daily_sales_from_spark</code>의 실제 출력입니다. 12행, 3단계 Spark 결과와 한 줄씩 같아야 합니다.</p>
 <pre data-file="실제 출력 (dbt-duckdb 1.11, 같은 구조의 parquet)"><code>| order_date | orders | revenue |
 | ---------- | ------ | ------- |
 | 2026-10-02 |      1 |   19000 |
@@ -727,17 +1040,29 @@ dbt show -s daily_sales_from_spark --limit 20</code></pre>
 | 2026-10-16 |      2 |  148000 |
 | 2026-10-17 |      1 |   19000 |
 | 2026-10-18 |      1 |   49000 |</code></pre>
-<p>Spark에서 낸 숫자와 같습니다. <b>Spark가 만든 파일을 다른 엔진이 아무 변환 없이 읽었다</b>는 점이 중요합니다. parquet + Hive 파티션은 엔진 사이의 공용어입니다.</p>
+<p>Spark에서 낸 숫자와 같습니다. <b>Spark가 만든 파일을 다른 엔진이 아무 변환 없이 읽었다</b>는 점이 중요합니다. parquet + Hive 파티션은 엔진 사이의 공용어입니다. (기존 dbt <code>daily_sales</code>와도 비교하고 싶다면, 4·6일차에 "다음 날" 데이터로 다시 만든 상태일 수 있으니 1-2에서 원본으로 되돌린 뒤 <code>dbt run -s daily_sales</code>부터 하고 비교하세요.)</p>
 </div>
 
 <div class="step" data-id="cleanup">
 <div class="step-title">10. 정리하고 하루 마무리</div>
-<pre><code>docker stop de-spark       # 멈추기 (다시 쓸 땐 docker start de-spark)
-docker rm de-spark         # 완전히 지우기 (shop\out 결과는 남음)
+<p><b>목표</b>: 메모리를 돌려받고, 결과물을 git에 남깁니다. 이 PC는 메모리가 넉넉하지 않으니 이 단계를 건너뛰지 마세요.</p>
+<ol>
+<li>Jupyter에서 노트북을 저장(Ctrl + S)하고, 메뉴 <b>Kernel → Shut Down Kernel</b>. SparkSession(Java)이 내려가고 4040도 닫힙니다.</li>
+<li>PowerShell에서 컨테이너를 멈춥니다.
+<pre><code>docker stop de-spark       # 멈추기 (다시 쓸 땐 docker start de-spark → docker logs de-spark 로 새 토큰 확인)
+docker ps -a --filter name=de-spark   # STATUS 가 Exited ... 면 멈춘 것</code></pre></li>
+<li>다시 쓸 일이 없으면 지웁니다. 컨테이너를 지워도 <code>shop\out</code>, <code>shop\spark</code>의 파일은 남습니다(내 PC 폴더라서).
+<pre><code>docker rm de-spark                             # 컨테이너 지우기
+docker rmi quay.io/jupyter/pyspark-notebook    # (선택) 이미지까지 지워 디스크 수 GB 돌려받기. 다음에 다시 받아야 함</code></pre></li>
+<li>오늘 Docker를 더 안 쓸 거면 작업 표시줄의 Docker Desktop 아이콘 우클릭 → <b>Quit Docker Desktop</b>. 메모리가 가장 확실하게 돌아옵니다.</li>
+<li>git에 남깁니다. <code>out/</code>은 다시 만들 수 있는 결과물이라 올리지 않습니다(<code>target/</code>과 같은 이유). Jupyter가 만드는 자동 저장 폴더 <code>.ipynb_checkpoints/</code>도 뺍니다.
+<pre><code>cd $HOME\dbt-practice\shop
 Add-Content .gitignore "out/"
+Add-Content .gitignore ".ipynb_checkpoints/"
 git add .
-git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code></pre>
-<p><code>out/</code>은 다시 만들 수 있는 결과물이라 git에 올리지 않습니다(<code>target/</code>과 같은 이유).</p>
+git status                 # spark/shop_spark.py, spark/shop_spark.ipynb, models/... 가 보이고 out/ 은 없어야 함
+git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code></pre></li>
+</ol>
 </div>
 
 </div>
@@ -745,13 +1070,21 @@ git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code><
 <div class="box warn">
 <span class="box-title">자주 막히는 곳</span>
 <ul>
-<li><code>port is already allocated</code> → 8888이나 4040을 다른 프로그램이 쓰고 있습니다. <code>-p 8890:8888 -p 4041:4040</code>처럼 앞 숫자만 바꾸세요. 노트북을 두 개 열면 두 번째 SparkSession은 컨테이너 안에서 4041을 씁니다.</li>
-<li><code>Path does not exist: file:/home/jovyan/work/data/raw_orders.csv</code> → <code>-v</code> 마운트 경로가 틀렸습니다. <code>docker exec de-spark ls /home/jovyan/work/data</code>로 확인하세요.</li>
-<li>4040이 안 열림 → SparkSession이 끝났거나(스크립트 종료, <code>spark.stop()</code>), 아직 만들기 전입니다. 노트북에서 셀을 실행해 둔 상태로 여세요.</li>
+<li><code>failed to connect to the docker API at npipe:...dockerDesktopLinuxEngine</code> → Docker Desktop이 아직 안 켜졌습니다. 시작 메뉴에서 켜고 1~2분 뒤 <code>docker info</code>부터 다시.</li>
+<li><code>port is already allocated</code> → 8888이나 4040을 다른 프로그램이 쓰고 있습니다. <code>docker rm -f de-spark</code>로 지운 뒤 <code>-p 8890:8888 -p 4041:4040</code>처럼 앞 숫자만 바꿔 다시 띄우세요. 노트북을 두 개 열면 두 번째 SparkSession은 컨테이너 안에서 4041을 씁니다.</li>
+<li><code>Conflict. The container name "/de-spark" is already in use</code> → 전에 만든 컨테이너가 남아 있습니다. 그대로 쓰려면 <code>docker start de-spark</code>, 새로 만들려면 <code>docker rm -f de-spark</code> 후 다시 <code>docker run</code>.</li>
+<li>브라우저에서 Jupyter가 비밀번호·토큰을 물어봄 → 토큰 없는 주소로 들어간 것입니다. <code>docker logs de-spark</code>의 <code>http://127.0.0.1:8888/lab?token=...</code> 줄을 <b>통째로</b> 붙여 넣으세요. 컨테이너를 다시 시작하면 토큰이 바뀝니다.</li>
+<li>PowerShell에서 <code>docker run</code> 줄 끝 백틱 오류(<code>-p</code>를 명령으로 인식 등) → 백틱 뒤에 공백이 있거나 백틱 대신 작은따옴표를 썼습니다. 한 줄로 이어 쓰면 확실합니다.</li>
+<li>행 수가 <code>40 42 16</code> → <code>shop\data</code>가 "다음 날" 파일 상태입니다. 1-2에서 원본으로 되돌리세요.</li>
+<li><code>Path does not exist: file:/home/jovyan/work/data/raw_orders.csv</code> → <code>-v</code> 마운트 경로가 틀렸습니다. <code>docker exec de-spark ls /home/jovyan/work/data</code>로 확인하세요. 노트북 코드에 <code>C:\Users\...</code> 같은 Windows 경로를 쓴 경우도 같은 오류가 납니다(컨테이너 안에서는 <code>/home/jovyan/work/...</code>).</li>
+<li><code>NameError: name 'F' is not defined</code>(또는 <code>spark</code>, <code>fct_orders</code>) → 앞 셀을 실행하지 않았거나 커널이 재시작돼 변수가 사라졌습니다. 메뉴 <b>Run → Run All Above Selected Cell</b>로 위 셀을 다시 실행하세요.</li>
+<li>4040이 안 열림 → SparkSession이 끝났거나(커널 종료, <code>spark.stop()</code>), 아직 셀 1을 실행하기 전입니다. 노트북에서 셀을 실행해 둔 상태로 여세요.</li>
+<li>셀이 <code>[*]</code>에서 한참 안 끝남 / PC가 느려짐 → 메모리 부족일 수 있습니다. 다른 컨테이너(<code>docker ps</code>)와 무거운 프로그램을 닫고, Kernel → Restart 후 위에서부터 다시 실행하세요.</li>
 <li><code>F.col("status") == "completed" and ...</code>에서 오류 → 파이썬의 <code>and</code>/<code>or</code>는 못 씁니다. <code>&amp;</code>/<code>|</code>와 괄호를 쓰세요: <code>(F.col("a") == 1) &amp; (F.col("b") &gt; 2)</code>.</li>
+<li>parquet 파일이 날짜 폴더마다 여러 개 → 쓰기 전에 <code>.repartition("order_date")</code>를 빼먹었습니다. <code>mode("overwrite")</code>라 다시 실행하면 갈아엎어집니다.</li>
 <li>DuckDB에서 <code>order_date</code> 컬럼이 없음 → <code>hive_partitioning = true</code>를 빼먹었습니다. 그 컬럼은 파일 안이 아니라 폴더 이름에만 있습니다.</li>
 <li>DuckDB에서 <code>_SUCCESS</code> 파일 때문에 오류 → 경로를 <code>out/fct_orders/*/*.parquet</code>처럼 <code>.parquet</code>로 끝나게 적으세요.</li>
-<li>Windows에서 Docker 없이 <code>pip install pyspark</code>로 돌리면 Java 설치, 그리고 parquet 쓰기에 <code>winutils.exe</code>/<code>HADOOP_HOME</code> 문제가 생기기 쉽습니다. 이 과정에서 컨테이너를 쓰는 이유입니다.</li>
+<li>Windows에서 Docker 없이 <code>pip install pyspark</code>로 돌리면 Java 설치, 그리고 parquet 쓰기에 <code>winutils.exe</code>/<code>HADOOP_HOME</code> 문제가 생기기 쉽습니다(작성 환경에서 실제로 <code>HADOOP_HOME and hadoop.home.dir are unset</code>으로 쓰기가 실패했습니다). 이 과정에서 컨테이너를 쓰는 이유입니다.</li>
 </ul>
 </div>
 

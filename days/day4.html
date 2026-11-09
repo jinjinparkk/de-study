@@ -311,7 +311,7 @@ from {{ source('shop_raw', 'raw_orders') }}</code></pre>
 
 <pre data-file="packages.yml (프로젝트 맨 위, dbt_project.yml 옆)"><code>packages:
   - package: dbt-labs/dbt_utils
-    version: [">=1.3.0", "&lt;2.0.0"]</code></pre>
+    version: ["&gt;=1.3.0", "&lt;2.0.0"]</code></pre>
 
 <pre class="diagram">packages.yml ──dbt deps──▶ hub.getdbt.com 에서 내려받음
                              │
@@ -333,7 +333,7 @@ from {{ source('shop_raw', 'raw_orders') }}</code></pre>
 
 <div class="box tip">
 <span class="box-title">버전 범위를 적는 이유</span>
-<p><code>[">=1.3.0", "&lt;2.0.0"]</code>은 "1.x 중 최신"이라는 뜻입니다. 2.0은 바뀐 게 많을 수 있으니 막아 둡니다. 실제 받은 버전은 <code>package-lock.yml</code>에 고정되어, 팀원이 <code>dbt deps</code>를 해도 같은 버전을 받습니다. (확인 시점에 받아진 버전: 1.4.1)</p>
+<p><code>["&gt;=1.3.0", "&lt;2.0.0"]</code>은 "1.x 중 최신"이라는 뜻입니다. 2.0은 바뀐 게 많을 수 있으니 막아 둡니다. 실제 받은 버전은 <code>package-lock.yml</code>에 고정되어, 팀원이 <code>dbt deps</code>를 해도 같은 버전을 받습니다. (확인 시점에 받아진 버전: 1.4.1)</p>
 </div>
 
 <h2 id="incremental">incremental — MERGE 프로시저를 모델로</h2>
@@ -585,20 +585,56 @@ snapshot = <b>원천 테이블 + unique_key + 바뀜 판단 기준</b>만 적으
                        ▼
               ⑨ 필터를 updated_at 으로 고치고 --full-refresh</pre>
 
+<div class="box tip">
+<span class="box-title">실습 전에: 어디서, 어떤 상태로 명령을 치나요?</span>
+<ul>
+<li>모든 명령은 PowerShell에서 <b>프로젝트 폴더</b> <code>C:\Users\&lt;내이름&gt;\dbt-practice\shop</code> 에서, <b>venv가 켜진 상태</b>(프롬프트 앞에 <code>(.venv)</code>)로 칩니다.</li>
+<li>새 PowerShell 창을 열었다면 venv가 꺼져 있습니다. 매번 아래 세 줄부터:
+<pre><code>cd $HOME\dbt-practice
+.\.venv\Scripts\Activate.ps1
+cd shop</code></pre></li>
+<li>파일은 메모장으로 만듭니다. <code>notepad 경로\파일.sql</code> 을 치면 "새 파일을 만드시겠습니까?"가 뜨고, <b>예</b>를 누르면 그 경로에 빈 파일이 생깁니다. 다 쓰고 <b>Ctrl+S</b>로 저장한 뒤 PowerShell로 돌아와 다음 명령을 칩니다(메모장은 열어 둬도 됩니다).</li>
+<li>DuckDB 파일은 <code>shop.duckdb</code> 기준입니다(1일차에 <code>dev.duckdb</code>로 두었다면 그 이름). DBeaver 같은 다른 프로그램이 이 파일을 열고 있으면 dbt가 잠금 오류를 냅니다. 실습 중엔 닫아 두세요.</li>
+</ul>
+</div>
+
 <div class="lab">
 
 <div class="step" data-id="jinja-play">
 <div class="step-title">1. Jinja 놀이터 만들기 (analyses 폴더)</div>
-<p><code>analyses/</code> 폴더의 SQL은 <b>컴파일만 되고 DB에 테이블을 만들지 않습니다</b>. Jinja를 연습하기 좋은 곳입니다. <code>analyses/jinja_play.sql</code>을 만들고 아래를 채워 보세요.</p>
-<ul>
-<li><code>{% set %}</code>으로 결제 수단 리스트 <code>['card', 'bank_transfer', 'kakaopay', 'point']</code> 만들기</li>
-<li><code>{% for %}</code>로 수단마다 <code>sum(case when payment_method = '수단' then amount else 0 end) as 수단_amount</code> 컬럼 만들기</li>
-<li>마지막 컬럼 뒤에는 쉼표가 없게</li>
-<li><code>{# #}</code> 주석 한 줄, <code>--</code> 주석 한 줄을 넣어서 컴파일 결과에 무엇이 남는지 보기</li>
-</ul>
-<p><code>analyses</code> 폴더는 <code>dbt init</code>이 이미 만들어 두었습니다(없으면 <code>mkdir analyses</code>).</p>
+<p><b>목표</b>: 결제 수단 4개마다 <code>sum(case when ...)</code> 컬럼을 손으로 4번 쓰는 대신, Jinja <code>for</code>로 <b>한 번만 쓰고 4번 찍어 내기</b>. DB에는 아무것도 만들지 않고, dbt가 만들어 낸 SQL 글자만 확인합니다.</p>
+<pre class="diagram">  analyses\jinja_play.sql  (Jinja가 섞인 틀)
+        │  dbt compile
+        ▼
+  target\compiled\shop\analyses\jinja_play.sql  (순수 SQL, 눈으로 확인만)
+        ✕  DB에 테이블·뷰 안 생김 (analyses 폴더는 컴파일만 된다)</pre>
+<ol>
+<li>파일 만들기: <code>notepad analyses\jinja_play.sql</code> (<code>analyses</code> 폴더는 <code>dbt init</code>이 만들어 두었습니다. 없으면 먼저 <code>mkdir analyses</code>)</li>
+<li>맨 위 두 줄에 주석을 하나씩: <code>{# ... #}</code> (Jinja 주석)과 <code>-- ...</code> (SQL 주석). 컴파일 결과에 어느 쪽이 남는지 볼 겁니다.</li>
+<li><code>{% set %}</code>으로 변수 두 개: 결제 수단 리스트 <code>methods = ['card', 'bank_transfer', 'kakaopay', 'point']</code>, 최소 금액 <code>min_amount = 10000</code></li>
+<li><code>select order_id,</code> 다음에 <code>{% for %}</code>로 수단마다 <code>sum(case when payment_method = '수단' then amount else 0 end) as 수단_amount</code> 한 줄씩. <b>마지막 컬럼 뒤에는 쉼표가 없게</b> 합니다(있으면 <code>, from</code>이 되어 문법 오류).</li>
+<li>아래는 <code>from {{ ref('stg_payments') }}</code>, <code>where amount &gt;= {{ min_amount }}</code>, <code>group by order_id</code></li>
+</ol>
+<p><b>왜 이렇게 하나요?</b> 프로시저에서 수단이 늘 때마다 CASE 줄을 복사하거나, 문자열을 이어 붙여 동적 SQL을 만들고 <code>EXECUTE IMMEDIATE</code> 전에 <code>SELECT @sql</code>로 찍어 보던 것과 같은 일입니다. dbt에서는 그 "찍어 보기"가 <code>dbt compile</code>이고, 결과가 파일로 남습니다.</p>
+<p>틀만 드리면 이렇습니다. <code>____</code> 칸을 채워 보세요.</p>
+<pre data-file="analyses/jinja_play.sql (빈칸 채우기)"><code>{# 이 줄은 Jinja 주석 #}
+-- 이 줄은 SQL 주석
+{%- set methods = [____] %}
+{%- set min_amount = 10000 %}
+
+select
+    order_id,
+    {%- for m in ____ %}
+    sum(case when payment_method = '{{ ____ }}' then amount else 0 end) as {{ m }}_amount
+    {%- if not loop.____ %},{% endif %}
+    {%- endfor %}
+from {{ ref('stg_payments') }}
+where amount &gt;= {{ ____ }}
+group by order_id</code></pre>
+<p>저장하고 컴파일한 뒤, 결과 파일을 엽니다.</p>
 <pre><code>dbt compile -s jinja_play
 Get-Content -Encoding utf8 target\compiled\shop\analyses\jinja_play.sql</code></pre>
+<p><b>확인</b>: <code>dbt compile</code> 출력 끝에 <code>Compiled node 'jinja_play' is:</code> 와 함께 SQL이 찍히고, 파일에도 같은 SQL이 있습니다. ① <code>sum(case ...)</code> 줄이 <b>4개</b> ② 마지막 <code>point_amount</code> 뒤에 쉼표 없음 ③ <code>{# #}</code> 줄은 사라지고 <code>--</code> 줄만 남음 ④ <code>ref('stg_payments')</code>가 <code>"shop"."main"."stg_payments"</code>로 바뀜. 이 네 가지면 성공입니다.</p>
 <details class="hint"><summary>힌트 1</summary>
 <p>반복 안에서 지금 값은 <code>{{ m }}</code>처럼 찍습니다. SQL 문자열 따옴표는 Jinja 밖에 두세요: <code>'{{ m }}'</code>.</p>
 </details>
@@ -638,7 +674,54 @@ group by order_id</code></pre>
 
 <div class="step" data-id="pivot-macro">
 <div class="step-title">2. 결제 수단 pivot 매크로 만들기</div>
-<p>1단계의 반복을 다른 모델에서도 쓰고 싶습니다. <code>macros/pivot_sum.sql</code>에 매크로 <code>pivot_sum(column, values, amount_col='amount')</code>를 만들고, 그 매크로로 <code>models/intermediate/int_payments_pivoted.sql</code>(주문별 결제 수단별 금액)을 만드세요.</p>
+<p><b>목표</b>: 1단계의 <code>for</code> 반복을 <b>매크로(도장)</b>로 떼어 내고, 그 도장을 찍어 주문별·수단별 금액 모델을 만듭니다. 파일 2개를 새로 만듭니다.</p>
+<pre class="diagram">  macros\pivot_sum.sql                       ← 2-1 (도장 만들기)
+        │  {{ pivot_sum(...) }} 로 찍기
+        ▼
+  models\intermediate\int_payments_pivoted.sql   ← 2-2 (도장 찍는 모델)
+        └ intermediate = ephemeral → DB에는 안 생김, dbt show 로 확인</pre>
+
+<h3>2-1. <code>macros\pivot_sum.sql</code> 만들기</h3>
+<ol>
+<li>파일 만들기: <code>notepad macros\pivot_sum.sql</code> (<code>macros</code> 폴더는 프로젝트 맨 위, <code>models</code> 옆에 있습니다)</li>
+<li>첫 줄은 매크로 이름과 인자: <code>{% macro pivot_sum(column, values, amount_col='amount') -%}</code>, 마지막 줄은 <code>{%- endmacro %}</code></li>
+<li>그 사이에 1단계의 <code>{%- for %} ... {%- endfor %}</code> 부분을 그대로 붙여 넣고, 고정값 자리를 인자 이름으로 바꿉니다.</li>
+</ol>
+<div class="table-wrap">
+<table>
+<tr><th>1단계에서 쓴 것</th><th>매크로에서 바꿀 이름</th></tr>
+<tr><td><code>methods</code> (리스트)</td><td><code>values</code></td></tr>
+<tr><td><code>payment_method</code> (컬럼)</td><td><code>{{ column }}</code></td></tr>
+<tr><td><code>amount</code> (금액 컬럼)</td><td><code>{{ amount_col }}</code></td></tr>
+</table>
+</div>
+<pre data-file="macros/pivot_sum.sql (빈칸 채우기)"><code>{% macro pivot_sum(column, values, amount_col='amount') -%}
+    {%- for v in ____ %}
+    sum(case when {{ ____ }} = '{{ v }}' then {{ ____ }} else 0 end) as {{ v }}_{{ amount_col }}
+    {%- if not loop.last %},{% endif %}
+    {%- endfor %}
+{%- endmacro %}</code></pre>
+
+<h3>2-2. <code>models\intermediate\int_payments_pivoted.sql</code> 만들기</h3>
+<ol>
+<li>파일 만들기: <code>notepad models\intermediate\int_payments_pivoted.sql</code> (3일차의 <code>int_order_payments.sql</code> 옆)</li>
+<li><code>order_id</code> 다음 자리에 매크로를 부릅니다. 컬럼 이름은 따옴표로 감싼 <b>글자</b>로, 수단 목록은 리스트로 넘깁니다.</li>
+<li>주문당 1행이 되도록 <code>group by order_id</code></li>
+</ol>
+<pre data-file="models/intermediate/int_payments_pivoted.sql (빈칸 채우기)"><code>select
+    order_id,
+    {{ ____('payment_method', ['card', 'bank_transfer', 'kakaopay', 'point']) }}
+from {{ ref('stg_payments') }}
+group by ____</code></pre>
+<p><b>왜 매크로로 떼나요?</b> 프로시저라면 공통 로직을 함수나 하위 프로시저로 빼 두듯, "수단별 합계 컬럼 만들기"를 여러 모델에서 쓰려면 한곳에 둬야 고칠 때 한 번만 고칩니다. 다른 점은, 매크로는 DB에 저장되지 않고 <b>컴파일할 때 SQL 글자로 펼쳐진다</b>는 것입니다.</p>
+<p>저장하고 실행합니다.</p>
+<pre><code>dbt run -s int_payments_pivoted
+dbt show --inline "select * from {{ ref('int_payments_pivoted') }} where order_id in (5, 18) order by 1"</code></pre>
+<p><b>확인</b>: 첫 줄 <code>dbt run</code>은 <b>아무 모델도 만들지 않고</b> <code>Finished running in ...</code>으로 끝납니다. 오류가 아닙니다. intermediate 폴더가 <code>ephemeral</code>이라서 DB에 뷰도 테이블도 안 생깁니다. 대신 <code>dbt show</code>는 ephemeral 모델을 CTE로 끼워 넣어 실행해 주므로 결과를 볼 수 있습니다. 분할 결제한 주문 5·18이 이렇게 나오면 성공입니다(실제 확인, 전체는 30행 = 주문 30건).</p>
+<pre><code>| order_id | card_amount | bank_transfer_amount | kakaopay_amount | point_amount |
+| -------- | ----------- | -------------------- | --------------- | ------------ |
+|        5 |       49000 |                    0 |               0 |        10000 |
+|       18 |       29000 |                    0 |               0 |        10000 |</code></pre>
 <details class="hint"><summary>힌트 1</summary>
 <p>매크로 몸통은 1단계의 <code>{% for %} ... {% endfor %}</code> 부분을 그대로 옮기고, <code>payment_method</code>·<code>amount</code>·리스트 자리를 인자 이름으로 바꾸면 됩니다.</p>
 </details>
@@ -658,13 +741,6 @@ group by order_id</code></pre>
 from {{ ref('stg_payments') }}
 group by order_id</code></pre>
 </details>
-<pre><code>dbt run -s int_payments_pivoted
-dbt show --inline "select * from {{ ref('int_payments_pivoted') }} where order_id in (5, 18) order by 1"</code></pre>
-<p>첫 줄 <code>dbt run</code>은 <b>아무 모델도 만들지 않고</b> <code>Finished running in ...</code>으로 끝납니다. intermediate 폴더가 <code>ephemeral</code>이라서입니다(DB에 뷰도 테이블도 안 생김). 대신 <code>dbt show</code>는 ephemeral 모델을 CTE로 끼워 넣어 실행해 주므로 결과를 볼 수 있습니다. 분할 결제한 주문 5·18이 이렇게 나오면 성공입니다(실제 확인).</p>
-<pre><code>| order_id | card_amount | bank_transfer_amount | kakaopay_amount | point_amount |
-| -------- | ----------- | -------------------- | --------------- | ------------ |
-|        5 |       49000 |                    0 |               0 |        10000 |
-|       18 |       29000 |                    0 |               0 |        10000 |</code></pre>
 <details class="hint"><summary>더 해보기: 목록을 DB에서 읽어 오기</summary>
 <p>이론에서 본 <code>run_query</code> + <code>if execute</code> 코드로 <code>methods</code>를 만들어 <code>pivot_sum('payment_method', methods)</code>에 넘겨 보세요. <code>analyses/dynamic_pivot.sql</code>에 써서 <code>dbt compile -s dynamic_pivot</code>로 확인하면 됩니다. 컬럼 순서가 알파벳순(<code>bank_transfer</code>가 먼저)으로 바뀌는 것도 확인해 보세요.</p>
 </details>
@@ -672,9 +748,21 @@ dbt show --inline "select * from {{ ref('int_payments_pivoted') }} where order_i
 
 <div class="step" data-id="clean-macro">
 <div class="step-title">3. 정제 매크로를 staging에 적용하기</div>
-<p><code>macros/clean_text.sql</code>을 만들어 <code>nullif(lower(trim(컬럼)), '')</code>을 찍어 내게 하고, <code>stg_orders</code>의 <code>lower(trim(status))</code>를 이 매크로로 바꿔 보세요.</p>
+<p><b>목표</b>: <code>stg_orders</code>의 정제 식 <code>lower(trim(status))</code>를 매크로 <code>clean_text</code>로 바꿉니다. 결과는 같고, 정제 규칙이 한곳(매크로)에 모입니다. 파일 1개 새로 만들고, 1개는 한 줄만 고칩니다.</p>
+<ol>
+<li>파일 만들기: <code>notepad macros\clean_text.sql</code> → 아래 세 줄을 그대로 넣고 저장 (이론 "매크로" 절의 코드와 같습니다)
+<pre data-file="macros/clean_text.sql"><code>{% macro clean_text(col) -%}
+    nullif(lower(trim({{ col }})), '')
+{%- endmacro %}</code></pre></li>
+<li>고치기: <code>notepad models\staging\stg_orders.sql</code> → <code>status</code> 줄 <b>하나만</b> 바꿉니다. 나머지 줄은 그대로.
+<pre data-file="models/staging/stg_orders.sql (status 줄, 빈칸 채우기)"><code>    lower(trim(status))           as status,      -- 지우고
+    {{ ____('____') }}    as status,      -- 이렇게</code></pre></li>
+</ol>
+<p><b>왜?</b> 프로시저에서 같은 정제 식을 테이블마다 복사해 두면, 규칙이 바뀔 때(예: 빈 문자열은 NULL로) 전부 찾아 고쳐야 합니다. 매크로로 두면 <code>macros\clean_text.sql</code> 한 곳만 고치면 됩니다. 이번 매크로는 <code>nullif(..., '')</code>가 더해져서 빈 문자열을 NULL로 바꾸는 것까지 합니다.</p>
+<pre><code>dbt build -s stg_orders</code></pre>
+<p><b>확인</b>: <code>Done. PASS=7 WARN=0 ERROR=0 SKIP=0 ... TOTAL=7</code> (뷰 1개 + 3일차에 단 테스트 6개, 실제 확인). <code>accepted_values</code>가 여전히 통과하니 정제 결과가 그대로라는 뜻입니다. <code>Get-Content -Encoding utf8 target\compiled\shop\models\staging\stg_orders.sql</code> 로 열면 매크로 이름은 사라지고 <code>nullif(lower(trim(status)), '')</code>만 남아 있습니다.</p>
 <details class="hint"><summary>힌트</summary>
-<p>매크로 정의는 이론의 "매크로" 절에 있습니다. 바꾼 뒤에는 3일차에 만든 <code>accepted_values</code> 테스트가 여전히 통과하는지 <code>dbt build -s stg_orders</code>로 확인합니다.</p>
+<p>매크로 정의는 이론의 "매크로" 절에 있습니다. 컬럼 이름은 따옴표로 감싸서 <b>글자</b>로 넘깁니다. 바꾼 뒤에는 3일차에 만든 <code>accepted_values</code> 테스트가 여전히 통과하는지 <code>dbt build -s stg_orders</code>로 확인합니다.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
 <pre data-file="macros/clean_text.sql"><code>{% macro clean_text(col) -%}
@@ -688,23 +776,78 @@ dbt show --inline "select * from {{ ref('int_payments_pivoted') }} where order_i
     cast(updated_at as timestamp) as updated_at
 from {{ source('shop_raw', 'raw_orders') }}</code></pre>
 </details>
-<pre><code>dbt build -s stg_orders</code></pre>
-<p>테스트가 모두 PASS면 됩니다. <code>target/compiled/shop/models/staging/stg_orders.sql</code>을 열면 매크로 이름은 사라지고 <code>nullif(lower(trim(status)), '')</code>만 남아 있습니다.</p>
 </div>
 
 <div class="step" data-id="packages">
 <div class="step-title">4. dbt_utils 설치하고 써 보기</div>
-<p>프로젝트 맨 위(<code>dbt_project.yml</code> 옆)에 <code>packages.yml</code>을 만들고 설치합니다. 인터넷(hub.getdbt.com) 연결이 필요합니다.</p>
+<p><b>목표</b>: 남이 만든 매크로 묶음 <code>dbt_utils</code>를 설치하고(4-1), 그 안의 매크로 두 개로 모델 2개를 만듭니다(4-2, 4-3).</p>
+<pre class="diagram">  shop\
+  ├── dbt_project.yml
+  ├── packages.yml          ← 4-1 새로 만들기 (dbt_project.yml 과 같은 폴더! models\ 안 아님)
+  ├── dbt_packages\dbt_utils\   ← dbt deps 가 만들어 줌
+  └── models\
+      ├── intermediate\int_payments_keyed.sql      ← 4-2  generate_surrogate_key
+      └── marts\daily_sales_calendar.sql           ← 4-3  date_spine</pre>
+
+<h3>4-1. 설치 (그대로 따라 하기)</h3>
+<ol>
+<li><code>notepad packages.yml</code> (지금 위치가 <code>shop</code> 폴더여야 합니다) → 아래 세 줄을 넣고 저장</li>
+<li><code>dbt deps</code> 실행. 인터넷(hub.getdbt.com) 연결이 필요합니다.</li>
+</ol>
 <pre data-file="packages.yml"><code>packages:
   - package: dbt-labs/dbt_utils
-    version: [">=1.3.0", "&lt;2.0.0"]</code></pre>
-<pre><code>dbt deps</code></pre>
-<p><code>Installed from version 1.4.1</code> 같은 줄이 나오고 <code>dbt_packages\dbt_utils</code> 폴더와 <code>package-lock.yml</code>이 생기면 성공입니다.</p>
-<p>이제 두 가지를 직접 써 보세요.</p>
-<ul>
-<li><code>models/intermediate/int_payments_keyed.sql</code> — <code>stg_payments</code>에 <code>order_id</code>+<code>payment_id</code>로 만든 대리키 <code>payment_key</code> 컬럼 추가 (<code>generate_surrogate_key</code>)</li>
-<li><code>models/marts/daily_sales_calendar.sql</code> — 2026-10-01부터 10-24까지 <b>하루도 빠짐없이</b> 날짜별 완료 주문 수·매출. 주문이 없는 날은 0 (<code>date_spine</code>)</li>
-</ul>
+    version: ["&gt;=1.3.0", "&lt;2.0.0"]</code></pre>
+<pre><code>dbt deps
+Get-ChildItem dbt_packages</code></pre>
+<p><b>확인</b>: <code>Installing dbt-labs/dbt_utils</code> → <code>Installed from version 1.4.1</code> → <code>Up to date!</code> 가 나오고(실제 확인), <code>dbt_packages</code> 안에 <code>dbt_utils</code> 폴더, 프로젝트 맨 위에 <code>package-lock.yml</code>이 생기면 성공입니다.</p>
+
+<h3>4-2. <code>models\intermediate\int_payments_keyed.sql</code> — 대리키 붙이기</h3>
+<ol>
+<li><code>notepad models\intermediate\int_payments_keyed.sql</code></li>
+<li><code>stg_payments</code>의 컬럼 4개(<code>order_id</code>, <code>payment_id</code>, <code>payment_method</code>, <code>amount</code>) 앞에, <code>order_id</code>+<code>payment_id</code>를 합쳐 만든 키 <code>payment_key</code>를 한 컬럼 더 붙입니다.</li>
+</ol>
+<p><b>왜?</b> 프로시저에서 <code>TO_HEX(MD5(CONCAT(order_id, '-', payment_id)))</code>를 직접 쓰던 일입니다. 직접 쓰면 NULL이 하나라도 섞이면 CONCAT 전체가 NULL이 되는 함정이 있는데, 매크로가 그 처리까지 해 줍니다.</p>
+<pre data-file="models/intermediate/int_payments_keyed.sql (빈칸 채우기)"><code>select
+    {{ dbt_utils.____(['order_id', '____']) }} as payment_key,
+    order_id,
+    payment_id,
+    payment_method,
+    amount
+from {{ ref('stg_payments') }}</code></pre>
+
+<h3>4-3. <code>models\marts\daily_sales_calendar.sql</code> — 빠진 날 없는 일별 매출</h3>
+<ol>
+<li><code>notepad models\marts\daily_sales_calendar.sql</code> (marts 폴더라 <b>테이블</b>로 만들어집니다)</li>
+<li>CTE <code>days</code>: <code>date_spine</code>으로 2026-10-01 ~ 10-24 날짜 목록(컬럼 이름 <code>date_day</code>)</li>
+<li>CTE <code>sales</code>: <code>fct_orders</code>에서 <code>status = 'completed'</code>만, 날짜별 주문 수·매출</li>
+<li>마지막 SELECT: <code>days</code>에 <code>sales</code>를 <b>left join</b>, 매출 없는 날은 <code>coalesce(..., 0)</code></li>
+</ol>
+<pre class="diagram">  days (10-01 … 10-24, 24행)        sales (완료 주문이 있는 날만, 12행)
+  date_day                           order_date  orders  revenue
+  10-01  ─────── left join ───────▶  (없음)                         → 0, 0
+  10-02  ───────────────────────────▶ 10-02        1      19000     → 1, 19000
+  ...</pre>
+<p><b>왜?</b> 1일차 <code>daily_sales</code>는 주문이 없는 날이 아예 빠져서 12행뿐이었습니다. 대시보드에서 "그날 0원"이 보여야 할 때, 프로시저에서는 <code>GENERATE_DATE_ARRAY</code> + <code>UNNEST</code>로 달력 테이블을 만들어 붙였죠. <code>date_spine</code>이 그 달력입니다. 끝 날짜는 <b>포함되지 않으니</b> 10-24까지 원하면 10-25를 넣습니다.</p>
+<pre data-file="models/marts/daily_sales_calendar.sql (빈칸 채우기)"><code>with days as (
+    {{ dbt_utils.date_spine(
+        datepart="day",
+        start_date="cast('2026-10-01' as date)",
+        end_date="cast('____' as date)"
+    ) }}
+),
+sales as (
+    select order_date, count(*) as orders, sum(total_amount) as revenue
+    from {{ ref('fct_orders') }}
+    where status = 'completed'
+    group by order_date
+)
+select
+    cast(d.date_day as date)   as date_day,
+    coalesce(s.orders, 0)      as orders,
+    coalesce(s.revenue, 0)     as revenue
+from days d
+____ join sales s on s.order_date = cast(d.date_day as date)
+order by 1</code></pre>
 <details class="hint"><summary>힌트 1</summary>
 <p><code>{{ dbt_utils.generate_surrogate_key(['order_id', 'payment_id']) }} as payment_key</code>. date_spine은 CTE 안에 통째로 넣고, 나오는 컬럼 이름은 <code>date_day</code>입니다.</p>
 </details>
@@ -743,18 +886,55 @@ order by 1</code></pre>
 <pre><code>dbt run -s int_payments_keyed daily_sales_calendar
 dbt show -s int_payments_keyed --limit 3
 dbt show -s daily_sales_calendar --limit 30</code></pre>
-<p><code>dbt run</code>에서는 <code>daily_sales_calendar</code> 테이블 하나만 만들어집니다(<code>int_payments_keyed</code>는 ephemeral). <code>daily_sales_calendar</code>는 24행(10-01 ~ 10-24)이 나오고, 그중 12일(10-01·10-07·10-12~15·10-19~24)은 0으로 채워져 있으면 성공입니다. 컴파일된 SQL을 열어 <code>generate_surrogate_key</code>가 <code>md5(cast(coalesce(cast(order_id as TEXT), '_dbt_utils_surrogate_key_null_') || '-' || ...</code> 로 풀린 것도 보세요. NULL을 안전하게 처리하는 부분까지 대신 써 줍니다.</p>
-<p><code>.gitignore</code>에 <code>dbt_packages/</code>가 있는지 확인하세요(<code>dbt init</code>이 만든 파일에 보통 들어 있습니다). <code>package-lock.yml</code>은 git에 올립니다.</p>
+<p><b>확인</b>(실제 확인):</p>
+<ul>
+<li><code>dbt run</code>: <code>1 of 1 OK created sql table model main.daily_sales_calendar</code> 하나만 나옵니다. <code>int_payments_keyed</code>는 ephemeral이라 안 만들어지는 게 정상입니다.</li>
+<li><code>int_payments_keyed</code>: 맨 앞에 <code>ea66c06c1e1c05fa9...</code> 같은 32글자 키가 붙은 3행(주문 1·2·3)</li>
+<li><code>daily_sales_calendar</code>: <b>24행</b>(10-01 ~ 10-24). 그중 12일(10-01·10-07·10-12~15·10-19~24)은 <code>0 | 0</code>, 10-04는 <code>2 | 188000</code>. 0이 아닌 날을 더하면 주문 14건·906,000원으로 1일차 <code>daily_sales</code>와 같습니다.</li>
+</ul>
+<p>컴파일된 SQL(<code>target\compiled\shop\models\intermediate\int_payments_keyed.sql</code>)을 열어 <code>generate_surrogate_key</code>가 <code>md5(cast(coalesce(cast(order_id as TEXT), '_dbt_utils_surrogate_key_null_') || '-' || ...</code> 로 풀린 것도 보세요. NULL을 안전하게 처리하는 부분까지 대신 써 줍니다.</p>
+<p><code>.gitignore</code>에 <code>dbt_packages/</code>가 있는지 확인하세요(<code>dbt init</code>이 만든 파일에 들어 있습니다). <code>package-lock.yml</code>은 git에 올립니다.</p>
 </div>
 
 <div class="step" data-id="incremental">
 <div class="step-title">5. fct_orders 를 incremental 로 바꾸기 (일부러 함정 버전)</div>
-<p>먼저 많은 사람이 처음에 쓰는 모양 — <b><code>order_date</code> 기준 + 3일 lookback</b> — 으로 만들어 봅니다. 기존 SELECT 목록(contract와 맞춰 둔 것)은 그대로 두고, 위에 <code>config</code>, 아래에 <code>is_incremental()</code> 블록만 추가하세요.</p>
-<ul>
-<li><code>materialized='incremental'</code>, <code>unique_key='order_id'</code>, <code>incremental_strategy='merge'</code></li>
-<li>contract가 걸려 있으니 <code>on_schema_change='append_new_columns'</code></li>
-<li>증분일 때만: <code>order_date &gt;= (이미 있는 행의 최대 order_date - lookback일)</code>. lookback 일수는 <code>{{ var('lookback_days', 3) }}</code>로</li>
-</ul>
+<p><b>목표</b>: <code>fct_orders</code>를 "매번 통째로 다시 만들기(table)"에서 "바뀐 것만 MERGE(incremental)"로 바꿉니다. 오늘은 일부러 많은 사람이 처음 쓰는 <b><code>order_date</code> 기준 + 3일 lookback</b> 필터로 만들고, 8단계에서 무엇을 놓치는지 봅니다.</p>
+<pre class="diagram">  지금(3일차)  fct_orders = table        매번 DROP + CREATE (30행 전부 다시)
+  바꾸면       fct_orders = incremental
+               ├ 첫 실행 / --full-refresh  →  전체를 새로 만듦
+               └ 그다음 실행부터            →  필터에 걸린 행만 골라서
+                                               order_id 가 있으면 UPDATE, 없으면 INSERT (MERGE)</pre>
+<p>고칠 파일은 <code>models\marts\fct_orders.sql</code> 하나입니다(<code>notepad models\marts\fct_orders.sql</code>). 3일차에 쓴 SELECT는 <b>한 글자도 건드리지 않고</b>, 위와 아래에 블록을 하나씩 덧붙입니다. contract가 걸린 <code>models\marts\schema.yml</code>도 그대로 둡니다.</p>
+<ol>
+<li><b>맨 위</b>에 <code>{{ config(...) }}</code> 블록 추가: <code>materialized='incremental'</code>, <code>unique_key='order_id'</code>, <code>incremental_strategy='merge'</code>, <code>on_schema_change='append_new_columns'</code> (contract가 걸린 incremental 모델은 이 설정이 필수)</li>
+<li>가운데 SELECT ~ <code>left join ... on o.order_id = p.order_id</code> 는 그대로</li>
+<li><b>맨 아래</b>에 <code>{% if is_incremental() %} ... {% endif %}</code> 블록 추가: <code>where o.order_date &gt;= (이미 있는 행의 최대 order_date - lookback일)</code>. lookback 일수는 숫자 3을 직접 쓰지 말고 <code>{{ var('lookback_days', 3) }}</code>로</li>
+</ol>
+<p><b>프로시저로 옮기면</b>: <code>MERGE INTO dm.fct_orders T USING (SELECT ... WHERE order_date &gt;= 기준일) S ON T.order_id = S.order_id WHEN MATCHED THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ...</code> 에서 <code>unique_key</code> = <code>ON</code> 절, <code>is_incremental()</code> 블록 = <code>USING</code> 안의 <code>WHERE</code>, <code>{{ this }}</code> = 대상 테이블 <code>T</code>입니다. MERGE 문 자체는 dbt가 써 줍니다.</p>
+<pre data-file="models/marts/fct_orders.sql (빈칸 채우기)"><code>{{ config(
+    materialized='____',
+    unique_key='____',
+    incremental_strategy='merge',
+    on_schema_change='append_new_columns'
+) }}
+
+select
+    o.order_id,
+    o.customer_id,
+    o.order_date,
+    o.status,
+    coalesce(p.total_amount, 0) as total_amount,
+    o.updated_at
+from {{ ref('stg_orders') }} o
+left join {{ ref('int_order_payments') }} p
+    on o.order_id = p.order_id
+
+{% if ____() %}
+where o.order_date &gt;= (
+    select max(order_date) - interval {{ var('lookback_days', 3) }} day
+    from {{ ____ }}
+)
+{% endif %}</code></pre>
 <details class="hint"><summary>힌트 1</summary>
 <p>"이미 있는 행"은 <code>{{ this }}</code>입니다. DuckDB에서 날짜 빼기는 <code>max(order_date) - interval 3 day</code>.</p>
 </details>
@@ -788,23 +968,41 @@ where o.order_date &gt;= (
 )
 {% endif %}</code></pre>
 </details>
-<p>3일차의 <code>fct_orders</code>는 이미 <b>테이블로 존재</b>하므로, 그냥 돌리면 첫 실행부터 <code>is_incremental()</code>이 참이 됩니다. 깨끗하게 시작하려고 한 번은 full refresh 합니다.</p>
+<p>3일차의 <code>fct_orders</code>는 이미 <b>테이블로 존재</b>하므로, 그냥 돌리면 첫 실행부터 <code>is_incremental()</code>이 참이 됩니다. 깨끗하게 시작하려고 한 번은 full refresh 하고, 이어서 보통 실행을 한 번 더 합니다.</p>
 <pre><code>dbt run -s fct_orders --full-refresh
-dbt run -s fct_orders</code></pre>
+dbt run -s fct_orders
+dbt show --inline "select count(*) as n, max(order_date) as max_date from {{ ref('fct_orders') }}"</code></pre>
+<p><b>확인</b>(실제 확인): 두 번 다 <code>OK created sql incremental model main.fct_orders</code>. 행 수는 <b>30</b>, <code>max_date</code>는 <b>2026-10-19</b>. 두 번째 실행의 필터는 <code>order_date &gt;= 10-19 - 3일 = 10-16</code>이라 25~30번 6건만 다시 MERGE되었고, 이미 있던 행이라 전부 UPDATE(값은 그대로)라서 30행 그대로입니다.</p>
 <p>두 번째 실행 후 <code>target\run\shop\models\marts\fct_orders.sql</code>을 열어 보세요. <code>MERGE INTO "shop"."main"."fct_orders" ... ON (DBT_INTERNAL_SOURCE.order_id = DBT_INTERNAL_DEST.order_id) WHEN MATCHED THEN UPDATE BY NAME WHEN NOT MATCHED THEN INSERT BY NAME</code> — 내가 쓰던 MERGE 프로시저와 같은 문장입니다. 첫 실행(full refresh) 때는 이 파일에 <code>create table ... fct_orders__dbt_tmp</code>와 contract의 컬럼 정의(<code>order_id bigint not null primary key</code> …)가 들어 있었습니다.</p>
 <p>두 가지를 더 보세요.</p>
 <ul>
-<li><b>ephemeral이 끼워 넣어진 모습</b> — <code>target\compiled\shop\models\marts\fct_orders.sql</code> 맨 위에 <code>with __dbt__cte__int_order_payments as (...)</code>가 있고, 조인은 <code>left join __dbt__cte__int_order_payments p</code>로 바뀌어 있습니다. 증분 필터(<code>where o.updated_at ...</code>)는 <b>주문 쪽에만</b> 걸리고 결제 CTE는 매번 전체를 다시 계산합니다. 지금은 작아서 괜찮지만, 결제가 아주 커지면 CTE 안에도 같은 범위 조건을 넣거나 intermediate를 테이블로 바꾸는 걸 고민하게 됩니다.</li>
+<li><b>ephemeral이 끼워 넣어진 모습</b> — <code>target\compiled\shop\models\marts\fct_orders.sql</code> 맨 위에 <code>with __dbt__cte__int_order_payments as (...)</code>가 있고, 조인은 <code>left join __dbt__cte__int_order_payments p</code>로 바뀌어 있습니다. 증분 필터(<code>where o.order_date ...</code>)는 <b>주문 쪽에만</b> 걸리고 결제 CTE는 매번 전체를 다시 계산합니다. 지금은 작아서 괜찮지만, 결제가 아주 커지면 CTE 안에도 같은 범위 조건을 넣거나 intermediate를 테이블로 바꾸는 걸 고민하게 됩니다.</li>
 <li><b>primary key 제약</b> — DuckDB는 PK를 실제로 검사합니다. MERGE는 같은 <code>order_id</code>를 UPDATE하므로 PK와 부딪치지 않고, <code>incremental_strategy='delete+insert'</code>로 바꿔도 먼저 지우고 넣기 때문에 문제없이 돌았습니다(둘 다 직접 확인). 반대로 <code>unique_key</code> 없이 append 하면 같은 주문이 두 번 들어가려다 PK 위반으로 실패합니다 — 제약이 실수를 막아 주는 셈입니다.</li>
 </ul>
-<p><code>dbt compile -s fct_orders --vars "lookback_days: 5"</code> 를 하고 <code>target\compiled</code>를 열면 <code>interval 5 day</code>로 바뀐 것도 확인할 수 있습니다.</p>
+<p><code>dbt compile -s fct_orders --vars "lookback_days: 5"</code> 를 하고 <code>target\compiled\shop\models\marts\fct_orders.sql</code>을 열면 <code>interval 5 day</code>로 바뀐 것도 확인할 수 있습니다.</p>
 </div>
 
 <div class="step" data-id="snapshot-first">
 <div class="step-title">6. 고객 snapshot 만들고 첫 실행 (데이터 바꾸기 전에!)</div>
-<p><code>snapshots/snapshots.yml</code>을 만들어 <code>shop_raw.raw_customers</code>의 이력을 <code>customer_id</code> 기준, <code>timestamp</code> 전략(<code>updated_at</code> 컬럼)으로 쌓도록 설정하세요. 스냅샷 이름은 <code>customers_snapshot</code>.</p>
+<p><b>목표</b>: 고객 원천(<code>raw_customers</code>)의 <b>지금 상태 15명</b>을 이력 테이블 <code>customers_snapshot</code>에 첫 버전으로 찍어 둡니다. 7단계에서 데이터를 바꾼 뒤 다시 찍으면 "바뀌기 전 / 바뀐 후"가 둘 다 남습니다. <b>반드시 7단계보다 먼저</b> 합니다.</p>
+<pre class="diagram">  지금(6단계)  raw_customers 15명 ──dbt snapshot──▶ customers_snapshot 15행 (전부 현재 버전)
+  7단계        data\ 를 다음 날 파일로 바꿔 끼움 (2번·5번 고객 변경, 16번 신규)
+  8단계        raw_customers 16명 ──dbt snapshot──▶ customers_snapshot 18행 (옛 버전 2행은 닫힘)</pre>
+<ol>
+<li>파일 만들기: <code>notepad snapshots\snapshots.yml</code> — 위치는 프로젝트 맨 위의 <code>snapshots</code> 폴더(<code>models</code> 옆)입니다. 폴더가 없으면 먼저 <code>mkdir snapshots</code>. (<code>models\</code> 안에 둬도 dbt가 찾긴 하지만, snapshot은 <code>snapshots\</code>에 모아 두는 게 관례입니다.)</li>
+<li>최상위 키는 <code>snapshots:</code>, 그 아래 목록 한 개: 이름 <code>customers_snapshot</code>, 원천 <code>relation: source('shop_raw', 'raw_customers')</code></li>
+<li><code>config:</code> 아래에 세 가지: 고객을 구별하는 키 <code>unique_key: customer_id</code>, 바뀜 판단 방식 <code>strategy: timestamp</code>, 그 기준 컬럼 <code>updated_at: updated_at</code></li>
+</ol>
+<p><b>프로시저로 옮기면</b>: 고객 이력 테이블(SCD2)을 직접 관리하던 프로시저 — "<code>updated_at</code>이 바뀐 고객은 현재 행의 <code>end_date</code>를 채워 닫고, 새 버전을 <code>end_date = NULL</code>로 INSERT" — 를 이 yml 몇 줄이 대신합니다. 이론의 snapshot 절에 나온 UPDATE + INSERT 문을 dbt가 만들어 줍니다.</p>
+<pre data-file="snapshots/snapshots.yml (빈칸 채우기)"><code>snapshots:
+  - name: customers_snapshot
+    relation: source('____', '____')
+    config:
+      unique_key: ____
+      strategy: ____
+      updated_at: ____</code></pre>
 <details class="hint"><summary>힌트</summary>
-<p>최상위 키는 <code>snapshots:</code>, 원천은 <code>relation: source('shop_raw', 'raw_customers')</code>, 나머지는 <code>config:</code> 아래에 씁니다.</p>
+<p>최상위 키는 <code>snapshots:</code>, 원천은 <code>relation: source('shop_raw', 'raw_customers')</code>, 나머지는 <code>config:</code> 아래에 씁니다. yml은 들여쓰기(스페이스 2칸)가 틀리면 안 읽힙니다. 탭 대신 스페이스로.</p>
 </details>
 <details class="hint"><summary>정답 보기</summary>
 <pre data-file="snapshots/snapshots.yml"><code>snapshots:
@@ -816,25 +1014,58 @@ dbt run -s fct_orders</code></pre>
       updated_at: updated_at</code></pre>
 </details>
 <pre><code>dbt snapshot
-dbt show --inline "select count(*) as n from {{ ref('customers_snapshot') }}"</code></pre>
-<p><code>OK snapshotted main.customers_snapshot</code>, 그리고 <b>15행</b>이 나오면 됩니다. 지금은 고객 한 명당 한 줄, 모두 <code>dbt_valid_to</code>가 NULL(현재)입니다.</p>
+dbt show --inline "select count(*) as n from {{ ref('customers_snapshot') }}"
+dbt show --inline "select customer_id, city, membership, dbt_valid_from, dbt_valid_to from {{ ref('customers_snapshot') }} where customer_id in (2, 5) order by 1"</code></pre>
+<p><b>확인</b>(실제 확인): <code>1 of 1 OK snapshotted main.customers_snapshot</code>, 행 수 <b>15</b>. 2번은 <code>광주 | basic</code>, 5번은 <code>인천 | basic</code>, 둘 다 <code>dbt_valid_from = 2026-09-30 09:00:00</code>, <code>dbt_valid_to</code>는 비어 있음(NULL = 현재 버전). 원천에 없던 컬럼 <code>dbt_scd_id</code>, <code>dbt_updated_at</code>, <code>dbt_valid_from</code>, <code>dbt_valid_to</code> 4개가 붙어 있습니다.</p>
 <p>snapshot은 staging이 아니라 <b>원천</b>에 걸었으므로 컬럼 이름도 원천 그대로입니다. 그래서 여기서는 <code>customer_name</code>이 아니라 <code>name</code>입니다.</p>
 </div>
 
 <div class="step" data-id="swap">
 <div class="step-title">7. "다음 날" 데이터로 바꿔 끼우기</div>
-<p>3일차 원본을 <code>data\day3\</code>에 백업해 두고, 다음 날 파일을 <code>data\next\</code>에 받은 뒤 <code>data\</code>에 덮어씁니다. (dbt는 <code>data/{name}.csv</code>만 읽으니 하위 폴더 파일은 무시합니다.)</p>
-<pre><code>mkdir data\day3
-Copy-Item data\*.csv data\day3\
-
-mkdir data\next
+<p><b>목표</b>: dbt가 읽는 <code>data\</code> 폴더의 CSV 3개를 "다음 날" 버전으로 바꿉니다. 하루가 지나 원천 시스템에서 새 파일이 도착한 상황을 흉내 내는 것입니다. 이 단계에서 <b>모델·yml·<code>shop.duckdb</code>는 하나도 건드리지 않습니다.</b></p>
+<div class="table-wrap">
+<table>
+<tr><th>바뀌는 파일 (덮어씀)</th><th>지금 (3일차)</th><th>바꾼 뒤 (다음 날)</th></tr>
+<tr><td><code>data\raw_customers.csv</code></td><td>15명 (줄 수 16)</td><td>16명 (줄 수 17)</td></tr>
+<tr><td><code>data\raw_orders.csv</code></td><td>30건 (줄 수 31)</td><td>40건 (줄 수 41)</td></tr>
+<tr><td><code>data\raw_payments.csv</code></td><td>32건 (줄 수 33)</td><td>42건 (줄 수 43)</td></tr>
+</table>
+</div>
+<p>줄 수 = 헤더 1줄 + 데이터 행. 끝나면 폴더가 이렇게 됩니다.</p>
+<pre class="diagram">  C:\Users\&lt;내이름&gt;\dbt-practice\shop\
+  ├── data\          ← dbt가 읽는 곳 (sources.yml: data/{name}.csv). 여기 3개가 "다음 날" 버전으로 바뀜
+  ├── data_day3\     ← ① 백업: 3일차 원본 3개 (되돌릴 때 씀, 7일차에도 씀)
+  └── data_next\     ← ② 내려받은 "다음 날" 파일 3개 (9단계에서 다시 씀)</pre>
+<p>dbt는 <code>data\raw_*.csv</code> 세 파일만 정확한 경로로 읽으므로 <code>data_day3\</code>, <code>data_next\</code>는 무시합니다. <code>data\</code> 밖에 두는 건 헷갈리지 않게 하려는 것입니다.</p>
+<p>PowerShell(<code>shop</code> 폴더, venv 켠 상태)에서 아래를 <b>위에서부터 한 덩어리씩</b> 붙여 넣으세요.</p>
+<pre><code># ① 백업: 3일차 원본 3개를 data_day3\ 로 복사 (딱 한 번만!)
+mkdir data_day3
+Copy-Item data\*.csv data_day3\
+Get-ChildItem data_day3            # raw_customers.csv, raw_orders.csv, raw_payments.csv 3개 보이면 OK</code></pre>
+<pre><code># ② "다음 날" 파일 3개를 data_next\ 로 내려받기
+mkdir data_next
 $base = "https://jinjinparkk.github.io/de-study/practice/data/next"
 foreach ($f in "raw_customers.csv","raw_orders.csv","raw_payments.csv") {
-  curl.exe -sL "$base/$f" -o "data\next\$f"
+  curl.exe -sL "$base/$f" -o "data_next\$f"
 }
+Get-ChildItem data_next            # 3개 보이면 OK</code></pre>
+<pre><code># ③ 바꿔 끼우기: data_next\ 의 3개로 data\ 의 3개를 덮어씀
+Copy-Item data_next\*.csv data\ -Force
 
-Copy-Item data\next\*.csv data\ -Force
-(Get-Content data\raw_orders.csv | Measure-Object -Line).Lines   # 41 (헤더 + 40행)</code></pre>
+# ④ 확인: 줄 수 (17 / 41 / 43 이면 성공)
+foreach ($f in "raw_customers.csv","raw_orders.csv","raw_payments.csv") {
+  "{0}: {1}" -f $f, (Get-Content "data\$f" | Measure-Object -Line).Lines
+}</code></pre>
+<p><b>확인</b>(실제 확인): <code>raw_customers.csv: 17</code>, <code>raw_orders.csv: 41</code>, <code>raw_payments.csv: 43</code>. 백업 쪽을 같은 방식으로 세면(<code>data_day3</code>) 16 / 31 / 33입니다.</p>
+<div class="box warn">
+<span class="box-title">되돌리기와 주의</span>
+<ul>
+<li><b>3일차 원본으로 되돌리기</b>: <code>Copy-Item data_day3\*.csv data\ -Force</code> — 다시 다음 날로: <code>Copy-Item data_next\*.csv data\ -Force</code>. 9단계에서 이 두 줄을 씁니다.</li>
+<li><b>①은 한 번만</b>. ③ 다음에 ①을 또 치면 백업이 "다음 날" 파일로 덮여 원본이 사라집니다. 그랬다면 원본을 다시 받으면 됩니다: 위 ②에서 주소 끝의 <code>/next</code>를 뺀 <code>$base = "https://jinjinparkk.github.io/de-study/practice/data"</code>로 바꾸고, <code>-o "data_day3\$f"</code>로 받습니다.</li>
+<li><code>mkdir</code>에서 "이미 있습니다" 오류가 나면 폴더가 이미 있다는 뜻이라 무시해도 됩니다.</li>
+<li>④에서 숫자가 1이나 이상한 값이면 내려받기가 실패한 것입니다(회사 프록시 등). 아래 링크를 브라우저로 열어 <b>다른 이름으로 저장</b>해 <code>data_next\</code>에 넣고 ③부터 다시 합니다.</li>
+</ul>
+</div>
 <p>직접 받으려면: <a href="../practice/data/next/raw_customers.csv">next/raw_customers.csv</a> · <a href="../practice/data/next/raw_orders.csv">next/raw_orders.csv</a> · <a href="../practice/data/next/raw_payments.csv">next/raw_payments.csv</a></p>
 <p>무엇이 바뀌었는지 미리 알고 관찰하면 좋습니다.</p>
 <div class="table-wrap">
@@ -849,6 +1080,8 @@ Copy-Item data\next\*.csv data\ -Force
 
 <div class="step" data-id="observe">
 <div class="step-title">8. 다시 돌리고 관찰하기 — 주문 3번은 어떻게 됐나?</div>
+<p><b>목표</b>: 파일은 고치지 않고 명령만 돌립니다. 5단계의 incremental(order_date 필터)과 6단계의 snapshot이 "다음 날" 데이터를 어떻게 받아들이는지 봅니다. 핵심 질문은 하나: <b>10-02에 주문했다가 10-21에 반품된 3번 주문이 마트에 반영될까?</b></p>
+<h3>8-1. incremental 다시 돌리기</h3>
 <pre><code>dbt run -s fct_orders
 dbt show --inline "select order_id, order_date, status, updated_at from {{ ref('fct_orders') }} where order_id in (3, 28, 30, 31) order by 1"
 dbt show --inline "select count(*) as n from {{ ref('fct_orders') }}"</code></pre>
@@ -862,7 +1095,7 @@ dbt show --inline "select count(*) as n from {{ ref('fct_orders') }}"</code></pr
 |       31 | 2026-10-21 | completed | 2026-10-21 18:03:00 |   ← 신규</code></pre>
 <p>전체 40행. 필터에 걸린 원천 행은 <b>16건</b>(10-16 이후 주문 = 25~40번)이었고, 그중 <b>6건(25~30번)은 기존 행 UPDATE, 10건(31~40번)은 INSERT</b> 되었습니다. 주문 3번은 10-02 주문이라 필터 밖 → 원천에서는 <code>returned</code>인데 마트에는 여전히 <code>completed</code>입니다. 매출이 부풀려진 채로 남는 거죠.</p>
 </details>
-<p>그럼 3일차에 만든 테스트가 이걸 잡아 줄까요?</p>
+<h3>8-2. 테스트가 이걸 잡아 줄까?</h3>
 <pre><code>dbt test</code></pre>
 <details class="hint"><summary>실제 결과 보기</summary>
 <p><code>Done. PASS=22 WARN=1 ERROR=0 ... TOTAL=23</code> — <b>모두 통과</b>합니다(WARN은 3일차부터 있던 원천 status 경고 2건 그대로).</p>
@@ -872,7 +1105,7 @@ dbt show --inline "select count(*) as n from {{ ref('fct_orders') }}"</code></pr
 </ul>
 <p>"테스트가 통과했다 = 마트가 맞다"가 아닙니다. 테스트는 <b>적어 둔 규칙</b>만 검사합니다. 상태 불일치를 잡고 싶다면 "<code>fct_orders</code>와 <code>stg_orders</code>의 status가 다른 주문이 있으면 실패" 같은 singular 테스트를 하나 더 만들 수 있습니다(스스로 해보기).</p>
 </details>
-<p>이번엔 snapshot을 다시 돌립니다.</p>
+<h3>8-3. snapshot 다시 돌리기</h3>
 <pre><code>dbt snapshot
 dbt show --inline "select customer_id, city, membership, dbt_valid_from, dbt_valid_to from {{ ref('customers_snapshot') }} where customer_id in (2, 5, 16) order by customer_id, dbt_valid_from"
 dbt show --inline "select count(*) as total, count(*) filter (where dbt_valid_to is null) as current_rows from {{ ref('customers_snapshot') }}"</code></pre>
@@ -895,7 +1128,23 @@ dbt show --inline "select count(*) as total, count(*) filter (where dbt_valid_to
 
 <div class="step" data-id="fix">
 <div class="step-title">9. 함정 고치기: updated_at 필터 + --full-refresh</div>
-<p><code>fct_orders</code>의 증분 필터를 <code>order_date</code> 대신 <code>updated_at</code> 기준(3일 lookback 유지)으로 바꾸고 <code>dbt run -s fct_orders</code>를 해 보세요. 주문 3번이 고쳐졌나요?</p>
+<p><b>목표</b>: 증분 필터의 기준을 "주문한 날(<code>order_date</code>)"에서 "마지막으로 바뀐 시각(<code>updated_at</code>)"으로 바꿔서, 3번 주문처럼 <b>오래전 주문이 나중에 바뀐 경우</b>도 잡히게 합니다. 그리고 이미 놓친 행은 어떻게 바로잡는지 봅니다.</p>
+<h3>9-1. 필터 고치기</h3>
+<ol>
+<li><code>notepad models\marts\fct_orders.sql</code></li>
+<li>맨 아래 <code>{% if is_incremental() %}</code> 블록 안에서 <code>order_date</code> 두 군데를 <code>updated_at</code>으로 바꿉니다(<code>o.order_date</code> → <code>o.updated_at</code>, <code>max(order_date)</code> → <code>max(updated_at)</code>). config와 SELECT는 그대로, 3일 lookback도 그대로.</li>
+</ol>
+<pre data-file="models/marts/fct_orders.sql (is_incremental 블록, 빈칸 채우기)"><code>{% if is_incremental() %}
+where o.____ &gt;= (
+    select max(____) - interval {{ var('lookback_days', 3) }} day
+    from {{ this }}
+)
+{% endif %}</code></pre>
+<p><b>왜 updated_at인가요?</b> 프로시저의 증분 적재에서 "워터마크"(마지막으로 가져온 변경 시각)를 기준으로 가져오던 것과 같습니다. 주문 날짜는 한 번 정해지면 안 바뀌지만, 상태는 며칠·몇 주 뒤에 바뀔 수 있습니다. "언제 생겼나"가 아니라 "언제 바뀌었나"로 걸러야 바뀐 행을 놓치지 않습니다.</p>
+<h3>9-2. 증분 실행 → 3번이 고쳐졌나?</h3>
+<pre><code>dbt run -s fct_orders
+dbt show --inline "select order_id, status, updated_at from {{ ref('fct_orders') }} where order_id = 3"</code></pre>
+<p>3번이 <code>returned</code>가 됐나요? 예상해 본 뒤 힌트를 여세요.</p>
 <details class="hint"><summary>힌트 1</summary>
 <p><code>where o.updated_at &gt;= (select max(updated_at) - interval {{ var('lookback_days', 3) }} day from {{ this }})</code></p>
 </details>
@@ -910,15 +1159,20 @@ where o.updated_at &gt;= (
     from {{ this }}
 )
 {% endif %}</code></pre>
-<p>로직을 고친 뒤에는 과거 행을 바로잡기 위해 <b>full refresh</b>가 필요합니다.</p>
-<pre><code>dbt run -s fct_orders --full-refresh</code></pre>
+<p>로직을 고친 뒤에는 과거 행을 바로잡기 위해 <b>full refresh</b>가 필요합니다. 프로시저로 치면 "로직 수정 후 전체 재적재"입니다.</p>
+<pre><code>dbt run -s fct_orders --full-refresh
+dbt show --inline "select order_id, status from {{ ref('fct_orders') }} where order_id = 3"</code></pre>
+<p>이제 3번이 <code>returned</code>로 나옵니다(실제 확인).</p>
 </details>
-<p>이제 "고친 로직이라면 처음부터 잡았을까?"를 확인합니다. 3일차 데이터로 되돌려 다시 만든 다음, 다음 날 데이터로 증분 실행합니다. (snapshot은 돌리지 마세요 — 이력이 꼬입니다.)</p>
-<pre><code>Copy-Item data\day3\*.csv data\ -Force
-dbt run -s fct_orders --full-refresh       # 30행, 3번 = completed
+<h3>9-3. 고친 로직이라면 처음부터 잡았을까? (다시 재생해 보기)</h3>
+<p>3일차 데이터로 되돌려 마트를 새로 만든 다음, 다음 날 데이터로 바꿔 <b>증분으로만</b> 돌립니다. 7단계에서 만든 두 폴더를 그대로 씁니다. <b>이 과정에서는 <code>dbt snapshot</code>(과 <code>dbt build</code>)을 돌리지 마세요</b> — 고객 이력이 꼬입니다.</p>
+<pre><code># 3일차 원본으로 되돌리고 새로 만들기 → 30행, 3번 = completed
+Copy-Item data_day3\*.csv data\ -Force
+dbt run -s fct_orders --full-refresh
 
-Copy-Item data\next\*.csv data\ -Force
-dbt run -s fct_orders                      # 증분
+# 다음 날 데이터로 바꾸고 증분 실행
+Copy-Item data_next\*.csv data\ -Force
+dbt run -s fct_orders
 dbt show --inline "select order_id, status, updated_at from {{ ref('fct_orders') }} where order_id in (3, 30, 40) order by order_id"</code></pre>
 <details class="hint"><summary>실제 결과 보기</summary>
 <pre><code>| order_id | status    |          updated_at |
@@ -928,14 +1182,22 @@ dbt show --inline "select order_id, status, updated_at from {{ ref('fct_orders')
 |       40 | completed | 2026-10-24 19:55:00 |</code></pre>
 <p>기준점은 3일차 데이터의 <code>max(updated_at)</code> = 10-19 10:13, 3일 빼면 10-16 10:13. 이후에 바뀐 원천 행은 16건(3번, 26~30번 UPDATE 6건 + 31~40번 INSERT 10건)이고, 그중에 3번이 들어 있습니다. 전체는 40행.</p>
 </details>
+<p>마지막 명령까지 치면 <code>data\</code>는 다시 "다음 날" 버전(주문 41줄)입니다. 10단계는 이 상태에서 합니다.</p>
 </div>
 
 <div class="step" data-id="wrap">
 <div class="step-title">10. 전체 빌드하고 커밋</div>
+<p><b>목표</b>: 오늘 만든 것 전부(모델·테스트·snapshot)를 한 번에 돌려 확인하고 git에 남깁니다. <code>data\</code>가 "다음 날" 버전인 상태에서 합니다.</p>
 <pre><code>dbt build</code></pre>
-<p>확인한 결과는 <code>Done. PASS=29 WARN=1 ERROR=0 ... TOTAL=30</code>입니다(3일차 28개 + snapshot 1 + <code>daily_sales_calendar</code> 1). snapshot도 <code>dbt build</code>에 포함되어 순서대로 돕니다(원천이 그대로라 18행 유지). <code>dim_customers</code>에서 5번 고객의 도시가 서울로, 2번 고객의 등급이 gold(주문 5건, lifetime_value 355,000원)로 보이는지 확인하고 커밋합니다. <code>dim_customers</code>는 <b>현재 상태</b>, <code>customers_snapshot</code>은 <b>이력</b>입니다.</p>
+<p><b>확인</b>: <code>Done. PASS=29 WARN=1 ERROR=0 ... TOTAL=30</code>입니다(3일차 28개 + snapshot 1 + <code>daily_sales_calendar</code> 1, 실제 확인). snapshot도 <code>dbt build</code>에 포함되어 순서대로 돕니다(원천이 그대로라 18행 유지). 이어서 <code>dim_customers</code>를 봅니다.</p>
+<pre><code>dbt show --inline "select customer_id, city, membership, order_count, lifetime_value from {{ ref('dim_customers') }} where customer_id in (2, 5, 16) order by 1"</code></pre>
+<p>2번 = <code>gold</code>(주문 5건, lifetime_value 355,000원), 5번 = 도시 <code>서울</code>, 16번 = <code>대구</code>(주문 0건)이면 됩니다(실제 확인). <code>dim_customers</code>는 <b>현재 상태</b>, <code>customers_snapshot</code>은 <b>이력</b>입니다.</p>
 <pre><code>git add .
 git commit -m "4일차: 매크로, dbt_utils, incremental fct_orders, customers snapshot"</code></pre>
+<p><code>data_day3\</code>, <code>data_next\</code>의 CSV도 같이 올라갑니다(작은 파일이라 괜찮습니다). 올리기 싫으면 <code>git add .</code> 전에 <code>.gitignore</code>에 두 폴더 이름을 한 줄씩 적습니다. 단 <code>data_day3\</code> 폴더 자체는 지우지 마세요(7일차에 씁니다).</p>
+<p><b>마무리</b>: 5일차는 <code>shop\data\raw_orders.csv</code>를 원본(30건)으로 가져다 씁니다. 커밋까지 했으면 원본으로 되돌려 둡니다(마트는 다시 만들 필요 없음).</p>
+<pre><code>Copy-Item data_day3\*.csv data\ -Force
+(Get-Content data\raw_orders.csv | Measure-Object -Line).Lines   # 31 이면 원본</code></pre>
 </div>
 
 </div>
@@ -943,14 +1205,19 @@ git commit -m "4일차: 매크로, dbt_utils, incremental fct_orders, customers 
 <div class="box warn">
 <span class="box-title">자주 막히는 곳</span>
 <ul>
+<li><code>dbt</code> 명령을 찾을 수 없다(<code>'dbt' 용어가 cmdlet ... 이름으로 인식되지 않습니다</code>) → 새 PowerShell 창이라 venv가 꺼져 있습니다. <code>cd $HOME\dbt-practice</code> → <code>.\.venv\Scripts\Activate.ps1</code> → <code>cd shop</code>.</li>
+<li><code>No dbt_project.yml found at expected path ...</code> → 지금 위치가 <code>shop</code> 폴더(또는 그 안)가 아닙니다. <code>cd $HOME\dbt-practice\shop</code>.</li>
 <li><code>Parser Error: syntax error at or near "from"</code> → 반복으로 만든 마지막 컬럼 뒤에 쉼표가 남았습니다. <code>target/compiled</code>를 열어 <code>, from</code>이 있는지 보세요. <code>loop.last</code>.</li>
+<li><code>dbt show</code>에서 <code>'pivot_sum' is undefined. This can happen when calling a macro that does not exist.</code> → 매크로 파일을 <code>macros\</code>가 아닌 곳(<code>models\</code>, <code>analyses\</code>)에 만들었거나, 이름이 <code>pivot_sum.sql.txt</code>로 저장됐습니다. (<code>dbt run</code>은 ephemeral 모델을 컴파일하지 않아서 이 오류 없이 끝납니다.) <code>Get-ChildItem macros</code>로 <code>macros\pivot_sum.sql</code>이 보이는지 확인하세요.</li>
 <li><code>'dbt_utils' is undefined</code> → <code>dbt deps</code>를 안 했거나, <code>packages.yml</code>을 <code>models/</code> 안에 만들었습니다. <code>dbt_project.yml</code>과 같은 폴더여야 합니다.</li>
 <li><code>dbt deps</code>가 실패 → hub.getdbt.com 접속이 막힌 네트워크(회사 프록시)일 수 있습니다. 집 네트워크에서 시도하거나 <code>HTTPS_PROXY</code> 환경 변수를 설정합니다.</li>
+<li><code>dbt run -s int_payments_pivoted</code>이 아무것도 안 만들고 끝남 → 정상입니다. intermediate는 ephemeral이라 DB에 안 생깁니다. <code>dbt show</code>로 확인합니다.</li>
 <li><code>must set on_schema_change to 'append_new_columns' or 'fail'</code> → contract가 걸린 incremental 모델입니다. config에 <code>on_schema_change='append_new_columns'</code>를 추가하세요.</li>
 <li><code>Constraint Error: Duplicate key "order_id: 33" violates primary key constraint</code> → <code>unique_key</code>를 빼먹었거나 <code>append</code> 전략을 썼습니다. 이미 있는 주문을 또 넣으려다 3일차의 primary_key 제약에 걸린 것입니다(직접 확인). <code>unique_key='order_id'</code> + <code>merge</code> 또는 <code>delete+insert</code>로.</li>
 <li><code>data type mismatch</code> (contract) → incremental로 바꾸면서 SELECT 컬럼을 바꿨다면 contract yml도 같이 맞춥니다.</li>
 <li>증분 실행했는데 바뀐 행이 반영이 안 됨 → 필터 컬럼(<code>order_date</code>?)과 기준점을 의심하세요. 한 번 놓친 건 <code>--full-refresh</code>로만 고쳐집니다.</li>
-<li>snapshot이 0행 변경 → 데이터를 바꿔 끼우기 <b>전에</b> 첫 snapshot을 돌렸는지 확인하세요. 바꾼 뒤에 처음 돌리면 이미 바뀐 상태가 "첫 버전"이 됩니다. 처음부터 다시 하려면 3일차 CSV로 되돌리고(<code>Copy-Item data\day3\*.csv data\ -Force</code>), snapshot 테이블을 지운 뒤(<code>python -c "import duckdb; duckdb.connect('shop.duckdb').sql('drop table main.customers_snapshot')"</code> — venv를 켠 상태, DuckDB 파일을 연 다른 프로그램은 닫고) 6단계부터 다시 합니다.</li>
+<li>7단계 ④의 줄 수가 17 / 41 / 43이 아님 → 내려받기 실패나 ③ 빠뜨림입니다. <code>Get-ChildItem data_next</code>로 파일 크기를 보고, 비정상이면 링크로 직접 저장한 뒤 ③부터 다시.</li>
+<li>snapshot이 0행 변경 → 데이터를 바꿔 끼우기 <b>전에</b> 첫 snapshot을 돌렸는지 확인하세요. 바꾼 뒤에 처음 돌리면 이미 바뀐 상태가 "첫 버전"이 됩니다. 처음부터 다시 하려면 (1) 3일차 CSV로 되돌리고 <code>Copy-Item data_day3\*.csv data\ -Force</code>, (2) snapshot 테이블을 지운 뒤 <code>python -c "import duckdb; duckdb.connect('shop.duckdb').sql('drop table main.customers_snapshot')"</code> (venv를 켠 상태, DuckDB 파일을 연 다른 프로그램은 닫고. <code>dev.duckdb</code>로 두었다면 그 이름), (3) 6단계 <code>dbt snapshot</code>(15행) → 7단계 ③ → 8-3 순서로 다시 합니다(실제 확인: 18행).</li>
 <li><code>'None' has no attribute 'columns'</code> → <code>run_query</code> 결과를 <code>{% if execute %}</code> 밖에서 썼습니다.</li>
 </ul>
 </div>

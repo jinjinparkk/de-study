@@ -17,7 +17,9 @@
 ## 5일차
 
 ```powershell
+docker info --format "{{.ServerVersion}}"   # 숫자가 나와야 함. 오류면 Docker Desktop 을 켜고 1분 뒤 다시
 mkdir $HOME\airflow-practice; cd $HOME\airflow-practice
+mkdir dags, data, output, logs
 # 이 폴더의 파일들을 받아 둔 뒤
 Copy-Item $HOME\dbt-practice\shop\data\raw_orders.csv .\data\
 docker compose up -d
@@ -27,9 +29,9 @@ docker compose logs -f airflow     # "Airflow is ready" 가 보이면 Ctrl+C
 ## 6일차
 
 ```powershell
-"SHOP_DIR=$($HOME -replace '\','/')/dbt-practice/shop" | Out-File .env -Encoding ascii
+"SHOP_DIR=$($HOME -replace '\\','/')/dbt-practice/shop" | Out-File .env -Encoding ascii
 docker compose -f docker-compose.yml -f docker-compose.dbt.yml up -d --build
 docker compose exec airflow airflow pools set duckdb 1 "DuckDB single writer"
 ```
 
-끄기: `docker compose stop` (기록 유지) / `docker compose down` (컨테이너 삭제, 실행 기록도 사라짐)
+끄기: `docker compose stop` (기록 유지) / `docker compose down` (컨테이너 삭제, 실행 기록도 사라짐). 메모리가 빠듯한 PC 이므로 실습이 끝나면 꼭 둘 중 하나를 하고 `docker ps` 로 확인.
