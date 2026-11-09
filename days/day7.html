@@ -455,6 +455,9 @@ AdaptiveSparkPlan isFinalPlan=false
 
 <div class="step" data-id="docker">
 <div class="step-title">1. 컨테이너 띄우고 Jupyter 열기</div>
+<div class="why">
+<p>Spark는 Java 위에서 돌고, Windows에 직접 깔면 Java 버전·<code>HADOOP_HOME</code>·<code>winutils.exe</code> 문제로 parquet 쓰기부터 막힙니다(작성 환경에서 실제로 막혔습니다. 맨 아래 "자주 막히는 곳" 참고). 그래서 <b>Spark·Java·Jupyter가 이미 맞춰 깔린 리눅스 상자(컨테이너)</b>를 통째로 빌려 씁니다. 프로시저로 치면 내 PC에 DB 서버를 설치하는 대신 "다 세팅된 개발용 DB 인스턴스를 하나 받는 것"입니다. 이 단계를 건너뛰면 2단계의 <code>import pyspark</code>부터 안 됩니다.</p>
+</div>
 <p><b>목표</b>: 내 PC 안에 Spark가 설치된 작은 리눅스 컴퓨터(컨테이너) <code>de-spark</code>를 띄우고, shop 폴더를 그 안에 연결한 뒤, 브라우저로 Jupyter 노트북 화면을 엽니다. Windows에 Java·Spark를 설치하지 않아도 됩니다.</p>
 <pre class="diagram">  내 PC (Windows)                                  컨테이너 de-spark (리눅스)
   ─────────────────────────────────────            ─────────────────────────────────
@@ -480,7 +483,7 @@ AdaptiveSparkPlan isFinalPlan=false
 <h3>1-1. Docker Desktop 켜고 확인</h3>
 <ol>
 <li>시작 메뉴에서 <b>Docker Desktop</b>을 실행합니다. 창 아래쪽에 엔진이 실행 중(Engine running)이라고 나올 때까지 1~2분 기다립니다.</li>
-<li>PowerShell을 새로 열고 확인합니다.
+<li>PowerShell을 새로 열고 확인합니다. <code>docker</code> 명령은 Docker Desktop 안의 엔진에게 일을 시키는 리모컨이라, 엔진이 꺼져 있으면 아래 모든 명령이 실패합니다. 그래서 엔진이 대답하는지부터 봅니다(DB 작업 전에 접속 테스트하는 것과 같음).
 <pre><code>docker info</code></pre>
 <code>Server:</code> 아래에 <code>Server Version</code>, <code>Containers</code> 같은 줄이 나오면 준비된 것입니다. 아래처럼 나오면 Docker Desktop이 아직 안 켜진 것이니 조금 더 기다렸다 다시 실행하세요(작성 환경에서 실제로 본 메시지입니다).
 <pre data-file="Docker Desktop이 꺼져 있을 때"><code>failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; ...
@@ -491,6 +494,15 @@ The system cannot find the file specified.</code></pre></li>
 <p>4일차와 6일차에 <code>shop\data</code>의 CSV를 "다음 날" 파일(주문 40행)로 덮어썼습니다. 이 페이지의 기대 결과(30·32·15행, 906,000원)는 <b>원래 파일</b> 기준이라 먼저 확인합니다.</p>
 <pre><code>cd $HOME\dbt-practice\shop
 (Get-Content data\raw_orders.csv | Measure-Object -Line).Lines   # 31 이면 원본(헤더+30행), 41 이면 다음 날 파일</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>Get-Content data\raw_orders.csv</td><td>파일을 줄 단위로 읽기 (<code>SELECT *</code>)</td></tr>
+<tr><td>|</td><td>파이프: 앞 결과를 다음 명령에 넘김 (서브쿼리 결과를 바깥 쿼리가 받는 느낌)</td></tr>
+<tr><td>Measure-Object -Line</td><td>줄 수 세기 (<code>count(*)</code>)</td></tr>
+<tr><td>( ... ).Lines</td><td>결과 중 줄 수 숫자만 꺼내기</td></tr>
+</table>
+</div>
 <p><code>41</code>이 나오면 4일차에 백업해 둔 원본으로 되돌립니다. 백업 폴더(<code>data_day3</code>)가 없다면 아래 두 번째 방법으로 다시 받습니다.</p>
 <pre><code># 방법 1: 4일차 백업에서 되돌리기
 Copy-Item data_day3\*.csv data\ -Force
@@ -505,6 +517,7 @@ foreach ($f in "raw_customers.csv","raw_orders.csv","raw_payments.csv") {
 <p>dbt 쪽 테이블은 다음에 <code>dbt run</code>을 할 때까지 그대로이니 걱정하지 않아도 됩니다. 나중에 다시 "다음 날" 상태로 하고 싶으면 <code>Copy-Item data\next\*.csv data\ -Force</code>.</p>
 
 <h3>1-3. 폴더 만들고 실습 스크립트 받기</h3>
+<p>코드(<code>spark\</code>)와 결과물(<code>out\</code>)을 처음부터 다른 폴더로 나눠 두는 이유: 코드는 git에 올리고, 결과물은 언제든 다시 만들 수 있어 올리지 않기 때문입니다(10단계). <code>mkdir</code>·<code>curl.exe</code>는 1일차와 같습니다.</p>
 <pre><code>cd $HOME\dbt-practice\shop
 mkdir spark, out -ErrorAction SilentlyContinue      # spark\ = 코드 둘 곳, out\ = parquet 결과 둘 곳
 curl.exe -sL https://jinjinparkk.github.io/de-study/practice/spark/shop_spark.py -o spark\shop_spark.py
@@ -512,8 +525,17 @@ Get-ChildItem data\*.csv, spark                     # CSV 3개와 shop_spark.py 
 <p><code>shop_spark.py</code>는 2~8단계 전체를 한 파일에 담은 "정답 스크립트"입니다(<a href="../practice/spark/shop_spark.py">보기</a>, 사용법은 <a href="../practice/spark/README.md">README</a>). 오늘은 노트북에서 한 셀씩 직접 쓰고, 막히면 이 파일과 비교하세요.</p>
 
 <h3>1-4. 포트가 비어 있는지 확인</h3>
+<p>포트는 PC의 "창구 번호"라 한 번호를 두 프로그램이 같이 못 씁니다. 이 PC는 8000·8001·8081·8083 등을 이미 쓰고 있어서, 미리 보지 않으면 1-5에서 <code>port is already allocated</code>로 실패합니다.</p>
 <pre><code>docker ps                                  # 이미 떠 있는 컨테이너 목록. de-spark 가 이미 있으면 1-5 대신 docker start de-spark
 netstat -ano | findstr ":8888 :4040"       # 아무것도 안 나오면 두 포트 모두 비어 있음</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>docker ps</td><td>지금 실행 중인 컨테이너 목록 (<code>ps</code> = process status). DB의 "현재 세션 목록 보기"와 비슷</td></tr>
+<tr><td>netstat -ano</td><td>이 PC에서 열려 있는 모든 포트와 그 프로그램 번호(PID) 목록</td></tr>
+<tr><td>| findstr ":8888 :4040"</td><td>그중 <code>:8888</code> 또는 <code>:4040</code>이 들어간 줄만 남기기 (<code>WHERE ... LIKE</code>). 공백으로 나눈 단어는 "또는"</td></tr>
+</table>
+</div>
 <p>무언가 나오면 그 포트는 다른 프로그램이 쓰는 중입니다. 1-5에서 앞쪽 숫자를 바꿉니다(예: <code>-p 8890:8888 -p 4041:4040</code>). 그러면 아래의 모든 주소도 <code>8890</code>, <code>4041</code>로 바꿔 읽으세요.</p>
 
 <h3>1-5. 컨테이너 띄우기</h3>
@@ -521,19 +543,35 @@ netstat -ano | findstr ":8888 :4040"       # 아무것도 안 나오면 두 포�
   -p 8888:8888 -p 4040:4040 `
   -v "${HOME}\dbt-practice\shop:/home/jovyan/work" `
   quay.io/jupyter/pyspark-notebook</code></pre>
-<p>줄 끝의 <code>`</code>(백틱, 키보드 숫자 1 왼쪽)는 "다음 줄에 이어짐"입니다. 백틱 뒤에 공백이 있으면 오류가 나니 한 줄로 이어 붙여 써도 됩니다. 각 부분의 뜻:</p>
-<ul>
-<li><code>-d</code>: 백그라운드로 실행(창을 점유하지 않음)</li>
-<li><code>--name de-spark</code>: 컨테이너 이름. 이후 모든 명령에서 이 이름을 씁니다</li>
-<li><code>-p 8888:8888</code>: <code>내PC포트:컨테이너포트</code>. 8888은 Jupyter, 4040은 Spark UI</li>
-<li><code>-v "내PC폴더:컨테이너폴더"</code>: 폴더 공유(마운트). 컨테이너를 지워도 shop 폴더에 쓴 결과는 남습니다</li>
-<li><code>quay.io/jupyter/pyspark-notebook</code>: 쓸 이미지. 내 PC에 없으면 이때 내려받습니다</li>
-</ul>
+<p>줄 끝의 <code>`</code>(백틱, 키보드 숫자 1 왼쪽)는 "다음 줄에 이어짐"입니다. 백틱 뒤에 공백이 있으면 오류가 나니 한 줄로 이어 붙여 써도 됩니다. 각 조각을 왜 붙이는지:</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>docker run</td><td>이미지(설치 CD 같은 원본)로 새 컨테이너를 만들고 바로 켜기. 이미지가 PC에 없으면 먼저 내려받음</td></tr>
+<tr><td>-d</td><td>detached: 백그라운드 실행. 안 붙이면 PowerShell 창이 로그에 묶여 다른 명령을 못 치고, 창을 닫으면 컨테이너도 꺼짐</td></tr>
+<tr><td>--name de-spark</td><td>컨테이너 이름표. 안 붙이면 <code>quirky_turing</code> 같은 무작위 이름이 붙어 <code>docker logs</code>·<code>stop</code> 때 매번 찾아야 함</td></tr>
+<tr><td>-p 8888:8888</td><td><code>내PC포트:컨테이너포트</code> 연결. 컨테이너는 따로 떨어진 컴퓨터라, 이 연결이 없으면 브라우저에서 Jupyter에 못 들어감</td></tr>
+<tr><td>-p 4040:4040</td><td>같은 방식으로 Spark UI(7단계) 연결</td></tr>
+<tr><td>-v "A:B"</td><td>volume: 내 PC 폴더 A를 컨테이너 폴더 B로 공유(마운트). 안 붙이면 CSV가 컨테이너에 안 보이고, 쓴 parquet·노트북은 컨테이너를 지울 때 같이 사라짐</td></tr>
+<tr><td>${HOME}</td><td>내 사용자 폴더. 중괄호는 뒤에 <code>\</code>가 붙어도 변수 이름이 어디서 끝나는지 분명히 하려고</td></tr>
+<tr><td>/home/jovyan/work</td><td>이 이미지의 기본 작업 폴더(<code>jovyan</code>은 Jupyter 이미지의 기본 사용자 이름). Jupyter 왼쪽 목록에 <code>work</code>로 보임</td></tr>
+<tr><td>quay.io/jupyter/pyspark-notebook</td><td>쓸 이미지 이름 = <code>저장소주소/조직/이미지</code>. Jupyter 공식 이미지는 Docker Hub가 아니라 quay.io에 올라옴. 태그를 안 적으면 <code>:latest</code></td></tr>
+</table>
+</div>
 <p>처음이면 <code>Unable to find image ... locally</code> 다음에 내려받기 진행 줄이 한참 나오고, 끝나면 긴 영숫자(컨테이너 ID) 한 줄이 출력됩니다. 확인:</p>
 <pre><code>docker ps --filter name=de-spark           # STATUS 가 Up ... 이면 실행 중</code></pre>
 
 <h3>1-6. 로그에서 접속 주소(토큰) 찾기</h3>
+<p><code>-d</code>로 띄웠으니 컨테이너가 화면에 뭘 출력했는지는 따로 꺼내 봐야 합니다. Jupyter는 아무나 코드를 실행하지 못하게 켤 때마다 <b>일회용 비밀번호(토큰)</b>를 만들어 로그에 찍어 두고, 그 토큰이 붙은 주소로만 들어가게 합니다.</p>
 <pre><code>docker logs de-spark</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>docker logs</td><td>컨테이너가 지금까지 화면에 출력한 내용 보기 (DB의 에러 로그 열람과 같음)</td></tr>
+<tr><td>de-spark</td><td>1-5에서 붙인 이름. <code>--name</code>을 붙인 이유가 여기서 나옴</td></tr>
+<tr><td>(참고) -f</td><td><code>docker logs -f de-spark</code>처럼 붙이면 새 로그를 계속 따라 보여 줌. Ctrl + C로 빠져나옴</td></tr>
+</table>
+</div>
 <p>맨 아래쪽에 아래와 비슷한 줄이 있습니다(형태 예시, 토큰 값은 매번 다름). 아직 없으면 10초쯤 뒤에 다시 실행하세요.</p>
 <pre data-file="docker logs de-spark — 형태 예시 (작성 환경에서 미검증)"><code>    To access the server, open this file in a browser:
         file:///home/jovyan/.local/share/jupyter/runtime/jpserver-7-open.html
@@ -543,6 +581,7 @@ netstat -ano | findstr ":8888 :4040"       # 아무것도 안 나오면 두 포�
 <p><b><code>http://127.0.0.1:8888/lab?token=...</code> 줄 전체</b>를 복사해 브라우저 주소창에 붙여 넣습니다. 앞의 <code>file:///...</code>이나 <code>(컨테이너ID)</code> 주소는 컨테이너 안에서만 통하는 주소라 Windows 브라우저에선 안 열립니다. 1-4에서 포트를 8890으로 바꿨다면 주소의 <code>8888</code>만 <code>8890</code>으로 고칩니다.</p>
 
 <h3>1-7. 노트북 만들기</h3>
+<p>노트북은 코드를 셀 단위로 나눠 실행하고 결과를 바로 아래에서 보는 도구입니다. SQL 편집기에서 쿼리 한 덩어리씩 블록 지정해 실행하는 것과 같아서, 처음 배우거나 데이터를 탐색할 때 편합니다.</p>
 <ol>
 <li>JupyterLab 화면 왼쪽 파일 목록에 <code>work</code> 폴더가 보입니다. 더블클릭 → <code>spark</code> 폴더 더블클릭. <code>shop_spark.py</code>가 보이면 마운트가 제대로 된 것입니다.</li>
 <li>오른쪽 Launcher 화면의 <b>Notebook</b> 줄에서 <b>Python 3 (ipykernel)</b>을 누릅니다. <code>Untitled.ipynb</code>가 생깁니다.</li>
@@ -551,11 +590,22 @@ netstat -ano | findstr ":8888 :4040"       # 아무것도 안 나오면 두 포�
 </ol>
 <details class="hint"><summary>work 폴더가 비어 있다면</summary>
 <p><code>-v</code> 경로가 틀렸습니다. <code>docker exec de-spark ls /home/jovyan/work</code>로 확인하고, 비어 있으면 <code>docker rm -f de-spark</code>로 지운 뒤 1-5를 다시 합니다(경로의 <code>${HOME}</code>, 따옴표, 콜론 위치 확인).</p>
+<p><code>docker exec 컨테이너 명령</code> = 떠 있는 컨테이너 안에서 명령 하나 실행, <code>ls</code> = 리눅스의 폴더 내용 보기(PowerShell의 <code>dir</code>), <code>rm -f</code> = 실행 중이어도 강제로 지우기.</p>
 </details>
+<div class="field">
+<ul>
+<li>회사에서 Spark를 노트북 PC에서 돌리는 일은 거의 없습니다. <b>Databricks, AWS EMR·Glue, GCP Dataproc</b> 같은 관리형 클러스터를 쓰고, 클러스터 생성·종료도 그 서비스가 해 줍니다. 오늘 컨테이너는 "그 클러스터를 내 PC에 한 대짜리로 줄여 놓은 연습장"입니다.</li>
+<li>다만 Docker 자체는 실무에서 매일 씁니다. 로컬에서 운영과 같은 버전(Spark·Python·라이브러리)을 맞추려고 팀이 정한 이미지를 쓰고, 이미지 태그는 <code>:latest</code> 대신 <code>pyspark-notebook:spark-4.0.x</code>처럼 <b>버전을 고정</b>해서 "어제와 오늘 결과가 다른" 일을 막습니다.</li>
+<li>Jupyter 토큰처럼 접속 비밀값은 로그·채팅·git에 남기지 않습니다. 회사 노트북 서비스(Databricks 노트북, Vertex AI Workbench 등)는 회사 계정 로그인(SSO)으로 대신합니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="session">
 <div class="step-title">2. SparkSession 만들고 CSV 읽기</div>
+<div class="why">
+<p>Spark에 일을 시키려면 먼저 <b>세션(SparkSession)</b>이 있어야 합니다. DB 클라이언트에서 쿼리 전에 "접속"부터 하는 것과 같고, 이게 없으면 <code>spark.read</code>·<code>spark.sql</code> 전부 <code>NameError</code>입니다. 그다음 CSV를 DataFrame으로 정의하는데, DataFrame은 <b>테이블(정확히는 뷰)</b>입니다. 파일 위에 외부 테이블을 거는 것처럼, 이 시점엔 데이터를 옮기지 않고 "어디 있는 무슨 모양의 데이터"인지만 적어 둡니다. 행 수를 세는 건 1~2일차 dbt 결과와 같은 원본인지 처음부터 맞춰 보려는 것입니다. 여기가 틀리면 뒤의 숫자가 전부 어긋납니다.</p>
+</div>
 <p><b>목표</b>: Spark에 "접속"하고, CSV 세 개를 테이블처럼 정의한 뒤 행 수를 셉니다. SQL로 치면 아래 세 줄입니다.</p>
 <pre class="diagram">  SQL 감각                                   PySpark (노트북 셀)
   ─────────────────────────────────────      ───────────────────────────────────────────
@@ -575,6 +625,19 @@ spark = (SparkSession.builder                 # "접속 설정을 시작합니�
          .getOrCreate())                      # 이미 접속돼 있으면 그걸 쓰고, 없으면 새로 접속
 
 print(spark.version)                          # Spark 버전 문자열 (예: 4.0.x, 이미지 시기에 따라 다름)</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>from pyspark.sql import SparkSession</td><td>pyspark 패키지에서 SparkSession 이라는 도구를 꺼내 옴. 이미지에 이미 깔려 있어 pip 설치가 필요 없음</td></tr>
+<tr><td>functions as F</td><td>SQL 함수 모음. <code>F.lower</code>처럼 앞에 <code>F.</code>을 붙이는 관례라 파이썬 내장 <code>sum</code>·<code>max</code>와 이름이 안 부딪힘</td></tr>
+<tr><td>SparkSession.builder</td><td>접속 설정서를 쓰기 시작 (접속 문자열 조립)</td></tr>
+<tr><td>.appName("shop_spark")</td><td>작업 이름. Spark UI·클러스터 작업 목록에서 내 잡을 찾는 이름표 (DB 세션의 application_name)</td></tr>
+<tr><td>.master("local[*]")</td><td>어디서 돌릴지. <code>local</code> = 이 컴퓨터 한 대, <code>[*]</code> = CPU 코어 전부. 클러스터면 여기에 YARN·k8s 주소가 들어감</td></tr>
+<tr><td>.config("spark.sql.shuffle.partitions", "8")</td><td>셔플(GROUP BY·JOIN 때 데이터 재배치) 후 몇 조각으로 나눌지. 기본 200은 30행에 조각만 많아 오히려 느림. 5단계 explain의 숫자 8이 이것</td></tr>
+<tr><td>.getOrCreate()</td><td>같은 커널에 세션이 이미 있으면 재사용, 없으면 새로 만들기. 셀을 두 번 실행해도 세션이 두 개 안 생기게 하는 안전장치</td></tr>
+<tr><td>spark = ( ... )</td><td>만든 세션을 변수 <code>spark</code>에 담음. 이후 모든 셀이 이 이름을 씀</td></tr>
+</table>
+</div>
 <p><b>왜 이렇게 쓰나요?</b> <code>( ... )</code> 괄호로 감싸면 파이썬에서 여러 줄을 한 문장으로 이어 쓸 수 있고, <code>.설정()</code>을 점으로 계속 이어 붙이는 방식(메서드 체인)은 SQL에서 절을 위에서 아래로 쌓는 것과 같습니다. 첫 실행은 Java를 띄우느라 10~30초 걸립니다. 버전 숫자가 출력되면 성공이고, 이 순간부터 <code>http://localhost:4040</code>(Spark UI)도 열립니다.</p>
 
 <h3>2-2. 셀 2: CSV 세 개 정의하고 세기</h3>
@@ -591,7 +654,18 @@ customers_raw = spark.read.csv(f"{DATA}/____.csv", header=True,
 
 orders_raw.printSchema()                      # DESCRIBE 와 같음 (파일을 읽지 않음)
 print(orders_raw.count(), payments_raw.count(), customers_raw.count())  # count() = 액션 → 이때 실제로 읽음</code></pre>
-<p><code>f"{DATA}/raw_orders.csv"</code>의 <code>f"..."</code>는 문자열 안의 <code>{DATA}</code>를 변수 값으로 바꿔 넣는 문법입니다(dbt의 <code>{{ var }}</code>와 비슷한 느낌).</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>spark.read.csv(경로, ...)</td><td>CSV 파일을 DataFrame으로 정의 = <code>CREATE EXTERNAL TABLE ... OPTIONS (format='CSV', uris=[...])</code>. 아직 읽지 않음(transformation과 같은 지연)</td></tr>
+<tr><td>f"{DATA}/raw_orders.csv"</td><td>f-문자열. <code>{DATA}</code> 자리에 변수 값을 끼워 넣음 (dbt의 <code>{{ var }}</code> 느낌)</td></tr>
+<tr><td>header=True</td><td>첫 줄은 데이터가 아니라 컬럼 이름. 빠뜨리면 <code>order_id</code>라는 글자가 데이터 1행으로 들어가고 컬럼 이름은 <code>_c0, _c1</code>…이 됨</td></tr>
+<tr><td>schema="order_id INT, ..."</td><td>컬럼 이름과 타입을 직접 지정 = <code>CREATE TABLE</code>의 컬럼 정의. 안 주면 전부 STRING</td></tr>
+<tr><td>(대안) inferSchema=True</td><td>schema 대신 "파일을 한 번 훑어 타입을 추측해 줘". 편하지만 <b>추측하려고 파일을 한 번 더 읽고</b>, 날짜가 STRING으로 잡히는 등 결과가 데이터에 따라 바뀜. 탐색용은 OK, 운영 잡은 schema를 적는 게 원칙</td></tr>
+<tr><td>.printSchema()</td><td>컬럼·타입 트리 출력 = <code>DESCRIBE raw_orders</code>. 정의만 보므로 파일을 안 읽음</td></tr>
+<tr><td>.count()</td><td>행 수 = <code>SELECT count(*)</code>. <b>action</b>이라 이 순간 실제로 파일을 읽음</td></tr>
+</table>
+</div>
 <details class="hint"><summary>힌트 1</summary>
 <p>파일 이름은 확장자 앞까지, orders 줄과 같은 모양입니다. 텍스트 컬럼 타입은 <code>STRING</code>, 날짜+시각은 <code>TIMESTAMP</code>.</p>
 </details>
@@ -612,10 +686,20 @@ print(orders_raw.count(), payments_raw.count(), customers_raw.count())  # count(
 
 30 32 15</pre>
 <p><code>40 42 16</code>이 나오면 1-2의 원본 되돌리기를 빼먹은 것입니다. 그리고 <code>spark.read.csv(...)</code> 줄은 바로 끝나고 <code>count()</code>에서야 시간이 걸리는 걸 느껴 보세요. 그게 지연 실행입니다. 내용을 눈으로 보고 싶으면 새 셀에 <code>orders_raw.show(5)</code>(= <code>SELECT * ... LIMIT 5</code>)를 실행합니다.</p>
+<div class="field">
+<ul>
+<li>SparkSession은 플랫폼이 만들어 줍니다. Databricks 노트북·잡에는 <code>spark</code>가 이미 들어 있고, <code>spark-submit</code>으로 낸 잡에서도 <code>getOrCreate()</code>가 클러스터 쪽 설정을 그대로 받아 씁니다. 그래서 운영 코드에는 <code>.master("local[*]")</code>를 <b>적지 않습니다</b>(적으면 클러스터에서도 한 대로만 돔). master·메모리 같은 값은 제출할 때 옵션으로 넘깁니다.</li>
+<li>원본은 PC 폴더가 아니라 레이크 버킷(<code>gs://...</code>, <code>s3://...</code>)에 있고, 경로만 바뀝니다. 운영 잡은 <b>schema를 명시</b>하고(<code>inferSchema</code>는 전체 파일을 한 번 더 훑어 TB 단위면 비용이 큼), 원본이 CSV보다는 JSON·parquet인 경우가 많습니다.</li>
+<li><code>spark.sql.shuffle.partitions</code>는 실무에서 자주 만지는 설정입니다. 데이터 크기에 맞춰 조정하거나, AQE(기본 켜짐)가 실행 중에 조각 수를 합치게 둡니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="dataframe">
 <div class="step-title">3. 직접 해보기: DataFrame API로 stg → fct_orders → daily_sales</div>
+<div class="why">
+<p>이미 아는 SQL 모델을 Spark로 똑같이 만들어 보면 <b>"엔진만 바뀌고 로직은 같다"</b>는 걸 손으로 확인할 수 있습니다. 답(12행, 14건, 906,000원)을 알고 있으니 틀렸는지도 바로 압니다. DataFrame API(파이썬 메서드)를 먼저 익히는 이유는 회사 Spark 코드 대부분이 이 모양이라 읽을 수 있어야 하기 때문입니다. 대응은 이렇게 잡으세요: <b>DataFrame 변수 = 뷰</b>, <b>select·where·groupBy·join 같은 transformation = 뷰 정의(CTE)</b>, <b>show·count 같은 action = 실제로 SELECT 실행</b>.</p>
+</div>
 <p><b>목표</b>: 1~2일차에 SQL 파일로 만든 dbt 모델 네 개를 <b>DataFrame 변수 네 개</b>로 옮깁니다. 파일 하나 = 변수 하나라고 생각하면 됩니다.</p>
 <pre class="diagram">  dbt 모델 (SQL 파일)       →  이 셀에서 만들 변수        기대 행 수
   ───────────────────────────────────────────────────────────────────
@@ -642,6 +726,21 @@ print(orders_raw.count(), payments_raw.count(), customers_raw.count())  # count(
 </table>
 </div>
 <p>변수에 대입하는 순간에는 아무것도 계산하지 않습니다. <code>stg_orders = ...</code>는 <b>뷰(또는 CTE)를 정의하는 것</b>과 같고, 마지막 <code>.show()</code>(액션)에서 네 단계가 한 번에 계산됩니다.</p>
+<p>위 표에 없는 조각과, 각 조각이 왜 그 모양인지:</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>F.lower(F.trim("status"))</td><td>안쪽부터: 앞뒤 공백 제거 → 소문자. <code>' shipped'</code>·<code>'COMPLETED'</code>를 정리하는 1일차 staging 규칙. 빠뜨리면 7·12번 주문이 집계에서 빠져 숫자가 달라짐</td></tr>
+<tr><td>.alias("status")</td><td><code>AS status</code>. 안 붙이면 컬럼 이름이 <code>lower(trim(status))</code>가 되어 뒤의 <code>F.col("status")</code>가 못 찾음</td></tr>
+<tr><td>F.col("status") == "completed"</td><td>컬럼 객체와 값 비교 = <code>status = 'completed'</code>. <code>=</code> 하나는 파이썬에서 대입이라 오류</td></tr>
+<tr><td>.where(...) / .filter(...)</td><td>둘은 완전히 같은 함수(이름만 둘). SQL 습관대로 <code>where</code>를 쓰면 됨</td></tr>
+<tr><td>.groupBy("k").agg(...)</td><td><code>GROUP BY k</code> + SELECT 절 집계. Spark에선 같은 키 행을 한 곳으로 모으느라 <b>셔플</b>이 일어남(5단계에서 확인)</td></tr>
+<tr><td>F.sum / F.count("*")</td><td><code>sum()</code> / <code>count(*)</code>. 결제 분할(5·18번)을 주문당 1행으로 합치는 게 sum의 역할</td></tr>
+<tr><td>a.join(b, on="k", how="left")</td><td><code>a LEFT JOIN b USING (k)</code>. <code>how</code>를 빼면 inner가 되어 결제 없는 주문이 사라짐. 조인도 보통 셔플을 부르지만 작은 표면 브로드캐스트(5단계)</td></tr>
+<tr><td>( ... ) 줄바꿈</td><td>괄호로 감싸야 메서드 체인을 여러 줄로 나눠 쓸 수 있음</td></tr>
+<tr><td>.show()</td><td>action: 상위 20행 출력. 여기서 위 네 변수가 한꺼번에 계산됨</td></tr>
+</table>
+</div>
 
 <h3>3-1. 셀 3: 빈칸 채우기</h3>
 <p>새 셀에 아래를 옮겨 쓰고 <code>____</code>를 채운 뒤 Shift + Enter.</p>
@@ -730,10 +829,21 @@ daily_sales_df.agg(F.sum("orders"), F.sum("revenue")).show()  # select sum(order
 |         14|      906000|
 +-----------+------------+</pre>
 <p>1일차 dbt <code>daily_sales</code>의 기대 결과(12행, 14건, 906,000원)와 같은 숫자입니다. <code>.where("order_id in (5, 18)")</code>처럼 <code>where</code>에는 SQL 조건 문자열을 그대로 넣어도 됩니다.</p>
+<p>중간 단계 행 수를 굳이 세는 이유: 조인에서 행이 늘거나(1:N 조인 실수) 줄면(inner로 잘못 씀) 최종 합계만 봐서는 원인을 못 찾습니다. dbt 3일차의 <code>unique</code>·<code>not_null</code> 테스트를 손으로 하는 셈입니다.</p>
+<div class="field">
+<ul>
+<li>탐색은 노트북에서 하고, 운영 로직은 <b><code>.py</code> 파일로 옮겨 git에 올립니다</b>(오늘의 <code>shop_spark.py</code>가 그 모양). 노트북은 실행 순서에 따라 결과가 바뀌고 코드 리뷰가 어려워서 운영 잡으로 직접 돌리지 않는 팀이 많습니다(Databricks는 노트북을 잡으로 돌리기도 하지만 그때도 git 연동이 기본).</li>
+<li>변환은 <code>def build_fct_orders(orders, payments): return ...</code>처럼 <b>DataFrame을 받아 DataFrame을 돌려주는 함수</b>로 쪼개고, 작은 가짜 데이터로 pytest 단위 테스트를 붙입니다. dbt 모델 하나 = 함수 하나 감각입니다.</li>
+<li>다만 마케팅 AE 업무에서 이런 집계는 대부분 <b>BigQuery SQL + dbt</b>로 끝납니다. Spark로 같은 걸 짜는 건 데이터가 웨어하우스 밖(레이크의 대용량 로그·JSON)에 있거나 너무 커서 웨어하우스 비용이 감당 안 될 때입니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="sql">
 <div class="step-title">4. 같은 것을 Spark SQL로 + 두 결과 비교</div>
+<div class="why">
+<p>SQL이 손에 익은 사람에게 가장 빠른 Spark 입문은 "SQL을 그대로 던지는 것"입니다. 그런데 정말 SQL로 써도 되는지(결과·성능이 같은지) 확인하지 않으면 계속 불안합니다. 그래서 같은 집계를 SQL로 다시 쓰고 <b>결과 차이를 0행으로</b>, <b>실행 계획까지 같음</b>을 확인합니다. 프로시저 시절에 리팩터링한 쿼리를 옛 쿼리와 <code>EXCEPT</code>로 대조하던 바로 그 검증입니다.</p>
+</div>
 <p><b>목표</b>: 같은 집계를 이번엔 <b>SQL 문자열</b>로 써서, 3단계 결과와 한 행도 다르지 않은지 확인합니다. DataFrame을 임시 뷰로 등록하면 dbt 모델 SQL을 거의 그대로 붙여 넣을 수 있습니다.</p>
 <pre class="diagram">  orders_raw   ──createOrReplaceTempView──▶ 뷰 raw_orders   ┐
   payments_raw ──createOrReplaceTempView──▶ 뷰 raw_payments ┴─ spark.sql("with ... select ...") ─▶ daily_sales_sql
@@ -764,7 +874,17 @@ daily_sales_sql.show()                                # 3단계와 같은 12행�
 diff = (daily_sales_df.exceptAll(daily_sales_sql).count()
         + daily_sales_sql.exceptAll(daily_sales_df).count())
 print("차이 행 수:", diff)</code></pre>
-<p><b>왜 이렇게 쓰나요?</b> <code>"""</code>(따옴표 세 개)는 파이썬에서 <b>여러 줄 문자열</b>입니다. 그 안의 SQL을 Spark가 읽어 DataFrame으로 바꿉니다. <code>exceptAll</code> = SQL의 <code>EXCEPT ALL</code>, <code>+</code>는 그냥 숫자 더하기입니다.</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>df.createOrReplaceTempView("raw_orders")</td><td>DataFrame에 SQL용 이름을 붙임 = <code>CREATE OR REPLACE TEMP VIEW</code>. 안 하면 SQL 문자열 안에서 <code>raw_orders</code>를 못 찾음(<code>TABLE_OR_VIEW_NOT_FOUND</code>). 이 세션이 끝나면 사라짐</td></tr>
+<tr><td>spark.sql("""...""")</td><td>SQL 문자열을 실행 계획으로 바꿔 <b>DataFrame으로 돌려줌</b>. 이것도 transformation이라 아직 실행 안 됨</td></tr>
+<tr><td>"""</td><td>파이썬 여러 줄 문자열. SQL을 줄바꿈 그대로 붙여 넣으려고</td></tr>
+<tr><td>a.exceptAll(b)</td><td><code>a EXCEPT ALL b</code>: a에만 있는 행(중복 개수까지 비교)</td></tr>
+<tr><td>.count() + .count()</td><td>양방향 차이 행 수를 더함. 0이면 두 결과가 완전히 같음</td></tr>
+<tr><td>.explain()</td><td>실행 계획 출력 = BigQuery의 실행 세부정보, 다른 DB의 <code>EXPLAIN</code>. 실제로 돌리지 않고 계획만 보여 줌</td></tr>
+</table>
+</div>
 <p><b>확인</b>: <code>show()</code>가 3단계와 같은 12행이고, 마지막 줄이 <code>차이 행 수: 0</code>이면 성공입니다(실제로 0이 나왔습니다). 이제 두 실행 계획을 비교합니다.</p>
 <pre><code>daily_sales_df.explain()
 daily_sales_sql.explain()</code></pre>
@@ -772,10 +892,20 @@ daily_sales_sql.explain()</code></pre>
 <details class="hint"><summary>더 해보기 (선택)</summary>
 <p>임시 뷰는 바로 질의할 수 있습니다. 완료 주문 수를 SQL로 세어 보세요: <code>spark.sql("select count(*) as completed from raw_orders where lower(trim(status)) = 'completed'").show()</code> → 실제 출력 <code>14</code>. 3단계 합계와 같습니다.</p>
 </details>
+<div class="field">
+<ul>
+<li>팀마다 취향이 갈립니다. SQL 중심 팀은 Spark SQL(또는 Databricks SQL)과 <b>dbt-spark·dbt-databricks</b> 어댑터로 dbt 모델을 Spark 위에서 그대로 돌리고, 엔지니어 중심 팀은 DataFrame API로 씁니다. 같은 옵티마이저라 성능 차이가 아니라 <b>읽기·테스트·재사용 편의</b>로 고릅니다.</li>
+<li>섞어 쓰는 것도 흔합니다. 복잡한 집계는 <code>spark.sql</code>로, 파일 읽기·쓰기·반복되는 컬럼 처리(for 문으로 컬럼 50개 정리 등)는 DataFrame API로.</li>
+<li>로직을 옮기거나 리팩터링할 때 <code>exceptAll</code> 양방향 비교는 실제로 쓰는 검증법입니다. dbt 쪽에선 <code>audit_helper</code> 패키지가 같은 일을 합니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="explain">
 <div class="step-title">5. 직접 해보기: explain() 에서 셔플과 조인 찾기</div>
+<div class="why">
+<p>Spark 잡이 느리거나 비쌀 때 원인은 거의 항상 <b>셔플(GROUP BY·JOIN 때 같은 키 행을 한 곳으로 모으려고 네트워크로 데이터를 재배치하는 것)</b>과 <b>조인 방식</b>에 있습니다. 그걸 보는 창이 <code>explain()</code>, 즉 실행 계획입니다. 프로시저 튜닝할 때 실행 계획에서 Full Scan·Hash Join을 찾던 것과 같은 일입니다. 30행에선 느려질 일이 없지만, 계획 모양은 30행이든 30억 행이든 같아서 지금 읽는 법을 익혀 두는 것입니다. 이걸 못 읽으면 실무에서 "왜 느려요?"에 답할 방법이 없습니다.</p>
+</div>
 <p><b>목표</b>: <code>daily_sales_df.explain()</code> 출력에서 <b>셔플이 어디서 몇 번 일어나는지</b>, <b>조인을 어떤 방식으로 했는지</b> 읽어 냅니다. 위 <a href="#explain">explain 읽는 법</a>의 표를 옆에 두세요.</p>
 <p><b>읽는 법</b>: 맨 <b>아래(파일 읽기)에서 위(최종 결과)로</b> 읽습니다. <code>+-</code>는 "이 아래 것을 받아서", <code>:-</code>로 갈라진 곳은 조인의 왼쪽·오른쪽 입력입니다. 아래는 실제 출력에서 경로와 긴 꼬리만 줄인 것입니다.</p>
 <pre data-file="daily_sales_df.explain() — 실제 출력 (줄임)">== Physical Plan ==
@@ -816,10 +946,19 @@ AdaptiveSparkPlan isFinalPlan=false
 </ol>
 </details>
 <h3>5-1. 브로드캐스트를 끄면?</h3>
-<p>새 셀에서 브로드캐스트를 끄고 조인 방식이 바뀌는 걸 확인합니다. 마지막 줄로 원래 값을 꼭 되돌려 두세요.</p>
+<p>새 셀에서 브로드캐스트를 끄고 조인 방식이 바뀌는 걸 확인합니다. 왜 굳이 끄냐면, 실무의 큰 표끼리 조인이 바로 이 모양(양쪽 셔플 + 정렬)이라 작은 데이터로 미리 봐 두려는 것입니다. 마지막 줄로 원래 값을 꼭 되돌려 두세요. 안 되돌리면 뒤 단계의 계획이 이 페이지와 달라집니다.</p>
 <pre data-file="셀 6"><code>spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")   # 브로드캐스트 끄기 (-1 = 사용 안 함)
 stg_orders.join(stg_payments, "order_id", "left").explain()      # SortMergeJoin 이 보여야 함
 spark.conf.set("spark.sql.autoBroadcastJoinThreshold", str(10 * 1024 * 1024))  # 원래대로 10MB</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>spark.conf.set(키, 값)</td><td>지금 세션의 설정 바꾸기 (DB에서 <code>SET</code> 문으로 세션 옵션을 바꾸는 것과 같음). 세션이 끝나면 원래대로</td></tr>
+<tr><td>spark.sql.autoBroadcastJoinThreshold</td><td>"이 크기(바이트)보다 작은 표는 통째로 복사해 조인". <code>-1</code> = 사용 안 함</td></tr>
+<tr><td>str(10 * 1024 * 1024)</td><td>10MB를 바이트로 계산해 문자열로. 설정 값은 문자열로 넘김</td></tr>
+<tr><td>join(b, "order_id", "left")</td><td><code>on=</code>, <code>how=</code> 이름을 생략하고 순서대로 넘긴 것. 3단계와 같은 뜻</td></tr>
+</table>
+</div>
 <pre data-file="실제 출력 (줄임)">AdaptiveSparkPlan isFinalPlan=false
 +- Project [order_id#0, customer_id#1, order_date#2, status#42, amount#44L]
    +- SortMergeJoin [order_id#0], [order_id#6], LeftOuter
@@ -832,10 +971,20 @@ spark.conf.set("spark.sql.autoBroadcastJoinThreshold", str(10 * 1024 * 1024))  #
             +- Exchange hashpartitioning(order_id#6, 8), ENSURE_REQUIREMENTS, [plan_id=..]
                ...</pre>
 <p><b>찾을 것</b>: <code>BroadcastHashJoin</code> → <code>SortMergeJoin</code>으로 바뀌었고, 이번엔 <b>orders 쪽에도</b> <code>Exchange hashpartitioning(order_id#0, 8)</code>이 생겼습니다. 큰 표끼리 조인하면 양쪽을 다 키 기준으로 섞고(셔플) 정렬(<code>Sort</code>)한다는 뜻입니다.</p>
+<div class="field">
+<ul>
+<li>느린 잡을 맡으면 순서는 보통 이렇습니다: Spark UI(7단계)에서 오래 걸린 Stage 찾기 → 그 쿼리의 계획에서 <code>Exchange</code>·<code>SortMergeJoin</code> 확인 → 줄일 수 있는 셔플 줄이기.</li>
+<li>가장 흔한 처방은 <b>작은 차원 표(매체·캠페인·고객 등급 같은 dim) 브로드캐스트</b>입니다. 자동 판단이 안 맞으면 <code>F.broadcast(dim_df)</code>로 직접 힌트를 주거나(SQL은 <code>/*+ BROADCAST(d) */</code>) 임계값을 올립니다. 반대로 브로드캐스트 표가 너무 크면 드라이버 메모리가 터지니 무작정 올리지는 않습니다.</li>
+<li>조인 전에 필요한 컬럼만 고르고 행을 먼저 거르기(이번에 옵티마이저가 해 준 pushdown)를 코드에서도 의식적으로 합니다. 한 키에 데이터가 몰린 스큐는 AQE의 스큐 조인 처리(<code>spark.sql.adaptive.skewJoin.enabled</code>, 기본 켜짐)에 먼저 맡깁니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="partitions">
 <div class="step-title">6. 파티션 수 보기: repartition vs coalesce</div>
+<div class="why">
+<p>Spark의 파티션은 <b>메모리 위의 데이터 조각</b>입니다. 조각 하나를 코어 하나가 맡으니, 조각 수 = 동시에 일할 수 있는 일꾼 수의 상한입니다. 너무 적으면 코어가 놀고, 너무 많으면 조각 관리 비용과 작은 파일이 늘어납니다. 파티션 테이블의 파티션이 "디스크에 나눠 둔 것"이라면 이건 "계산하려고 나눠 든 것"이고, 8단계에서 둘이 만납니다(메모리 조각 수가 곧 파일 수가 됨). 조각 수를 바꾸는 두 방법 중 하나는 셔플을 부르고 하나는 안 부르는데, 이걸 모르면 "파일 수 좀 줄이려다" 큰 셔플을 일으키게 됩니다.</p>
+</div>
 <p><b>목표</b>: 데이터가 지금 몇 조각(파티션)으로 나뉘어 있는지 보고, 조각 수를 바꾸는 두 방법의 차이(셔플이 있나 없나)를 확인합니다.</p>
 <pre class="diagram">  fct_orders (1조각, 30행)
        │ repartition(4, "order_date")   = 날짜 해시로 4조각에 다시 나눠 담기 → 셔플 O
@@ -852,7 +1001,16 @@ print("coalesce(1):", co1.rdd.getNumPartitions())
 
 # 파티션마다 몇 행? = SELECT partition_id, count(*) ... GROUP BY partition_id
 re4.groupBy(F.spark_partition_id().alias("partition")).count().orderBy("partition").show()</code></pre>
-<p><code>.rdd.getNumPartitions()</code>는 "조각 수 알려줘"라는 주문처럼 외워 두면 됩니다. <code>F.spark_partition_id()</code>는 각 행이 들어 있는 조각 번호를 돌려주는 함수입니다.</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>df.rdd</td><td>DataFrame 아래에 깔린 저수준 표현(RDD). 평소엔 안 쓰지만 조각 수를 물어볼 때 거쳐 감</td></tr>
+<tr><td>.getNumPartitions()</td><td>지금 몇 조각인지 숫자로. "조각 수 알려줘"라는 주문처럼 외워 두면 됨. 이 질문 자체는 계산을 거의 안 함</td></tr>
+<tr><td>.repartition(4, "order_date")</td><td>order_date 해시로 <b>4조각에 다시 나눠 담기</b>. 같은 날짜는 같은 조각. 행을 옮기므로 셔플 O. 조각 수를 늘리거나 키 기준으로 모을 때</td></tr>
+<tr><td>.coalesce(1)</td><td>이웃 조각끼리 <b>합치기만</b>. 셔플 X라 싸지만 줄이기만 가능하고 크기가 고르지 않을 수 있음. 이름은 SQL의 <code>COALESCE()</code> 함수와 상관없음</td></tr>
+<tr><td>F.spark_partition_id()</td><td>각 행이 들어 있는 조각 번호를 돌려주는 함수. 조각별 행 수를 세 스큐를 확인하려고</td></tr>
+</table>
+</div>
 <pre data-file="실제 출력">fct_orders 파티션 수: 1
 repartition(4, order_date): 4
 coalesce(1): 1
@@ -878,10 +1036,20 @@ AdaptiveSparkPlan isFinalPlan=false
    +- Exchange hashpartitioning(order_date#2, 4), REPARTITION_BY_NUM, [plan_id=..]
       +- Project [...]</pre>
 <p><code>coalesce</code>는 <code>Exchange</code>를 새로 만들지 않고 <code>Coalesce 1</code>만 붙입니다. 그래서 "줄이기만 할 땐 coalesce, 다시 고르게 나눌 땐 repartition"입니다.</p>
+<div class="field">
+<ul>
+<li>파티션 수를 손으로 정하는 건 대부분 <b>쓰기 직전</b>입니다. 결과 파일이 수천 개로 쪼개지지 않게 <code>repartition(날짜)</code>나 <code>coalesce(n)</code>을 붙이는데, 목표는 보통 "파일 하나가 수백 MB~1GB 안팎"입니다. 레이크에서 작은 파일이 많으면 읽는 쪽(웨어하우스 외부 테이블, 다음 Spark 잡)이 모두 느려집니다.</li>
+<li><code>coalesce(1)</code>로 파일 하나 만들기는 작은 결과(리포트 추출 등)에만 씁니다. 큰 데이터에 쓰면 코어 하나가 전부 처리해 잡이 몇 시간짜리가 됩니다.</li>
+<li>셔플 뒤 조각 수는 <code>spark.sql.shuffle.partitions</code>와 AQE의 자동 합치기에 맡기고, 스큐가 의심되면 오늘처럼 <code>spark_partition_id()</code>별 행 수나 Spark UI의 태스크 시간 분포를 봅니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="ui">
 <div class="step-title">7. Spark UI(4040)에서 셔플 눈으로 보기</div>
+<div class="why">
+<p><code>explain()</code>은 "이렇게 하겠다"는 <b>예상 계획</b>이고, Spark UI는 "실제로 이렇게 했다"는 <b>실행 기록</b>입니다(SQL로 치면 EXPLAIN과 실행 후 쿼리 통계·작업 기록의 차이). 액션 하나가 Job·Stage로 어떻게 쪼개졌는지, 셔플이 실제로 몇 바이트였는지, AQE가 실행 중에 계획을 바꿨는지는 여기서만 보입니다. 실무에서 잡이 느리다는 연락을 받으면 가장 먼저 여는 화면이라 탭 위치를 익혀 둡니다.</p>
+</div>
 <p><b>목표</b>: 지금까지 실행한 액션들이 Spark 안에서 어떻게 Job·Stage로 나뉘어 돌았는지, 셔플이 몇 바이트였는지 화면으로 봅니다. 노트북의 SparkSession이 살아 있는 동안(셀 1을 실행한 뒤, 커널을 끄기 전)만 열립니다.</p>
 <p>브라우저 새 탭에서 <code>http://localhost:4040</code>을 엽니다(1-4에서 포트를 바꿨다면 <code>4041</code>). 위쪽에 탭이 여섯 개 있습니다: <b>Jobs · Stages · Storage · Environment · Executors · SQL / DataFrame</b>(작성 환경 Spark 4.0.5에서 확인).</p>
 <ol>
@@ -893,11 +1061,32 @@ AdaptiveSparkPlan isFinalPlan=false
 <li><b>Executors</b> 탭: <code>driver</code> 한 줄만 있습니다. local 모드는 드라이버가 익스큐터 역할까지 혼자 한다는 뜻입니다.</li>
 </ol>
 <p>스크립트(<code>spark-submit</code>)로 실행할 때는 끝나면 UI도 닫힙니다. 보고 싶다면 <code>KEEP_UI=1</code>로 실행해 Enter를 누르기 전까지 열어 둡니다(README 참고). 단, 노트북의 SparkSession이 이미 4040을 쓰고 있으면 스크립트 쪽은 컨테이너 안에서 4041을 쓰는데, 4041은 연결(<code>-p</code>)하지 않았으니 안 보입니다. 이럴 땐 노트북 커널을 먼저 끄세요(Kernel → Shut Down Kernel).</p>
+<pre><code>docker exec -it -e KEEP_UI=1 de-spark spark-submit /home/jovyan/work/spark/shop_spark.py</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>docker exec</td><td>떠 있는 컨테이너 안에서 명령 하나 실행. spark-submit은 컨테이너 안에만 있어서</td></tr>
+<tr><td>-it</td><td>키보드 입력을 연결(<code>-i</code>)하고 터미널처럼 보여 줌(<code>-t</code>). 스크립트가 Enter를 기다리므로 필요</td></tr>
+<tr><td>-e KEEP_UI=1</td><td>환경 변수 하나 넘기기. 스크립트가 이 값을 보고 끝나기 전에 멈춤</td></tr>
+<tr><td>spark-submit 파일.py</td><td>노트북 없이 <code>.py</code> 파일을 Spark 잡으로 제출. 운영에서 잡을 돌리는 바로 그 방식</td></tr>
+</table>
+</div>
+<p class="meta-line">이 명령은 선택입니다. 작성 환경에서 컨테이너로는 실행해 보지 못했습니다(미검증).</p>
 <p class="meta-line">참고: 탭 이름·Environment·Executors·AQEShuffleRead·Shuffle 바이트 값은 작성 환경(Windows, Spark 4.0.5 local)에서 UI의 REST API로 확인한 값이고, 컨테이너 화면을 직접 캡처해 보지는 못했습니다. 바이트 수와 Job 개수는 실행 순서에 따라 조금 다를 수 있습니다.</p>
+<div class="field">
+<ul>
+<li>클러스터에서는 4040을 직접 열지 않고 플랫폼 화면으로 들어갑니다: Databricks는 클러스터·잡 화면의 Spark UI 링크, EMR·Dataproc은 콘솔의 Spark History Server, Glue는 잡 실행 화면의 Spark UI. 잡이 끝난 뒤에도 기록을 보려고 <b>History Server</b>(이벤트 로그 저장)를 켜 둡니다.</li>
+<li>주로 보는 것: Stages 탭에서 <b>제일 오래 걸린 Stage</b>와 그 안의 태스크 시간 분포(한 태스크만 유난히 길면 스큐), <code>Shuffle Read/Write</code> 크기, 메모리가 모자라 디스크로 넘친 <code>Spill</code>. Executors 탭에서 실패·GC 시간.</li>
+<li>Airflow가 잡을 실패로 표시하면 Airflow 로그에는 보통 "잡 실패"만 남아 있어서, 진짜 원인(OOM, 파일 없음 등)은 이 UI나 드라이버 로그에서 찾습니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="write">
 <div class="step-title">8. 직접 해보기: order_date 로 나눈 parquet 쓰기</div>
+<div class="why">
+<p>지금까지의 DataFrame은 세션이 끝나면 사라지는 뷰입니다. 결과를 <b>다른 사람·다른 엔진이 쓰게 하려면 파일로 남겨야</b> 하고, 그게 Spark 잡의 최종 산출물입니다. parquet를 쓰는 이유는 컬럼 단위 압축 파일이라 필요한 컬럼만 읽고 타입도 함께 저장되기 때문입니다(CSV는 전부 글자라 타입을 매번 다시 알려 줘야 함). <code>partitionBy("order_date")</code>는 <b>날짜 파티션 테이블</b>을 만드는 것과 같아서, "10-05만" 읽을 때 폴더 하나만 엽니다(BigQuery에서 파티션 컬럼으로 거르면 스캔 바이트가 줄어드는 것과 같은 원리). 이 단계를 대충 하면 작은 파일 수백 개, 날짜 거르기가 안 먹는 레이크가 생깁니다.</p>
+</div>
 <p><b>목표</b>: <code>fct_orders</code>를 날짜별 폴더로 나눈 parquet 파일로 저장합니다. 9단계에서 DuckDB·dbt가 이 파일을 읽습니다. 실무에서 Spark 잡이 레이크에 결과를 남기는 바로 그 모양입니다.</p>
 <pre class="diagram">  컨테이너 안 경로                                 내 PC 에서 보이는 곳
   /home/jovyan/work/out/fct_orders/       =       shop\out\fct_orders\
@@ -941,12 +1130,34 @@ back = spark.read.parquet(out)        # 다시 읽기. order_date 는 폴더 이
 print(back.count())                   # 30
 back.where(F.col("order_date") == "2026-10-05").explain()   # PartitionFilters 확인</code></pre>
 </details>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>.repartition("order_date")</td><td>쓰기 전에 같은 날짜를 한 조각으로 모으기(셔플). 파일은 "조각 × 날짜 폴더"마다 생겨서, 안 하면 날짜 폴더마다 파일이 여러 개(작은 파일 문제)</td></tr>
+<tr><td>.write</td><td>"이제 저장하겠다"는 쓰기 설정 시작 (<code>INSERT</code>/<code>CREATE TABLE AS</code>의 앞부분)</td></tr>
+<tr><td>.mode("overwrite")</td><td>있으면 갈아엎기 = <code>CREATE OR REPLACE</code>. 다시 돌려도 같은 결과(멱등). <code>append</code>는 재실행 때 행이 두 배, 기본값 <code>error</code>는 두 번째 실행부터 실패</td></tr>
+<tr><td>.partitionBy("order_date")</td><td>컬럼 값별로 <code>order_date=값/</code> 폴더 만들기 = <code>PARTITION BY order_date</code>. 그 컬럼은 파일 안이 아니라 폴더 이름에 들어감</td></tr>
+<tr><td>.parquet(out)</td><td>형식과 경로. 이 줄에서 실제로 실행됨(쓰기는 action)</td></tr>
+<tr><td>spark.read.parquet(out)</td><td>다시 읽기. 스키마가 파일에 있어 schema·header가 필요 없음</td></tr>
+<tr><td>PartitionFilters</td><td>explain에서 "폴더 단위로 거른 조건". 여기 날짜가 있으면 파티션 가지치기가 된 것</td></tr>
+</table>
+</div>
 <h3>8-2. 확인</h3>
 <p>셀 출력에 <code>30</code>이 나오면 다시 읽기까지 성공입니다. 그다음 PowerShell(내 PC)에서 실제 파일이 생겼는지 봅니다.</p>
 <pre><code>cd $HOME\dbt-practice\shop
 (Get-ChildItem out\fct_orders -Directory).Count                          # 날짜 폴더 수 → 19
 (Get-ChildItem out\fct_orders -Recurse -Filter *.parquet).Count           # parquet 파일 수 → 19 (폴더마다 1개)
 Get-ChildItem -Recurse out\fct_orders | Select-Object -First 8 FullName</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>Get-ChildItem 경로</td><td>폴더 안 목록 (<code>dir</code>, <code>ls</code>)</td></tr>
+<tr><td>-Directory</td><td>폴더만</td></tr>
+<tr><td>-Recurse -Filter *.parquet</td><td>하위 폴더까지 뒤져 <code>.parquet</code>로 끝나는 파일만</td></tr>
+<tr><td>( ... ).Count</td><td>개수만 (<code>count(*)</code>)</td></tr>
+<tr><td>| Select-Object -First 8 FullName</td><td>앞 8개의 전체 경로만 (<code>SELECT FullName ... LIMIT 8</code>)</td></tr>
+</table>
+</div>
 <p>원본 주문 날짜가 19일(10-01~10-19)이라 폴더도 19개입니다. 파일 수가 19보다 많으면 <code>repartition("order_date")</code>를 빼먹은 것입니다. 이름이 <code>.crc</code>로 끝나는 작은 파일도 함께 보일 수 있는데, Spark가 남기는 체크섬 파일이라 정상입니다.</p>
 <pre data-file="폴더 구조 — Spark가 만드는 형태 예시 (작성 환경에서 미검증)">out\fct_orders\_SUCCESS
 out\fct_orders\order_date=2026-10-01\part-00000-(uuid).c000.snappy.parquet
@@ -957,10 +1168,21 @@ out\fct_orders\order_date=2026-10-03\part-00000-(uuid).c000.snappy.parquet
 <pre data-file="back.where(order_date = '2026-10-05').explain() — 형태 예시 (작성 환경에서 미검증)">== Physical Plan ==
 *(1) ColumnarToRow
 +- FileScan parquet [order_id#..,customer_id#..,status#..,amount#..,order_date#..] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/home/jovyan/work/out/fct_orders], PartitionFilters: [isnotnull(order_date#..), (order_date#.. = 2026-10-05)], PushedFilters: [], ReadSchema: struct&lt;order_id:int,customer_id:int,status:string,amount:bigint&gt;</pre>
+<div class="field">
+<ul>
+<li>운영 잡의 마지막은 거의 항상 이 모양입니다: <b>레이크 버킷</b>(<code>gs://회사-lake/marts/fct_orders/</code> 등)에 <b>날짜로 파티션한 parquet</b>, 요즘은 그 위에 트랜잭션·스키마 변경·타임 트래블을 얹은 <b>Delta Lake</b>나 <b>Apache Iceberg</b> 테이블 형식을 많이 씁니다.</li>
+<li>매일 도는 잡은 전체를 갈아엎지 않고 <b>그날 파티션만 덮어씁니다</b>. <code>spark.sql.sources.partitionOverwriteMode=dynamic</code>으로 "쓴 날짜 폴더만 교체"하거나, Delta의 <code>replaceWhere</code>, Delta·Iceberg의 <code>MERGE INTO</code>를 씁니다. 5일차의 "날짜별로 멱등하게 쓰기"가 바로 이것입니다.</li>
+<li>작은 파일은 실무의 단골 문제라 쓰기 전 <code>repartition</code>, Delta의 <code>OPTIMIZE</code>(파일 합치기), Iceberg의 compaction 같은 정리 작업을 주기적으로 돌립니다. 파티션 컬럼은 날짜처럼 값 종류가 적당한 컬럼으로 고릅니다(고객 ID로 나누면 폴더가 수백만 개).</li>
+<li>이 잡은 노트북이 아니라 git에 올린 <code>.py</code>를 <b>Airflow가 매일 제출</b>합니다: Dataproc이면 <code>DataprocSubmitJobOperator</code>, 일반 클러스터면 <code>SparkSubmitOperator</code>, Databricks면 <code>DatabricksSubmitRunOperator</code>, EMR이면 스텝 추가 오퍼레이터. 출력 경로에 <code>{{ ds }}</code>(logical date)를 넘겨 날짜 파티션을 정합니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="duckdb">
 <div class="step-title">9. 직접 해보기: Spark가 쓴 parquet를 DuckDB·dbt 에서 읽기</div>
+<div class="why">
+<p>Spark 결과물은 Spark 혼자 쓰려고 만드는 게 아닙니다. 대개 <b>웨어하우스와 dbt가 그 파일을 읽어 마트를 만들고, BI가 그 마트를 봅니다</b>. 그래서 "Spark가 쓴 파일을 다른 엔진이 아무 변환 없이 읽는다"를 직접 확인하는 것이 오늘의 마지막 연결 고리입니다. dbt source로 등록하는 이유는 2일차와 같습니다: 경로를 모델마다 하드코딩하지 않고 한 곳(sources.yml)에서 관리하고, 리니지에 "레이크에서 왔다"가 보이게 하려고. 이 단계를 빼면 Spark와 dbt가 따로 노는 두 세계로 남습니다.</p>
+</div>
 <p><b>목표</b>: Spark가 만든 파일을 <b>다른 엔진(DuckDB)이 변환 없이</b> 읽는지 확인하고, dbt source로 등록해 마트 모델을 만듭니다. 오늘 배운 "Spark → parquet → dbt" 연결을 손으로 해 보는 단계입니다.</p>
 <pre class="diagram">  shop\out\fct_orders\order_date=...\*.parquet      (8단계, Spark가 씀)
           │  sources.yml 의 source lake.fct_orders_spark
@@ -980,6 +1202,16 @@ dbt show --inline "select * from read_parquet('out/fct_orders/*/*.parquet', hive
 |        3 |          12 | completed |  19000 | 2026-10-02 |
 |        4 |           8 | placed    |  89000 | 2026-10-02 |
 |        5 |           8 | completed |  59000 | 2026-10-03 |</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻 · 왜 필요한가</th></tr>
+<tr><td>dbt show --inline "SQL"</td><td>모델 파일 없이 SQL 한 줄을 dbt 접속(<code>shop.duckdb</code>)으로 실행해 결과만 보기. 테이블은 안 만듦</td></tr>
+<tr><td>read_parquet('경로')</td><td>DuckDB 함수: parquet 파일을 테이블처럼 읽기 (BigQuery 외부 테이블과 같은 역할)</td></tr>
+<tr><td>out/fct_orders/*/*.parquet</td><td>와일드카드: 모든 날짜 폴더 / 모든 parquet 파일. 상대 경로라 <code>shop</code> 폴더에서 실행해야 함</td></tr>
+<tr><td>hive_partitioning = true</td><td><code>order_date=2026-10-05</code> 같은 폴더 이름을 컬럼으로 살려 냄. 빠뜨리면 <code>order_date</code> 컬럼이 아예 없음</td></tr>
+<tr><td>--limit 5</td><td>결과 5행만. SQL 안에 <code>limit</code>을 쓰면 안 되는 이유는 아래</td></tr>
+</table>
+</div>
 <p><code>order_date</code>가 맨 끝 컬럼으로 붙어 있습니다. 파일 안에는 없고 폴더 이름에서 살려 낸 컬럼이기 때문입니다. 경로의 <code>*/*.parquet</code>는 "아무 날짜 폴더 / 아무 parquet 파일"이고, <code>_SUCCESS</code>·<code>.crc</code> 파일은 <code>.parquet</code>로 끝나지 않아 빠집니다. 행 수 제한은 SQL 안의 <code>limit</code>이 아니라 <code>--limit</code> 옵션으로 줍니다(<code>dbt show</code>가 자기 limit을 덧붙여서, SQL에 <code>limit</code>을 쓰면 문법 오류가 납니다).</p>
 <h3>9-2. 과제: source 등록 + 모델 만들기</h3>
 <ol>
@@ -1041,10 +1273,20 @@ dbt show -s daily_sales_from_spark --limit 20</code></pre>
 | 2026-10-17 |      1 |   19000 |
 | 2026-10-18 |      1 |   49000 |</code></pre>
 <p>Spark에서 낸 숫자와 같습니다. <b>Spark가 만든 파일을 다른 엔진이 아무 변환 없이 읽었다</b>는 점이 중요합니다. parquet + Hive 파티션은 엔진 사이의 공용어입니다. (기존 dbt <code>daily_sales</code>와도 비교하고 싶다면, 4·6일차에 "다음 날" 데이터로 다시 만든 상태일 수 있으니 1-2에서 원본으로 되돌린 뒤 <code>dbt run -s daily_sales</code>부터 하고 비교하세요.)</p>
+<div class="field">
+<ul>
+<li>BigQuery 환경이라면 레이크(GCS)의 Hive 파티션 parquet 위에 <b>외부 테이블</b>(또는 BigLake 테이블)을 만들고 <code>hive_partition_uri_prefix</code>로 폴더 이름을 파티션 컬럼으로 살립니다. dbt에서는 <code>dbt-external-tables</code> 패키지로 이 외부 테이블 정의까지 sources.yml로 관리하는 경우가 많습니다. Iceberg 테이블이면 BigQuery·Snowflake·Trino가 같은 테이블을 바로 읽습니다.</li>
+<li>Databricks 중심 회사는 dbt를 <b>dbt-databricks</b>(또는 <b>dbt-spark</b>) 어댑터로 Spark 위에서 직접 돌려 Delta 테이블을 만들기도 합니다. 이 경우 오늘의 "Spark 잡 → 파일 → dbt" 사이 경계가 아예 없어집니다.</li>
+<li>Airflow DAG는 보통 <b>Spark 잡 태스크 → (파일이 생겼는지 확인) → dbt 태스크</b> 순서, 또는 6일차처럼 Spark 쪽이 Asset을 갱신하면 dbt DAG가 뒤따르는 구조로 묶습니다. dbt source freshness나 행 수 테스트로 "오늘 파티션이 정말 들어왔나"를 지킵니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="cleanup">
 <div class="step-title">10. 정리하고 하루 마무리</div>
+<div class="why">
+<p>컨테이너와 Spark(Java)는 꺼 주기 전까지 메모리를 계속 붙잡고, 이미지는 디스크 수 GB를 차지합니다. 이 PC는 메모리가 빠듯해서 안 끄면 다른 작업까지 느려집니다. 그리고 오늘 만든 코드(노트북·dbt 모델·sources.yml)는 git에 남겨야 다음에 이어서 하거나 되돌릴 수 있습니다. 결과물(<code>out/</code>)은 다시 만들 수 있으니 올리지 않습니다. 끄는 순서는 안쪽부터(커널 → 컨테이너 → Docker Desktop)입니다.</p>
+</div>
 <p><b>목표</b>: 메모리를 돌려받고, 결과물을 git에 남깁니다. 이 PC는 메모리가 넉넉하지 않으니 이 단계를 건너뛰지 마세요.</p>
 <ol>
 <li>Jupyter에서 노트북을 저장(Ctrl + S)하고, 메뉴 <b>Kernel → Shut Down Kernel</b>. SparkSession(Java)이 내려가고 4040도 닫힙니다.</li>
@@ -1053,7 +1295,16 @@ dbt show -s daily_sales_from_spark --limit 20</code></pre>
 docker ps -a --filter name=de-spark   # STATUS 가 Exited ... 면 멈춘 것</code></pre></li>
 <li>다시 쓸 일이 없으면 지웁니다. 컨테이너를 지워도 <code>shop\out</code>, <code>shop\spark</code>의 파일은 남습니다(내 PC 폴더라서).
 <pre><code>docker rm de-spark                             # 컨테이너 지우기
-docker rmi quay.io/jupyter/pyspark-notebook    # (선택) 이미지까지 지워 디스크 수 GB 돌려받기. 다음에 다시 받아야 함</code></pre></li>
+docker rmi quay.io/jupyter/pyspark-notebook    # (선택) 이미지까지 지워 디스크 수 GB 돌려받기. 다음에 다시 받아야 함</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>docker stop de-spark</td><td>컨테이너 끄기(전원 끄기). 메모리는 돌아오고 컨테이너 자체는 남아 있어 <code>docker start</code>로 다시 켤 수 있음</td></tr>
+<tr><td>docker ps -a --filter name=de-spark</td><td><code>-a</code> = 꺼진 것까지 전부, <code>--filter name=</code> = 이름으로 거르기 (<code>WHERE name = ...</code>)</td></tr>
+<tr><td>docker rm de-spark</td><td>꺼진 컨테이너 지우기(<code>DROP</code>). 실행 중이면 거부되므로 stop 먼저. <code>-v</code>로 연결한 내 PC 폴더는 안 지워짐</td></tr>
+<tr><td>docker rmi 이미지</td><td>이미지(원본) 지우기. <b>i</b> = image. 이 이미지로 만든 컨테이너가 남아 있으면 거부됨</td></tr>
+</table>
+</div></li>
 <li>오늘 Docker를 더 안 쓸 거면 작업 표시줄의 Docker Desktop 아이콘 우클릭 → <b>Quit Docker Desktop</b>. 메모리가 가장 확실하게 돌아옵니다.</li>
 <li>git에 남깁니다. <code>out/</code>은 다시 만들 수 있는 결과물이라 올리지 않습니다(<code>target/</code>과 같은 이유). Jupyter가 만드는 자동 저장 폴더 <code>.ipynb_checkpoints/</code>도 뺍니다.
 <pre><code>cd $HOME\dbt-practice\shop
@@ -1061,8 +1312,15 @@ Add-Content .gitignore "out/"
 Add-Content .gitignore ".ipynb_checkpoints/"
 git add .
 git status                 # spark/shop_spark.py, spark/shop_spark.ipynb, models/... 가 보이고 out/ 은 없어야 함
-git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code></pre></li>
+git commit -m "7일차: Spark로 parquet 만들고 dbt source로 읽기"</code></pre>
+<p><code>Add-Content 파일 "줄"</code> = 파일 끝에 한 줄 덧붙이기. <code>.gitignore</code>에 적힌 경로는 <code>git add .</code>가 건너뜁니다.</p></li>
 </ol>
+<div class="field">
+<ul>
+<li>클라우드에선 "끄기"가 곧 돈입니다. Databricks·EMR·Dataproc은 잡마다 클러스터를 띄웠다 끝나면 지우는 <b>잡 클러스터(일회용)</b>나 서버리스(Dataproc Serverless, EMR Serverless, Glue)를 쓰고, 탐색용 상시 클러스터에는 <b>자동 종료(30~60분 유휴 시)</b>를 겁니다. 켜 둔 클러스터 하나가 한 달 예산을 먹는 사고가 흔합니다.</li>
+<li>git에는 코드(<code>.py</code>, dbt 모델, 설정)만 올리고 데이터·결과 파일은 레이크에 둡니다. 노트북(<code>.ipynb</code>)은 출력 결과까지 저장돼 diff가 지저분하고 데이터가 섞여 올라갈 수 있어서, 출력 지우고 올리거나(<code>nbstripout</code>) 운영 코드는 <code>.py</code>로만 관리하는 팀이 많습니다.</li>
+</ul>
+</div>
 </div>
 
 </div>
