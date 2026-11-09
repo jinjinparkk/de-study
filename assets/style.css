@@ -222,3 +222,17 @@ dl.glossary dd .where { color: var(--muted); font-size: 14px; }
 /* 도구별 강조색 (Airflow 5·6일차, Spark 7일차) */
 body[data-page="day5"], body[data-page="day6"] { --accent: var(--airflow); --accent-soft: var(--airflow-soft); }
 body[data-page="day7"] { --accent: var(--spark); --accent-soft: var(--spark-soft); }
+
+/* 실습 단계 안의 "왜 하나요" / "실무에서는" */
+.why, .field {
+  border-left: 4px solid var(--line); padding: 8px 14px; margin: 10px 0;
+  border-radius: 0 8px 8px 0; font-size: 15.5px;
+}
+.why { border-color: #7c3aed; background: color-mix(in srgb, #7c3aed 7%, transparent); }
+.field { border-color: #0f766e; background: color-mix(in srgb, #0f766e 7%, transparent); }
+.why::before { content: "🎯 왜 하나요"; display: block; font-weight: 800; margin-bottom: 2px; }
+.field::before { content: "🏢 실무에서는"; display: block; font-weight: 800; margin-bottom: 2px; }
+.why > :last-child, .field > :last-child { margin-bottom: 0; }
+.why > :first-child, .field > :first-child { margin-top: 0; }
+table.cmd { font-size: 14.5px; }
+table.cmd td:first-child { font-family: var(--mono); white-space: nowrap; }

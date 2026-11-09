@@ -192,29 +192,78 @@ join {{ ref('stg_payments') }} p
 
 <p>작은 쇼핑몰 데이터(고객 15명, 주문 30건, 결제 32건)로 7일 내내 실습합니다. 오늘은 설치하고, 프로시저 하나를 dbt 모델로 옮겨 봅니다.</p>
 
+<div class="box tip">
+<span class="box-title">새 창을 열 때마다 하는 두 줄 (2단계 이후부터, 2~7일차 내내)</span>
+<pre><code>cd $HOME\dbt-practice\shop
+..\.venv\Scripts\Activate.ps1</code></pre>
+<ul>
+<li><b>왜 <code>cd</code>?</b> dbt는 <b>지금 서 있는 폴더</b>에서 <code>dbt_project.yml</code>을 찾습니다. 다른 폴더면 <code>Not a dbt project</code> 오류가 납니다. 또 <code>read_csv('data/...')</code> 같은 상대 경로와 <code>shop.duckdb</code> 파일 위치도 현재 폴더 기준이라, 엉뚱한 폴더에서 돌리면 <b>빈 DB 파일이 새로 생겨서 "어제 만든 테이블이 사라진" 것처럼</b> 보입니다.</li>
+<li><b>왜 Activate?</b> <code>dbt.exe</code>는 <code>.venv\Scripts</code> 안에만 있습니다. 활성화는 <b>그 창에만</b> 적용되므로, 새 창을 열면 다시 해야 합니다. 안 하면 <code>'dbt' 용어가 ... 인식되지 않습니다</code>가 뜹니다.</li>
+<li><b>왜 <code>..</code>?</b> <code>.venv</code>는 <code>shop</code>이 아니라 한 단계 위 <code>dbt-practice</code>에 있기 때문입니다.</li>
+<li>두 줄의 순서는 바꿔도 됩니다. 프롬프트 앞에 <code>(.venv)</code>가 붙고 경로가 <code>...\shop&gt;</code>이면 준비 끝.</li>
+</ul>
+</div>
+
 <div class="lab">
 
 <div class="step" data-id="folder">
 <div class="step-title">1. 작업 폴더와 가상환경 만들기</div>
-<p>PowerShell을 열고 아래를 실행합니다. 가상환경(venv)은 이 폴더 전용 파이썬 방이라고 생각하면 됩니다 — 다른 프로젝트의 패키지와 섞이지 않습니다.</p>
+<div class="why">
+<p>dbt는 파이썬 프로그램이라 <code>pip</code>로 설치합니다. 그냥 PC 전체 파이썬에 설치하면 다른 프로젝트(pandas 버전 고정 등)와 패키지 버전이 부딪히고, "어제는 됐는데 오늘은 안 돼"가 생깁니다. 그래서 <b>이 연습 전용 파이썬 방(가상환경, venv)</b>을 만들고 그 안에만 설치합니다. 프로시저로 치면 운영 스키마를 건드리지 않으려고 개인 작업용 스키마를 따로 만드는 것과 같습니다.</p>
+</div>
+<p>PowerShell을 열고 아래를 한 줄씩 실행합니다.</p>
 <pre><code>mkdir $HOME\dbt-practice
 cd $HOME\dbt-practice
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install dbt-duckdb</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>mkdir</td><td>폴더 만들기 (make directory)</td></tr>
+<tr><td>$HOME</td><td>내 사용자 폴더 <code>C:\Users\내이름</code>. 어느 위치에서 쳐도 같은 곳을 가리킴</td></tr>
+<tr><td>\dbt-practice</td><td>그 아래 만들 폴더 이름</td></tr>
+<tr><td>cd</td><td>그 폴더로 들어가기 (change directory). 이후 명령은 전부 이 폴더 기준</td></tr>
+<tr><td>python -m venv</td><td>파이썬에 들어 있는 <code>venv</code> 기능을 실행 (<code>-m</code> = 모듈을 실행)</td></tr>
+<tr><td>.venv</td><td>만들 가상환경 폴더 이름. 앞의 점은 "숨김·설정용 폴더" 관례</td></tr>
+<tr><td>.\</td><td>현재 폴더 (<code>dbt-practice</code>)</td></tr>
+<tr><td>.venv\Scripts\Activate.ps1</td><td>가상환경 안의 활성화 스크립트. 실행하면 이 창에서 <code>python</code>·<code>pip</code>·<code>dbt</code>가 <code>.venv</code> 것을 가리킴. 프롬프트 앞에 <code>(.venv)</code>가 붙음</td></tr>
+<tr><td>python -m pip install --upgrade pip</td><td>설치 도구 pip 자체를 최신으로. 오래된 pip는 dbt 설치 중 오류를 내기 쉬움</td></tr>
+<tr><td>pip install dbt-duckdb</td><td>DuckDB 어댑터 설치. dbt Core 본체도 같이 딸려 옴</td></tr>
+</table>
+</div>
+<p>활성화는 <b>그 창에서만</b> 유효합니다. 창을 닫았다 열면 위 "새 창을 열 때마다 하는 두 줄"을 다시 하세요.</p>
 <details class="hint"><summary>Activate.ps1 실행이 막힌다면</summary>
-<p>"이 시스템에서 스크립트를 실행할 수 없으므로" 오류가 나면 현재 창에서만 허용합니다: <code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 후 다시 실행.</p>
+<p>"이 시스템에서 스크립트를 실행할 수 없으므로" 오류가 나면 현재 창에서만 허용합니다: <code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 후 다시 실행. <code>-Scope Process</code> = 이 창이 닫힐 때까지만, <code>RemoteSigned</code> = 내 PC에서 만든 스크립트는 허용. PC 설정을 영구히 바꾸지 않는 가장 안전한 방법입니다.</p>
 </details>
-<p>확인: <code>dbt --version</code> 을 쳤을 때 <code>Core</code>와 <code>duckdb</code> 플러그인 버전이 나오면 성공입니다. (2026-11 기준 확인한 버전: Core 1.12.6, duckdb 1.11.1)</p>
+<p>확인: <code>dbt --version</code> 을 쳤을 때 <code>Core</code>와 <code>duckdb</code> 플러그인 버전이 나오면 성공입니다. (2026-11 기준 확인한 버전: Core 1.12.6, duckdb 1.11.1) <code>--version</code>은 "설치가 됐고 이 창에서 dbt가 보이는지"를 가장 싸게 확인하는 방법입니다.</p>
 <details class="hint"><summary>"dbt v2 is available" 안내가 뜬다면</summary>
 <p>dbt Labs가 새 엔진(v2, Fusion 계열)을 내놓으면서 Core v1에 안내 문구를 띄웁니다. <b>무시하고 진행해도 됩니다.</b> 이 코스는 <code>pip</code>로 설치하는 오픈소스 dbt Core(v1)를 기준으로 하고, 모델·ref·테스트·YAML 같은 핵심 문법은 v2에서도 그대로입니다. 차이는 엔진 속도와 일부 엄격해진 검사 정도입니다.</p>
 </details>
+<div class="field">
+<ul>
+<li>저장소마다 가상환경을 하나씩 두고, 설치할 패키지와 버전을 <code>requirements.txt</code>(예: <code>dbt-bigquery==1.x.y</code>)에 <b>고정</b>해 git에 올립니다. 새로 온 사람은 <code>pip install -r requirements.txt</code> 한 줄로 팀과 같은 버전을 맞춥니다. 요즘은 <code>uv</code>·<code>poetry</code> 같은 도구로 같은 일을 하기도 합니다.</li>
+<li>VS Code에서 파이썬 인터프리터로 <code>.venv</code>를 골라 두면 새 터미널을 열 때 <b>자동으로 활성화</b>해 줘서 Activate를 직접 칠 일이 거의 없습니다.</li>
+<li><code>.venv</code> 폴더 자체는 git에 올리지 않습니다(용량이 크고 PC마다 다름). 목록(<code>requirements.txt</code>)만 공유합니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="init">
 <div class="step-title">2. dbt init 으로 프로젝트 만들기</div>
+<div class="why">
+<p>dbt는 정해진 폴더 구조(<code>dbt_project.yml</code>, <code>models/</code> …)와 접속 정보(<code>profiles.yml</code>)가 있어야 움직입니다. 이걸 손으로 만들면 이름 하나만 틀려도 <code>Could not find profile named 'shop'</code> 같은 오류가 납니다. <code>dbt init</code>은 이 뼈대를 한 번에 만들어 주는 명령입니다. 프로시저로 치면 "스키마 만들고 접속 계정 등록"까지를 해 주는 단계입니다.</p>
+</div>
 <pre><code>dbt init shop</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>dbt</td><td>dbt 프로그램 (<code>.venv\Scripts\dbt.exe</code>)</td></tr>
+<tr><td>init</td><td>새 프로젝트 만들기 하위 명령</td></tr>
+<tr><td>shop</td><td>프로젝트 이름 = 만들어질 폴더 이름 = profiles.yml 안의 프로필 이름</td></tr>
+</table>
+</div>
 <p>어떤 DB를 쓸지 물으면 <code>[1] duckdb</code> 처럼 번호가 나옵니다. 그 번호를 입력하고 Enter. 끝나면 두 가지가 생깁니다.</p>
 <ul>
 <li><code>dbt-practice\shop\</code> 폴더 — 프로젝트 (모델·설정 파일)</li>
@@ -223,6 +272,15 @@ pip install dbt-duckdb</code></pre>
 <p><b>profiles.yml 열어 보기</b> (PowerShell 기준. cmd 창이면 <code>$HOME</code> 대신 <code>%USERPROFILE%</code>)</p>
 <pre><code>type $HOME\.dbt\profiles.yml       # 내용만 보기
 notepad $HOME\.dbt\profiles.yml    # 메모장으로 열어 고치기</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>type</td><td>파일 내용을 화면에 출력 (PowerShell에선 <code>Get-Content</code>·<code>cat</code>과 같음)</td></tr>
+<tr><td>notepad</td><td>메모장으로 열기</td></tr>
+<tr><td>$HOME\.dbt\profiles.yml</td><td>내 사용자 폴더 아래 숨김 폴더 <code>.dbt</code> 안의 접속 정보 파일. 프로젝트 폴더 밖이라 git에 안 올라감</td></tr>
+<tr><td># ...</td><td>PowerShell 주석. 이 뒤는 실행되지 않음</td></tr>
+</table>
+</div>
 <p><code>dbt init</code>이 만든 파일은 보통 <code>path: dev.duckdb</code>, <code>threads: 1</code>이고 <code>prod</code> 묶음도 같이 들어 있습니다. 이 코스는 DB 파일 이름을 <b><code>shop.duckdb</code></b>로 씁니다(뒤 실습·Airflow 연동이 이 이름 기준). <code>dev</code> 아래 두 줄만 아래처럼 바꾸고 저장하세요. <code>prod</code> 묶음은 둬도 됩니다(6일차에 씁니다). YAML은 <b>띄어쓰기 칸 수가 문법</b>이라 탭 대신 스페이스로, 윗줄과 같은 위치에 맞춥니다.</p>
 <pre data-file="%USERPROFILE%\.dbt\profiles.yml"><code>shop:
   target: dev
@@ -231,11 +289,21 @@ notepad $HOME\.dbt\profiles.yml    # 메모장으로 열어 고치기</code></pr
       type: duckdb
       path: shop.duckdb   # dbt를 실행한 폴더에 이 파일이 생긴다
       threads: 4</code></pre>
-<p>맨 윗줄 <code>shop</code>은 <b>프로필 이름</b>이고, <code>shop/dbt_project.yml</code> 안의 <code>profile: 'shop'</code>과 이름이 같아야 연결됩니다.</p>
+<p>맨 윗줄 <code>shop</code>은 <b>프로필 이름</b>이고, <code>shop/dbt_project.yml</code> 안의 <code>profile: 'shop'</code>과 이름이 같아야 연결됩니다. <code>target: dev</code>는 "아무 말 없으면 dev 묶음으로 접속"이라는 뜻이고, <code>threads: 4</code>는 서로 의존하지 않는 모델을 <b>최대 4개까지 동시에</b> 돌린다는 뜻입니다(1이면 하나씩 차례로).</p>
+<div class="field">
+<ul>
+<li><code>profiles.yml</code>에 <code>dev</code>와 <code>prod</code> 같은 <b>target</b>을 여러 개 둡니다. BigQuery라면 dev는 보통 <b>개인 데이터셋</b>(예: <code>dbt_&lt;이름&gt;</code>)을 가리켜서, 내가 무엇을 돌려도 운영 테이블이나 동료 작업을 덮어쓰지 않습니다.</li>
+<li>개발자 PC에서는 <code>method: oauth</code>로 <code>gcloud auth application-default login</code>한 내 구글 계정을 쓰고, 운영(스케줄러·CI)에서는 <b>서비스 계정</b>으로 접속합니다. 키 경로나 비밀번호는 파일에 직접 적지 않고 <code>{{ env_var('...') }}</code>로 환경 변수에서 읽습니다.</li>
+<li>운영 실행은 <code>dbt run --target prod</code>처럼 target을 바꿔서 돌립니다. 같은 SQL 코드가 접속 대상만 바뀌는 구조입니다. 6일차에 직접 해 봅니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="data">
 <div class="step-title">3. 실습 데이터 내려받기</div>
+<div class="why">
+<p>모델은 "원본 테이블을 읽는 SELECT"라서 읽을 원본이 먼저 있어야 합니다. 회사에선 원본이 이미 웨어하우스(<code>raw</code> 데이터셋)에 있지만, 여기는 빈 DuckDB라 CSV 파일로 대신합니다. CSV를 <code>shop\data</code>에 두는 이유는 5단계 모델이 <code>'data/raw_orders.csv'</code>라는 <b>shop 폴더 기준 상대 경로</b>로 읽기 때문입니다. 다른 곳에 두면 <code>IO Error: No files found</code>가 납니다.</p>
+</div>
 <p><code>shop</code> 폴더 안에 <code>data</code> 폴더를 만들고 CSV 3개를 넣습니다.</p>
 <pre><code>cd shop
 mkdir data
@@ -244,34 +312,105 @@ foreach ($f in "raw_customers.csv","raw_orders.csv","raw_payments.csv") {
   curl.exe -sL "$base/$f" -o "data\$f"
 }
 Get-ChildItem data</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>cd shop</td><td>지금 있는 <code>dbt-practice</code>에서 그 아래 <code>shop</code>으로 들어감. <b>이제부터 모든 dbt 명령은 여기서</b> 침</td></tr>
+<tr><td>$base = "..."</td><td>변수 <code>$base</code>에 주소 앞부분을 담아 둠 (SQL의 <code>DECLARE</code>와 비슷)</td></tr>
+<tr><td>foreach ($f in A, B, C) { ... }</td><td>A, B, C를 차례로 <code>$f</code>에 넣으며 중괄호 안을 3번 반복 (커서 루프와 같음)</td></tr>
+<tr><td>curl.exe</td><td>인터넷에서 파일 받는 프로그램. <code>.exe</code>를 붙여야 PowerShell의 다른 동명 명령과 헷갈리지 않음</td></tr>
+<tr><td>-sL</td><td><code>-s</code> 진행 표시 끄기, <code>-L</code> 주소가 옮겨졌으면 따라가기</td></tr>
+<tr><td>"$base/$f"</td><td>변수를 이어 붙인 전체 주소</td></tr>
+<tr><td>-o "data\$f"</td><td>받은 내용을 이 경로에 파일로 저장 (output)</td></tr>
+<tr><td>Get-ChildItem data</td><td><code>data</code> 폴더 안 파일 목록 보기 (<code>dir</code>·<code>ls</code>와 같음). 3개 다 받았는지 확인</td></tr>
+</table>
+</div>
 <p>직접 받으려면: <a href="../practice/data/raw_customers.csv">raw_customers.csv</a> · <a href="../practice/data/raw_orders.csv">raw_orders.csv</a> · <a href="../practice/data/raw_payments.csv">raw_payments.csv</a></p>
 <p><b>예제 모델 지우기 (꼭 하세요)</b> — <code>dbt init</code>이 견본으로 넣어 둔 <code>my_first_dbt_model</code>, <code>my_second_dbt_model</code>입니다. 안 지우면 <code>dbt run</code> 때마다 같이 만들어집니다.</p>
 <pre><code>Remove-Item -Recurse models\example</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>Remove-Item</td><td>파일·폴더 지우기 (휴지통 안 거침)</td></tr>
+<tr><td>-Recurse</td><td>폴더 안의 내용까지 통째로</td></tr>
+<tr><td>models\example</td><td>지울 대상. shop 폴더 기준 경로</td></tr>
+</table>
+</div>
 <p>이미 <code>dbt run</code>을 한 번 했다면 DB 안에도 예제 테이블·뷰가 남아 있습니다. <b>dbt는 파일을 지워도 DB 객체는 지우지 않기 때문</b>입니다(프로시저 코드를 지워도 그 프로시저가 만든 테이블은 남는 것과 같음). 아래로 직접 지웁니다. DB 파일 이름이 <code>dev.duckdb</code>라면 그 이름으로 바꾸세요.</p>
 <pre><code>python -c "import duckdb; c=duckdb.connect('shop.duckdb'); c.execute('drop view if exists main.my_second_dbt_model'); c.execute('drop table if exists main.my_first_dbt_model'); print(c.sql('show tables'))"</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>python -c "..."</td><td>따옴표 안의 파이썬 코드를 파일 없이 바로 실행 (<code>-c</code> = command)</td></tr>
+<tr><td>import duckdb</td><td>dbt-duckdb 설치 때 같이 깔린 DuckDB 파이썬 라이브러리 불러오기</td></tr>
+<tr><td>duckdb.connect('shop.duckdb')</td><td>현재 폴더의 DB 파일에 접속 (없으면 빈 파일을 새로 만듦 — 그래서 shop 폴더에서 쳐야 함)</td></tr>
+<tr><td>c.execute('drop ...')</td><td>SQL 실행. 평소 쓰던 <code>DROP</code> 그대로</td></tr>
+<tr><td>print(c.sql('show tables'))</td><td>남은 테이블 목록 출력. 예제 두 개가 없으면 성공</td></tr>
+</table>
+</div>
+<div class="field">
+<ul>
+<li>원본 데이터를 CSV로 프로젝트 폴더에 받는 일은 <b>없습니다.</b> 원본은 Fivetran·Airbyte·직접 짠 수집 코드가 웨어하우스의 <code>raw</code> 데이터셋에 적재해 두고, dbt는 그걸 <code>source()</code>로 읽습니다(2일차).</li>
+<li>프로젝트에 CSV를 두는 경우는 코드표·매핑표 같은 <b>작고 잘 안 바뀌는 표</b>뿐이고, 그건 <code>seeds/</code>에 넣어 <code>dbt seed</code>로 올립니다.</li>
+<li>예제 모델은 <code>dbt init</code> 직후 바로 지우는 게 보통입니다. 모델 파일을 지우거나 이름을 바꾼 뒤 DB에 남은 옛 테이블·뷰는 dbt가 치우지 않으므로, 팀에서는 주기적으로 정리 스크립트(또는 정리용 매크로)를 돌립니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="debug">
 <div class="step-title">4. dbt debug 로 연결 확인</div>
+<div class="why">
+<p>모델을 쓰기 전에 "설정·접속이 멀쩡한지"만 따로 확인합니다. 이걸 건너뛰고 바로 <code>dbt run</code>을 하면, 실패했을 때 그게 SQL 문제인지 접속·설정 문제인지 구분이 안 됩니다. 프로시저 짜기 전에 DB 툴에서 <code>SELECT 1</code>로 접속부터 확인하는 것과 같습니다.</p>
+</div>
 <pre><code>dbt debug</code></pre>
-<p>마지막에 <code>All checks passed!</code> 가 나오면 됩니다. 이 명령은 ① <code>dbt_project.yml</code>을 읽을 수 있는지 ② <code>profiles.yml</code>에서 프로필을 찾았는지 ③ 실제 DB에 접속되는지를 차례로 봅니다. 앞으로 무언가 안 될 때 <b>가장 먼저 칠 명령</b>입니다.</p>
+<p><code>shop</code> 폴더 안, <code>(.venv)</code>가 붙은 창에서 실행합니다. 마지막에 <code>All checks passed!</code> 가 나오면 됩니다. 이 명령은 ① <code>dbt_project.yml</code>을 읽을 수 있는지 ② <code>profiles.yml</code>에서 프로필을 찾았는지 ③ 실제 DB에 접속되는지를 차례로 봅니다. 앞으로 무언가 안 될 때 <b>가장 먼저 칠 명령</b>입니다.</p>
+<p>shop 폴더 밖에서 치면 ①에서 <code>dbt_project.yml file [ERROR not found]</code>가 나옵니다. 그럴 땐 <code>cd $HOME\dbt-practice\shop</code>부터.</p>
+<div class="field">
+<ul>
+<li>새 노트북을 받거나 팀에 처음 합류했을 때 <code>dbt debug</code>가 통과하는 것까지가 보통 "개발 환경 세팅 완료" 기준입니다.</li>
+<li>BigQuery에서는 ③에서 인증(로그인 만료, 권한 없는 프로젝트, 잘못된 키 경로) 문제가 가장 많이 걸립니다. 오류 메시지가 여기서 가장 읽기 쉽게 나옵니다.</li>
+<li>스케줄러·CI에서 dbt를 돌리는 스크립트 맨 앞에 넣어서, 접속 문제를 모델 실패와 구분해 알림을 받기도 합니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="first-model">
 <div class="step-title">5. 첫 모델: 프로시저의 1단계를 옮기기</div>
-<p>위 프로시저의 "1) 정제" 블록을 모델로 만듭니다. <code>models/stg_orders.sql</code> 파일을 새로 만들고 SELECT 문만 씁니다. 오늘은 원본을 직접 읽고(<code>read_csv</code>), 내일 이 부분을 <code>source()</code>로 바꿉니다.</p>
+<div class="why">
+<p>"SELECT만 쓰면 dbt가 CREATE를 붙여 준다"를 직접 확인하는 단계입니다. 정제(TRIM·LOWER·형 변환)를 맨 앞 모델 한 곳에서만 해 두면, 뒤 모델들은 깨끗한 데이터만 받아 쓰고 정제 로직이 여기저기 복사되지 않습니다. 프로시저의 <code>CREATE TEMP TABLE tmp_orders AS SELECT ...</code>에서 <b>SELECT 부분만</b> 파일로 떼어 낸다고 보면 됩니다.</p>
+</div>
+<p><code>models/stg_orders.sql</code> 파일을 새로 만들고 SELECT 문만 씁니다(메모장이면 <code>notepad models\stg_orders.sql</code> → "새 파일을 만드시겠습니까?"에 예). 오늘은 원본을 직접 읽고(<code>read_csv</code>), 내일 이 부분을 <code>source()</code>로 바꿉니다.</p>
 <pre data-file="models/stg_orders.sql"><code>select
     order_id,
     customer_id,
     cast(order_date as date)  as order_date,
     lower(trim(status))       as status
 from read_csv('data/raw_orders.csv')</code></pre>
+<p>끝에 세미콜론(<code>;</code>)은 붙이지 않습니다. dbt가 이 SELECT를 <code>create view ... as ( ... )</code> 안에 끼워 넣기 때문에, 세미콜론이 있으면 문장이 중간에 끊겨 문법 오류가 납니다.</p>
 <pre><code>dbt run</code></pre>
-<p><code>1 of 1 OK created sql view model main.stg_orders</code> 같은 줄이 보이면 성공. 기본 materialization이 <b>view</b>라서 뷰가 만들어졌습니다.</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>dbt run</td><td><code>models/</code> 안의 모든 모델을 의존 순서대로 실제 DB에 만들기(뷰·테이블 생성)</td></tr>
+<tr><td>(옵션) --select stg_orders</td><td>그 모델 하나만. 모델이 많아지면 이렇게 골라 돌림. 줄여서 <code>-s</code></td></tr>
+</table>
+</div>
+<p><code>1 of 1 OK created sql view model main.stg_orders</code> 같은 줄이 보이면 성공. 기본 materialization이 <b>view</b>라서 뷰가 만들어졌습니다. 파일 이름 <code>stg_orders</code>가 그대로 뷰 이름이 됐습니다.</p>
+<div class="field">
+<ul>
+<li>원본은 <code>read_csv</code>가 아니라 항상 <code>{{ source('원천', '테이블') }}</code>로 읽습니다. 원본 위치를 YAML 한 곳에 적어 두고, 리니지 그래프에도 원천이 표시되게 하려는 것입니다.</li>
+<li>모델은 <code>models/staging/</code>, <code>models/marts/</code>처럼 폴더를 나누고, 이름도 <code>stg_&lt;원천&gt;__&lt;대상&gt;</code>(예: <code>stg_shop__orders</code>), <code>fct_</code>·<code>dim_</code> 같은 규칙을 팀에서 정해 따릅니다. 이름만 보고 어느 층인지 알 수 있게 하려는 것입니다.</li>
+<li>개발 중엔 전체 <code>dbt run</code> 대신 <code>dbt run -s 고친모델</code>로 필요한 것만 돌립니다. BigQuery는 스캔한 양만큼 비용이 나가기 때문입니다.</li>
+<li>편집은 메모장이 아니라 VS Code(+ dbt 확장 프로그램)에서 합니다. 문법 색, 자동 완성, 컴파일 결과 미리보기를 씁니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="second-model">
 <div class="step-title">6. 직접 해보기: 결제 모델과 일별 매출 모델</div>
+<div class="why">
+<p>모델 하나로는 dbt의 핵심인 <b>모델끼리의 연결(<code>ref()</code>)</b>을 볼 수 없습니다. 프로시저 전체를 모델 3개로 쪼개 이어 붙이면, 순서를 적지 않아도 dbt가 알아서 순서를 정하는 것을 직접 확인할 수 있습니다. 이게 "프로시저 50개의 실행 순서를 사람이 관리하던 일"을 dbt가 대신하는 방식입니다.</p>
+</div>
 <p>5단계에서 프로시저의 "1) 정제" 블록을 <code>stg_orders.sql</code>로 옮겼습니다. 이번엔 같은 방식으로 나머지 두 블록을 옮겨서, <b>모델 3개가 서로 이어진 작은 파이프라인</b>을 완성합니다.</p>
 <pre class="diagram">  프로시저 블록                      →  만들 dbt 모델 파일
   ─────────────────────────────────────────────────────────────────────
@@ -304,6 +443,15 @@ from read_csv('data/raw_orders.csv')</code></pre>
 from read_csv('data/raw_payments.csv')
 group by ____</code></pre>
 <p>저장하고 <code>dbt run</code> → <code>dbt show --select stg_payments --limit 6</code>. <b>5번 주문이 59000</b>으로 한 줄이면 성공입니다 (전체 30행).</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>dbt show</td><td>모델의 SELECT를 DB에 보내 결과 몇 줄을 <b>화면에만</b> 보여 줌. 테이블·뷰를 새로 만들지 않음</td></tr>
+<tr><td>--select stg_payments</td><td>어느 모델을 볼지 (파일 이름, <code>.sql</code> 뺌)</td></tr>
+<tr><td>--limit 6</td><td>몇 줄까지 볼지. 안 주면 기본 5줄</td></tr>
+</table>
+</div>
+<p>왜 <code>dbt show</code>? DBeaver 같은 도구를 따로 열지 않고 터미널에서 바로 결과를 볼 수 있고, DB 파일 잠금(<code>Could not set lock</code>)도 피할 수 있습니다.</p>
 
 <h3>6-2. <code>daily_sales.sql</code> 만들기</h3>
 <ol>
@@ -339,6 +487,7 @@ group by o.order_date</code></pre>
 <p>저장하고 아래를 실행하세요. 기대 결과: <b>12행</b>(날짜 12일), 주문 수 합계 14건, 매출 합계 906,000원. 예를 들어 10-02는 <code>1 | 19000</code>, 10-04는 <code>2 | 188000</code>. (<code>order by</code>가 없어서 날짜 순서는 섞여 나올 수 있습니다. 정상입니다.)</p>
 <pre><code>dbt run
 dbt show --select daily_sales --limit 20</code></pre>
+<p><code>dbt run</code>을 다시 하는 이유: 새 파일은 run을 해야 DB에 뷰로 생깁니다. <code>--limit 20</code>은 12행이 다 보이게 넉넉히 준 것입니다.</p>
 
 <details class="hint"><summary>힌트 1</summary>
 <p>다른 모델을 쓰려면 테이블 이름 대신 <code>{{ ref('모델파일이름') }}</code> 을 씁니다. 확장자 <code>.sql</code>은 빼고요.</p>
@@ -362,27 +511,75 @@ where o.status = 'completed'
 group by o.order_date</code></pre>
 </details>
 <p><code>dbt run</code> 출력 순서를 보세요. 파일 이름은 알파벳순으로 <code>daily_sales</code>가 먼저지만, dbt는 <code>ref()</code>를 읽고 <b>stg 두 개를 먼저, daily_sales를 마지막에</b> 실행합니다. 순서를 적은 적이 없는데도요.</p>
+<div class="field">
+<ul>
+<li>다른 모델은 <b>언제나 <code>ref()</code></b>로 참조하고, 테이블 이름을 직접 쓰지 않습니다. 직접 쓰면 dev에서 돌려도 운영 테이블을 읽어 버리는 사고가 납니다(<code>ref()</code>는 target에 맞는 데이터셋 이름으로 바꿔 줌).</li>
+<li>고친 모델과 그 앞뒤만 돌릴 때는 그래프 선택자를 씁니다: <code>dbt run -s +daily_sales</code>(앞쪽 모델까지), <code>dbt run -s stg_orders+</code>(뒤쪽 모델까지).</li>
+<li>결과 확인은 <code>dbt show</code>로 먼저 빠르게 보고, 꼼꼼히 볼 때는 BigQuery 콘솔에서 dev 데이터셋의 테이블을 직접 조회합니다. BigQuery에서는 <code>dbt show</code>도 실제 쿼리라 스캔 비용이 든다는 점을 기억해 둡니다.</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="compiled">
 <div class="step-title">7. dbt가 실제로 보낸 SQL 열어 보기</div>
-<p>두 폴더를 비교합니다.</p>
+<div class="why">
+<p>모델 파일에는 <code>{{ ref() }}</code> 같은 Jinja가 섞여 있어서, 오류가 나면 "DB가 실제로 받은 SQL"이 무엇인지 봐야 원인을 찾을 수 있습니다. 이걸 모르면 오류 메시지의 줄 번호가 내 파일과 안 맞아서 헤매게 됩니다. 프로시저에서 동적 SQL을 <code>PRINT</code>로 찍어 보던 것과 같은 용도입니다.</p>
+</div>
+<p>두 폴더를 비교합니다(탐색기나 <code>notepad target\compiled\shop\models\daily_sales.sql</code>로 열기).</p>
 <ul>
 <li><code>target/compiled/shop/models/daily_sales.sql</code> — <code>{{ ref() }}</code>가 실제 테이블 이름(<code>"shop"."main"."stg_orders"</code>)으로 바뀐 SELECT</li>
 <li><code>target/run/shop/models/daily_sales.sql</code> — 그 SELECT를 <code>create view ... as</code>로 감싼, DB에 실제로 보낸 SQL</li>
 </ul>
 <p>에러가 나면 이 두 파일을 열어 보는 습관을 들이세요. "내 Jinja가 어떤 SQL로 바뀌었나"가 보입니다. 컴파일만 하고 싶으면 <code>dbt compile</code>, 결과 미리보기는 <code>dbt show --select daily_sales</code> 입니다.</p>
+<pre><code>dbt compile --select daily_sales</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>dbt compile</td><td>Jinja만 풀어서 <code>target/compiled</code>에 SQL을 쓰고, 테이블·뷰는 <b>만들지 않음</b></td></tr>
+<tr><td>--select daily_sales</td><td>그 모델만 컴파일. 컴파일된 SELECT가 화면에도 출력됨</td></tr>
+</table>
+</div>
+<div class="field">
+<ul>
+<li>모델이 이상할 때 가장 흔한 디버깅: <code>dbt compile -s 모델</code> → 나온 SQL을 복사 → <b>BigQuery 콘솔에 붙여서</b> 부분부분 돌려 봄. 콘솔에 실행 전 "이 쿼리는 몇 GB를 처리합니다"가 표시돼 비용도 미리 볼 수 있습니다.</li>
+<li>VS Code의 dbt 확장 프로그램은 저장할 때마다 컴파일된 SQL을 옆 창에 보여 줘서, 이 폴더를 직접 여는 일을 줄여 줍니다.</li>
+<li><code>target/</code>는 매번 다시 만들어지는 결과물이라 git에 올리지 않습니다(다음 단계).</li>
+</ul>
+</div>
 </div>
 
 <div class="step" data-id="peek">
 <div class="step-title">8. 결과 확인하고 하루 마무리</div>
+<div class="why">
+<p>모델이 SQL 파일이 됐다는 건 <b>코드처럼 이력을 남길 수 있다</b>는 뜻입니다. 오늘 상태를 git에 한 번 저장해 두면 내일 무언가 망가져도 "어제 되던 상태"와 비교하거나 되돌릴 수 있습니다. DB 안 프로시저는 이력이 잘 안 남던 문제를 여기서 해결합니다. <code>dbt ls</code>는 저장 전에 "dbt가 인식하는 모델이 내가 생각한 3개가 맞나"를 확인하는 용도입니다.</p>
+</div>
 <pre><code>dbt show --select daily_sales --limit 20
 dbt ls          # 프로젝트 안 모델 목록</code></pre>
+<p><code>dbt show</code>는 6단계와 같은 명령으로 최종 결과를 한 번 더 확인하는 것입니다. <code>dbt ls</code>(list)는 아무것도 실행하지 않고 프로젝트 안 노드(모델 등)를 <code>shop.daily_sales</code> 같은 이름으로 나열합니다. <code>example</code> 모델이 보이면 3단계 삭제가 안 된 것입니다.</p>
 <p>프로젝트 폴더를 git으로 관리하기 시작합니다. <code>target/</code>, <code>logs/</code>, <code>*.duckdb</code>는 올리지 않습니다(<code>dbt init</code>이 만든 <code>.gitignore</code>에 앞의 둘은 이미 있습니다).</p>
 <pre><code>Add-Content .gitignore "*.duckdb"
 git init
 git add .
 git commit -m "1일차: 첫 dbt 모델"</code></pre>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>조각</th><th>뜻</th></tr>
+<tr><td>Add-Content .gitignore "*.duckdb"</td><td><code>.gitignore</code> 파일 끝에 한 줄 추가. <code>*.duckdb</code> = 확장자가 .duckdb인 모든 파일은 git이 무시. DB 파일은 크고 매번 바뀌는 결과물이라 코드가 아님</td></tr>
+<tr><td>git init</td><td>현재 폴더(shop)를 git 저장소로 만듦. 숨김 폴더 <code>.git</code>이 생김. 프로젝트마다 처음 한 번만</td></tr>
+<tr><td>git add .</td><td>현재 폴더의 바뀐 파일을 "이번 저장에 넣을 목록"에 올림 (<code>.</code> = 현재 폴더 전체, .gitignore에 적힌 건 빠짐)</td></tr>
+<tr><td>git commit -m "..."</td><td>목록에 올린 것을 하나의 이력으로 저장. <code>-m</code> 뒤는 무엇을 했는지 적는 메시지</td></tr>
+</table>
+</div>
+<details class="hint"><summary>"Please tell me who you are" 가 뜬다면</summary>
+<p>이 PC에서 git을 처음 쓰면 커밋에 적을 이름·이메일이 없어서 나는 오류입니다. 한 번만 설정하면 됩니다: <code>git config --global user.name "내 이름"</code>, <code>git config --global user.email "내 메일"</code> 후 <code>git commit</code>을 다시 실행.</p>
+</details>
+<div class="field">
+<ul>
+<li><code>main</code>에 바로 커밋하지 않고 <b>작업마다 브랜치</b>(<code>git switch -c feature/daily-sales</code>)를 만들어 고친 뒤, GitHub에 올려 <b>PR(풀 리퀘스트)</b>로 동료 리뷰를 받고 합칩니다.</li>
+<li>PR을 올리면 CI가 자동으로 <code>dbt build</code>(run + test)를 돌려, 깨지는 모델이 있으면 합치기 전에 막습니다. 바뀐 모델만 골라 돌리는 방식(<code>state:modified</code>)을 많이 씁니다.</li>
+<li><code>.gitignore</code>에는 보통 <code>target/</code>, <code>logs/</code>, <code>dbt_packages/</code>, <code>.venv/</code>가 들어가고, 키 파일·<code>profiles.yml</code> 같은 비밀은 절대 올리지 않습니다.</li>
+</ul>
+</div>
 </div>
 
 </div>
