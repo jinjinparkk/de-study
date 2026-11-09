@@ -10,6 +10,7 @@
     { id: "day7", file: "day7.html", tool: "spark", title: "Spark 기초와 전체 연결", desc: "드라이버·익스큐터, 지연 실행, 파티션·셔플, Spark vs 웨어하우스" },
   ];
   const EXTRA = [
+    { id: "overview", file: "overview.html", title: "dbt 한눈에" },
     { id: "dict", file: "dictionary.html", title: "프로시저↔dbt 사전" },
     { id: "glossary", file: "glossary.html", title: "용어집" },
     { id: "cheatsheet", file: "cheatsheet.html", title: "명령어 모음" },

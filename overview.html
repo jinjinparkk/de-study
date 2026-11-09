@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dbt 한눈에 — 그림으로 보는 전체 구조</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="overview">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">시작 전에 · dbt</div>
+<h1>dbt 한눈에</h1>
+<p class="lead">1~4일차에서 하나씩 배울 내용을 <b>한 장의 지도</b>로 먼저 봅니다. 여기서는 외우지 말고 "이런 부품이 있고, 이렇게 맞물리는구나"만 잡으세요.</p>
+<p class="meta-line">읽는 데 약 30분 · 실습 없음</p>
+
+<div class="box summary">
+<span class="box-title">💡 dbt를 한 문장으로</span>
+dbt는 <b>SELECT 문만 쓰면</b>, 그걸 <b>테이블·뷰로 만드는 DDL, 실행 순서, 테스트, 문서, 이력 관리</b>를 대신 붙여 주는 도구입니다. 데이터를 계산하는 건 dbt가 아니라 <b>웨어하우스</b>(BigQuery, Snowflake, DuckDB…)입니다.
+</div>
+
+<!-- ================================================== -->
+<h2 id="where">1. dbt는 어디에 있나</h2>
+
+<p>데이터가 원천에서 대시보드까지 가는 길을 그리면 이렇습니다. dbt는 <b>웨어하우스 안에서 T(변환)</b>만 맡습니다.</p>
+
+<pre class="diagram">  원천                옮기기 (E·L)          웨어하우스 안 (T = dbt)                      쓰는 곳
+  ─────               ────────────          ─────────────────────────────                ──────
+  ERP · 앱 DB   ──┐
+  광고 API      ──┼──▶  Fivetran      ──▶   raw  ──▶  staging  ──▶  marts   ──────▶   BI 대시보드
+  로그 · CSV    ──┘     Airbyte              (원본    (정제)         (완성 표)          분석 · ML
+                        직접 짠 스크립트       그대로)
+
+  ◀──────────────────────── Airflow: 매일 몇 시에, 무엇 다음에 무엇을 (지휘자) ────────────────────────▶
+                               └ Spark: 웨어하우스가 감당 못 할 크기일 때 따로 쓰는 계산 엔진</pre>
+
+<div class="compare">
+<div>
+<p class="label">dbt가 하는 일</p>
+<ul>
+<li>SELECT를 테이블·뷰로 만들기</li>
+<li>모델 사이 의존 관계를 읽고 순서대로 실행</li>
+<li>테스트 실행 (중복·NULL·허용값…)</li>
+<li>문서·리니지 그래프 만들기</li>
+<li>개발/운영 환경 나누기</li>
+</ul>
+</div>
+<div>
+<p class="label">dbt가 안 하는 일</p>
+<ul>
+<li>원천 시스템에서 데이터 가져오기 (E·L) → Fivetran, Airbyte 등</li>
+<li>정해진 시각에 자동 실행 (dbt Core 기준) → Airflow, cron 등</li>
+<li>데이터 저장·계산 → 웨어하우스</li>
+<li>대시보드 → BI 도구</li>
+</ul>
+</div>
+</div>
+
+<div class="box proc">
+<span class="box-title">🔁 프로시저 감각으로 옮기면</span>
+지금까지는 <b>프로시저 하나</b>가 E·T·L과 스케줄 일부까지 다 했습니다. 모던 데이터 스택에서는 이걸 <b>도구별로 쪼갭니다</b>. 가져오기는 EL 도구가, 변환은 dbt가, 언제 돌릴지는 Airflow가 맡습니다. 프로시저 안의 SQL 부분이 거의 그대로 dbt로 옮겨 온다고 보면 됩니다.
+</div>
+
+<!-- ================================================== -->
+<h2 id="engine">2. dbt run 하면 안에서 일어나는 일</h2>
+
+<p>제일 중요한 그림입니다. 내가 쓰는 건 SELECT뿐이고, 나머지는 dbt가 채웁니다.</p>
+
+<pre class="diagram">  ① 내가 쓰는 파일                models/daily_sales.sql
+                                  select order_date, count(*) as orders
+                                  from {{ ref('stg_orders') }}            ← Jinja (중괄호 두 개)
+                                  group by order_date
+                                        │
+                                        │  파싱: ref('stg_orders')를 보고
+                                        │        "daily_sales는 stg_orders 다음"이라고 기록 → DAG
+                                        ▼
+  ② 컴파일 결과                   target/compiled/shop/models/daily_sales.sql
+                                  select order_date, count(*) as orders
+                                  from "dev"."main"."stg_orders"          ← 진짜 테이블 이름
+                                  group by order_date
+                                        │
+                                        │  materialization(table)으로 감싸기
+                                        ▼
+  ③ 실제로 보내는 SQL             target/run/shop/models/daily_sales.sql
+                                  create table "dev"."main"."daily_sales" as (
+                                      select ... from "dev"."main"."stg_orders" ...
+                                  )
+                                        │
+                                        │  profiles.yml의 연결 정보로 전송
+                                        ▼
+  ④ 웨어하우스가 실행             DuckDB / BigQuery / Snowflake ... (계산은 여기서)</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>단계</th><th>누가</th><th>프로시저 세계에서는</th></tr>
+<tr><td>① SELECT 쓰기</td><td>나</td><td>프로시저 안의 SELECT 부분</td></tr>
+<tr><td>② ref → 진짜 이름</td><td>dbt</td><td>스키마명·테이블명을 손으로 적음 (<code>dm.daily_sales</code>)</td></tr>
+<tr><td>③ DDL로 감싸기</td><td>dbt</td><td><code>CREATE OR REPLACE TABLE … AS</code>, <code>DELETE</code> + <code>INSERT</code>를 손으로 씀</td></tr>
+<tr><td>④ 실행</td><td>웨어하우스</td><td>같음</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">✅ 디버깅할 때</span>
+오류가 나면 <code>target/compiled/</code>의 SQL을 복사해서 DB 콘솔에서 직접 돌려 보세요. 대부분 그걸로 원인이 보입니다. VS Code의 dbt Power User 확장을 쓰면 이 SQL을 옆 창에서 바로 볼 수 있습니다.
+</div>
+
+<!-- ================================================== -->
+<h2 id="project">3. 프로젝트 폴더 = dbt의 전부</h2>
+
+<p>dbt 프로젝트는 그냥 <b>폴더</b>입니다. 파일이라 git으로 관리할 수 있습니다. 프로시저가 DB 안에 숨어 있던 것과 가장 크게 다른 점입니다.</p>
+
+<pre class="diagram">  shop/                          ← dbt init 이 만든 프로젝트 폴더 (git 저장소)
+  ├─ dbt_project.yml             ← 프로젝트 설정: 이름, 폴더별 기본 materialization       [1일차]
+  ├─ models/                     ← 핵심. SELECT 파일 하나 = 모델 하나 = 테이블/뷰 하나
+  │   ├─ staging/                    stg_*.sql  원본 1:1 정제                             [2일차]
+  │   │   ├─ _sources.yml            원본 테이블 등록 (source)                            [2일차]
+  │   │   └─ _stg_models.yml         컬럼 설명 + 테스트                                   [3일차]
+  │   ├─ intermediate/               int_*.sql  중간 조립                                 [2일차]
+  │   └─ marts/                      fct_* · dim_* · 완성 표                              [2일차]
+  ├─ tests/                      ← 직접 쓰는 검증 SQL (singular test)                    [3일차]
+  ├─ macros/                     ← 재사용 SQL 조각 (함수 같은 것)                         [4일차]
+  ├─ seeds/                      ← 작은 CSV를 테이블로 (코드표 등)                        [2일차]
+  ├─ snapshots/                  ← 변경 이력 (SCD2)                                       [4일차]
+  └─ target/                     ← dbt가 만든 결과물 (컴파일된 SQL 등). git에 안 올림
+
+  ~/.dbt/profiles.yml            ← 프로젝트 밖! DB 접속 정보·비밀번호. git에 안 올림       [1일차]</pre>
+
+<div class="compare">
+<div>
+<p class="label">dbt_project.yml — 무엇을</p>
+<p>프로젝트 이름, 모델 폴더 위치, "staging 폴더는 view, marts는 table" 같은 규칙. 팀 전체가 같이 쓰므로 <b>git에 올립니다</b>.</p>
+</div>
+<div>
+<p class="label">profiles.yml — 어디에</p>
+<p>어느 DB에, 어떤 계정으로 붙을지. <code>dev</code>(내 개발용)와 <code>prod</code>(운영)를 나눠 둡니다. 비밀번호가 있어서 <b>git에 안 올립니다</b>.</p>
+</div>
+</div>
+
+<!-- ================================================== -->
+<h2 id="dag">4. ref · source · DAG — 순서를 dbt가 정하는 원리</h2>
+
+<p>모델 안에서 다른 테이블을 부를 때 이름을 직접 적지 않고 함수로 부릅니다.</p>
+<ul>
+<li><code>{{ source('shop', 'raw_orders') }}</code>: dbt 밖에서 들어온 <b>원본</b>을 부를 때</li>
+<li><code>{{ ref('stg_orders') }}</code>: dbt가 만든 <b>다른 모델</b>을 부를 때</li>
+</ul>
+<p>dbt는 모든 파일에서 이 함수들을 모아 <b>누가 누구를 쓰는지</b> 그래프를 그립니다. 이게 <b>DAG</b>(방향이 있고 되돌아오지 않는 그래프)입니다.</p>
+
+<pre class="diagram">  source                    staging                 intermediate              marts
+  (원본, dbt 밖)            (view)                  (ephemeral)               (table)
+
+  raw_customers ───▶   stg_customers ─────────────────────────────────────────┬──▶  dim_customers
+                                                                               │         ▲
+  raw_orders    ───▶   stg_orders    ──────────────────────────┬──▶  fct_orders ─────────┘
+                                                                │
+  raw_payments  ───▶   stg_payments  ───▶  int_order_payments ──┘
+
+  dbt run 실행 순서:  ① stg_* 3개 (동시에)  →  ② fct_orders  →  ③ dim_customers
+  (int_order_payments 는 ephemeral 이라 따로 만들어지지 않고 fct_orders SQL 안에 CTE 로 들어감)
+  ※ 2일차 실습에서 실제로 만드는 그래프입니다. 1일차의 daily_sales 는 2일차에 이 구조로 바뀝니다.</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>이름을 직접 쓰면 (프로시저 방식)</th><th>ref로 쓰면</th></tr>
+<tr><td>실행 순서를 스케줄러에 사람이 적는다</td><td>그래프를 보고 dbt가 정한다. 서로 상관없는 건 동시에 돌린다 (threads)</td></tr>
+<tr><td>dev·prod 스키마명이 코드에 박혀 있다</td><td>dev로 돌리면 dev 스키마, prod로 돌리면 prod 스키마로 자동으로 바뀐다</td></tr>
+<tr><td>"이 표 바꾸면 어디가 영향받지?"를 grep으로 찾는다</td><td>리니지 그래프에서 바로 보인다</td></tr>
+</table>
+</div>
+
+<p>그래프가 있으니 <b>일부만 골라 실행</b>할 수도 있습니다. 실무에서 매일 쓰는 문법입니다.</p>
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>선택 문법</th><th>뜻</th><th>언제</th></tr>
+<tr><td>-s stg_orders</td><td>이 모델 하나만</td><td>방금 고친 모델 확인</td></tr>
+<tr><td>-s stg_orders+</td><td>이 모델 + 이걸 쓰는 하위 모델 전부</td><td>고친 게 아래에 미치는 영향까지 다시 만들 때</td></tr>
+<tr><td>-s +daily_sales</td><td>이 모델 + 이게 쓰는 상위 모델 전부</td><td>이 표 하나를 처음부터 완전히 새로 만들 때</td></tr>
+<tr><td>-s path:models/staging</td><td>staging 폴더 전체</td><td>계층 단위로 돌릴 때</td></tr>
+</table>
+</div>
+
+<!-- ================================================== -->
+<h2 id="layers">5. 계층 — staging · intermediate · marts</h2>
+
+<p>프로시저 하나에 몰려 있던 단계를 <b>역할별 층</b>으로 나눕니다. 폴더 이름이 곧 규칙입니다.</p>
+
+<pre class="diagram">  층              파일 이름         하는 일                                     보통 형태     누가 보나
+  ──────────────  ───────────────  ──────────────────────────────────────────  ───────────  ────────────
+  source          (등록만)          원본 테이블 위치 선언. SQL 없음               -            -
+  staging         stg_원본명        원본 1개 ↔ 모델 1개. 이름 바꾸기, 형 변환,     view         개발자만
+                                    소문자·공백 정리. JOIN·집계 안 함
+  intermediate    int_설명          staging 여러 개 조립. JOIN, 중간 집계         ephemeral    개발자만
+                                                                                 또는 view
+  marts           fct_ · dim_       업무 단위 완성 표. 대시보드가 여기만 읽음      table        분석가 · BI</pre>
+
+<div class="box proc">
+<span class="box-title">🔁 프로시저 감각으로 옮기면</span>
+1일차의 <code>sp_build_daily_sales</code>를 떠올리세요. <code>-- 1) 정제</code>의 <code>tmp_orders</code>가 <b>staging</b>, <code>-- 2) 결제 합치기</code>가 <b>staging/intermediate</b>, <code>-- 3) 마트 적재</code>가 <b>marts</b>입니다. 임시 테이블 하나하나가 파일 하나가 되고, 다른 프로시저도 그 파일을 가져다 쓸 수 있게 됩니다. <code>LOWER(TRIM(status))</code>를 프로시저마다 복사하던 일이 사라집니다.
+</div>
+
+<p><b>fct와 dim</b>: <code>fct_</code>(fact)는 주문·결제처럼 <b>일어난 일</b>이 행 하나인 표, <code>dim_</code>(dimension)은 고객·상품처럼 <b>대상</b>이 행 하나인 표입니다. 대시보드는 fct를 dim과 JOIN해서 "고객 등급별 매출" 같은 걸 만듭니다.</p>
+
+<!-- ================================================== -->
+<h2 id="mat">6. materialization — 같은 SELECT, 다른 저장 방식</h2>
+
+<p>SELECT는 그대로 두고 설정 한 줄로 <b>어떻게 저장할지</b>만 바꿉니다. 프로시저에서 손으로 쓰던 DDL·DML을 dbt가 대신 만들어 줍니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>dbt가 만드는 SQL</th><th>프로시저에서 쓰던 것</th><th>언제</th><th>배우는 날</th></tr>
+<tr><td><b>view</b></td><td><code>create view … as select</code></td><td>뷰</td><td>가볍고 자주 바뀌는 staging</td><td>1·2</td></tr>
+<tr><td><b>table</b></td><td><code>create table … as select</code> (매번 통째로 새로)</td><td><code>TRUNCATE</code> + <code>INSERT</code>, <code>CREATE OR REPLACE</code></td><td>대시보드가 읽는 marts</td><td>1·2</td></tr>
+<tr><td><b>ephemeral</b></td><td>테이블을 안 만들고 쓰는 쪽 SQL에 CTE(<code>with …</code>)로 끼워 넣음</td><td>임시 테이블, 서브쿼리</td><td>잠깐 쓰는 중간 조립</td><td>2</td></tr>
+<tr><td><b>incremental</b></td><td>처음엔 table, 이후엔 새 행만 <code>merge</code> / <code>delete+insert</code></td><td><code>MERGE</code>, <code>DELETE WHERE dt = p_date</code> + <code>INSERT</code></td><td>매일 쌓이는 큰 표</td><td>4</td></tr>
+<tr><td><b>snapshot</b><br><span style="font-size:13px;color:var(--muted)">(모델과 별도)</span></td><td>바뀐 행에 유효기간(<code>dbt_valid_from/to</code>)을 붙여 이력 보존</td><td>SCD Type 2 프로시저</td><td>고객 등급처럼 덮어쓰면 과거가 사라지는 값</td><td>4</td></tr>
+</table>
+</div>
+
+<pre class="diagram">  설정하는 곳 (아래가 위를 덮어씀)
+
+  dbt_project.yml          models: shop: staging: +materialized: view     ← 폴더 단위 기본값
+        ▼                                 marts:   +materialized: table
+  models/*.yml             - name: daily_sales  config: materialized: ...  ← 모델 단위
+        ▼
+  모델 파일 맨 위           {{ config(materialized='incremental') }}         ← 가장 우선</pre>
+
+<!-- ================================================== -->
+<h2 id="tests">7. 테스트와 문서 — 품질을 코드에 붙이기</h2>
+
+<p>프로시저 세계에서는 "결과가 맞나?"를 문제가 터진 뒤에 압니다. dbt에서는 <b>YAML에 기대 조건을 적어 두고 매번 같이 돌립니다</b>.</p>
+
+<pre class="diagram">  models/staging/_stg_models.yml                     dbt test 가 실제로 돌리는 SQL (대략)
+  ──────────────────────────────                     ─────────────────────────────────────
+  - name: stg_orders
+    columns:
+      - name: order_id
+        data_tests:
+          - unique                 ──────▶   select order_id from stg_orders
+                                             group by order_id having count(*) > 1
+          - not_null               ──────▶   select * from stg_orders where order_id is null
+      - name: status
+        data_tests:
+          - accepted_values:       ──────▶   select * from stg_orders
+              arguments:                     where status not in ('completed', 'returned', ...)
+                values: [...]
+
+  규칙: 결과가 0행이면 통과(PASS), 1행이라도 나오면 실패(FAIL)</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>무엇</th><th>예</th></tr>
+<tr><td>generic test</td><td>YAML에 이름만 적는 기본 테스트</td><td><code>unique</code>, <code>not_null</code>, <code>accepted_values</code>, <code>relationships</code>(외래 키)</td></tr>
+<tr><td>singular test</td><td><code>tests/</code> 폴더에 직접 쓰는 SELECT. "나오면 안 되는 행"을 찾는 쿼리</td><td>결제 합계가 음수인 주문</td></tr>
+<tr><td>source freshness</td><td>원본이 제때 들어왔는지</td><td>"raw_orders 최신 행이 24시간보다 오래됐으면 경고"</td></tr>
+<tr><td>contract</td><td>모델 컬럼 이름·타입을 약속. 어기면 빌드 자체가 실패</td><td><code>order_id</code>는 반드시 <code>bigint</code></td></tr>
+</table>
+</div>
+
+<p>같은 YAML에 <code>description</code>을 적으면 <code>dbt docs generate</code>가 <b>문서 사이트 + 리니지 그래프</b>를 만듭니다. 엑셀 테이블 정의서가 코드 옆으로 들어온 셈입니다.</p>
+
+<!-- ================================================== -->
+<h2 id="build">8. 명령어 흐름 — 하루 작업은 이렇게 돈다</h2>
+
+<pre class="diagram">  개발할 때 (dev)                                              운영 (prod, 보통 Airflow가 실행)
+  ────────────────                                              ────────────────────────────────
+  모델 파일 수정
+     │
+     ├─▶ dbt compile -s 모델   SQL만 만들어 보기 (DB에 안 보냄)
+     ├─▶ dbt show -s 모델      결과 몇 줄 미리 보기
+     ├─▶ dbt build -s 모델+    만들고 + 테스트 + 하위까지
+     │
+     └─▶ git commit · push ─▶ 코드 리뷰 ─▶ main 병합 ──────▶  dbt build --target prod
+                                                               (매일 새벽, 실패하면 알림)</pre>
+
+<div class="table-wrap">
+<table class="cmd">
+<tr><th>명령</th><th>하는 일</th><th>배우는 날</th></tr>
+<tr><td>dbt debug</td><td>프로필·DB 연결 점검</td><td>1</td></tr>
+<tr><td>dbt run</td><td>모델 만들기 (테스트 없음)</td><td>1</td></tr>
+<tr><td>dbt show</td><td>결과 미리 보기 (테이블은 안 만듦)</td><td>1</td></tr>
+<tr><td>dbt compile</td><td>컴파일된 SQL만 만들기</td><td>1</td></tr>
+<tr><td>dbt seed</td><td><code>seeds/</code>의 CSV를 테이블로 올리기</td><td>2</td></tr>
+<tr><td>dbt test</td><td>테스트만 실행</td><td>3</td></tr>
+<tr><td>dbt build</td><td>seed → run → test → snapshot을 <b>DAG 순서대로 섞어서</b> 실행. 실무 기본</td><td>3</td></tr>
+<tr><td>dbt docs generate / serve</td><td>문서 사이트 만들기 / 띄우기</td><td>3</td></tr>
+<tr><td>dbt snapshot</td><td>스냅숏(SCD2)만 실행</td><td>4</td></tr>
+<tr><td>dbt deps</td><td><code>packages.yml</code>의 패키지 설치 (예: dbt_utils)</td><td>4</td></tr>
+</table>
+</div>
+
+<pre class="diagram">  dbt build 가 run + test 보다 나은 이유
+
+  stg_orders 만들기 ─▶ stg_orders 테스트 ─▶ ✗ 실패
+                                              │
+                                              └─▶ 이걸 쓰는 fct_orders, dim_customers 는 SKIP
+                                                  (틀린 데이터가 대시보드까지 번지지 않음)
+
+  dbt run 후 dbt test 를 따로 하면: 이미 dim_customers 까지 틀린 데이터로 다 만든 뒤에야 실패를 앎</pre>
+
+<!-- ================================================== -->
+<h2 id="jinja">9. Jinja와 매크로 — SQL에 변수와 함수를 더하기</h2>
+
+<p><code>{{ }}</code>와 <code>{% %}</code>는 Jinja라는 템플릿 문법입니다. dbt는 SQL을 DB에 보내기 전에 이걸 먼저 풉니다(2번 그림의 ②).</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>문법</th><th>뜻</th><th>예</th><th>프로시저에서는</th></tr>
+<tr><td><code>{{ … }}</code></td><td>값 넣기</td><td><code>{{ ref('stg_orders') }}</code>, <code>{{ var('start_date') }}</code></td><td>변수 <code>p_date</code></td></tr>
+<tr><td><code>{% if %}</code></td><td>조건</td><td><code>{% if is_incremental() %} where … {% endif %}</code></td><td><code>IF … THEN</code></td></tr>
+<tr><td><code>{% for %}</code></td><td>반복으로 SQL 찍어 내기</td><td>결제수단마다 <code>sum(case when …)</code> 컬럼 만들기</td><td>동적 SQL 문자열 조립</td></tr>
+<tr><td><code>{% macro %}</code></td><td>재사용 함수</td><td><code>{{ cents_to_won('amount') }}</code></td><td>공통 함수, UDF</td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">⚠️ 처음에 많이 하는 실수</span>
+Jinja는 <b>DB가 아니라 dbt가</b> SQL을 만들기 전에 실행합니다. 그래서 Jinja 안에서 테이블의 값을 바로 읽을 수는 없습니다(읽으려면 <code>run_query</code> 같은 별도 기능이 필요합니다). "Jinja로 SQL 글자를 만든다 → 그 SQL을 DB가 실행한다", 두 단계로 생각하세요.
+</div>
+
+<!-- ================================================== -->
+<h2 id="env">10. 환경 — dev와 prod를 나누는 방법</h2>
+
+<pre class="diagram">  ~/.dbt/profiles.yml
+  shop:                          ← dbt_project.yml 의 profile: 'shop' 과 이름이 같아야 함
+    target: dev                  ← 아무것도 안 쓰면 dev 로 실행
+    outputs:
+      dev:   path: dev.duckdb      threads: 1     ← 내 PC, 내 개인 스키마
+      prod:  path: prod.duckdb     threads: 4     ← 운영
+
+  dbt build                  →  dev 에 만들어짐  (마음껏 깨도 됨)
+  dbt build --target prod    →  prod 에 만들어짐 (보통 사람이 아니라 Airflow·CI 가 실행)</pre>
+
+<p>같은 코드가 <code>--target</code>만 바꾸면 다른 곳에 만들어지는 건 <code>ref()</code> 덕분입니다. 코드에 스키마 이름을 직접 적지 않았으니까요. 실무에서는 개발자마다 <code>dbt_eunjin</code> 같은 <b>개인 dev 스키마</b>를 갖고, 운영 스키마는 자동화만 건드립니다.</p>
+
+<!-- ================================================== -->
+<h2 id="vs">11. 프로시저 ↔ dbt 한 장 비교</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th>주제</th><th>프로시저</th><th>dbt</th></tr>
+<tr><td>코드 위치</td><td>DB 안</td><td>폴더 안 파일 → git</td></tr>
+<tr><td>작성 단위</td><td>프로시저 하나에 여러 단계</td><td>SELECT 하나 = 모델 하나</td></tr>
+<tr><td>DDL·DML</td><td>직접 씀</td><td>materialization 설정으로 자동</td></tr>
+<tr><td>실행 순서</td><td>사람이 정함</td><td>ref 그래프로 자동</td></tr>
+<tr><td>재사용</td><td>복사·붙여 넣기</td><td>ref로 다른 모델 참조, 매크로</td></tr>
+<tr><td>매개변수</td><td><code>p_date DATE</code></td><td><code>var()</code>, <code>is_incremental()</code></td></tr>
+<tr><td>품질 확인</td><td>따로 짠 검증 쿼리, 혹은 없음</td><td>테스트가 빌드에 포함</td></tr>
+<tr><td>문서</td><td>엑셀 정의서</td><td>YAML → 문서 사이트 자동 생성</td></tr>
+<tr><td>dev/prod</td><td>스키마명을 코드에서 바꾸거나 DB를 따로 둠</td><td><code>--target</code> 하나로 전환</td></tr>
+<tr><td>이력</td><td>잘 안 남음</td><td>git 커밋·코드 리뷰</td></tr>
+<tr><td>스케줄</td><td>DB 스케줄러 / 에이전트 잡</td><td>dbt 밖 (Airflow 등) — 5·6일차</td></tr>
+</table>
+</div>
+<p>패턴별로 더 자세한 대응은 <a href="dictionary.html">프로시저↔dbt 사전</a>에 있습니다.</p>
+
+<!-- ================================================== -->
+<h2 id="map">12. 7일 지도 — 이 그림의 어디를 언제 배우나</h2>
+
+<pre class="diagram">  1  큰 그림         ── 2번(dbt run 내부), 3번(폴더·profiles)  ── 첫 모델 3개, git
+  2  모델·ref·계층    ── 4번(ref·source·DAG), 5번(계층), 6번(view·table·ephemeral)
+  3  테스트·문서      ── 7번(테스트·freshness·contract), 8번(dbt build)
+  4  Jinja·증분      ── 9번(Jinja·매크로), 6번(incremental·snapshot), 패키지
+  ───────────────────────────────────────────────────────────────────────────
+  5  Airflow 개념     ── 1번 그림의 "지휘자": DAG·Task·스케줄·백필
+  6  Airflow + dbt    ── 8번 그림의 오른쪽(운영): Airflow가 dbt build --target prod 실행
+  7  Spark            ── 1번 그림의 "큰 칼": 웨어하우스 밖에서 큰 데이터 계산</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 전체를 비유로</span>
+<p><b>웨어하우스</b>는 주방, <b>raw</b>는 막 들어온 식재료, <b>dbt 모델</b>은 단계별 레시피 카드, <b>ref</b>는 카드에 적힌 "이 카드 앞에 저 카드", <b>테스트</b>는 단계마다 붙은 간 확인표, <b>marts</b>는 손님에게 나가는 완성 요리입니다.</p>
+<p><b>Airflow</b>는 "매일 새벽 5시에 카드 순서대로 요리 시작, 식재료가 안 왔으면 기다렸다가"라고 지시하는 주방장이고, <b>Spark</b>는 주방 화구로는 감당이 안 되는 대량 주문이 들어왔을 때 빌려 오는 대형 조리 설비입니다.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 이 페이지에서 꼭 가져갈 세 가지</span>
+<ol style="margin:4px 0 0">
+<li>내가 쓰는 건 <b>SELECT뿐</b>. DDL·순서·테스트는 dbt가, 계산은 웨어하우스가 한다.</li>
+<li><b>ref()</b> 하나가 실행 순서, dev/prod 전환, 리니지를 모두 가능하게 한다.</li>
+<li>막히면 <b>target/compiled</b>의 SQL을 열어 본다.</li>
+</ol>
+</div>
+
+<p style="margin-top:28px"><a class="btn primary" href="days/day2.html" style="text-decoration:none">2 · 모델·ref·source·계층 시작하기 →</a></p>
+
+</main>
+</div>
+<div class="footer">개인 학습용 · 실습 데이터는 가상 데이터입니다</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
