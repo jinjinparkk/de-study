@@ -14,13 +14,20 @@
     { id: "dict", file: "dictionary.html", title: "프로시저↔dbt 사전" },
     { id: "glossary", file: "glossary.html", title: "용어집" },
     { id: "cheatsheet", file: "cheatsheet.html", title: "명령어 모음" },
+    { id: "d30", file: "dbt30/index.html", title: "30일 버전 →" },
+    { id: "ess", file: "essentials/index.html", title: "필수 정리 →" },
   ];
   window.DE_DAYS = DAYS;
 
   const body = document.body;
   const page = body.dataset.page || "";
+  /* dbt30/ 폴더 안이면 30일 코스 모드: 일차 목록은 assets/dbt30-days.js 의 DBT30_DAYS */
+  const in30 = location.pathname.includes("/dbt30/");
+  const D30 = window.DBT30_DAYS || [];
   const inDays = location.pathname.includes("/days/");
-  const root = inDays ? "../" : "";
+  /* essentials/ 폴더 = 필수 정리 (본문은 assets/essentials.js 가 그림) */
+  const inEss = location.pathname.includes("/essentials/");
+  const root = inDays || in30 || inEss ? "../" : "";
   const href = (f) => (f.startsWith("day") ? (inDays ? f : "days/" + f) : root + f);
 
   const store = {
@@ -32,11 +39,25 @@
   /* ---------- 상단 메뉴 ---------- */
   const top = document.createElement("header");
   top.className = "topbar";
-  const links = DAYS.map((d, i) => {
-    const done = store.get(d.id + ":done", false);
-    return `<a href="${href(d.file)}" class="${d.id === page ? "active" : ""} ${done ? "done" : ""}" title="${d.title}">${i + 1}</a>`;
-  }).concat(EXTRA.map((e) => `<a href="${href(e.file)}" class="${e.id === page ? "active" : ""}">${e.title}</a>`));
-  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${root}index.html">DAS</a><nav class="topnav">${links.join("")}</nav></div>`;
+  let links;
+  if (inEss) {
+    links = [`<a href="index.html" class="${page === "ess-home" ? "active" : ""}">목차</a>`]
+      .concat([1, 2, 3, 4].map((w) => `<a href="index.html#w${w}">${w}주차</a>`))
+      .concat([`<a href="../dbt30/index.html">dbt 30일</a>`, `<a href="../index.html">7일 버전</a>`]);
+  } else if (in30) {
+    const cur = D30.find((d) => d.id === page);
+    links = [`<a href="index.html" class="${page === "d30-home" ? "active" : ""}">30일 홈</a>`]
+      .concat([1, 2, 3, 4].map((w) => `<a href="index.html#w${w}">${w}주차</a>`))
+      .concat(cur ? [`<a href="${cur.file}" class="active">Day ${cur.n}</a>`] : [])
+      .concat([`<a href="modeling.html" class="${page === "d30-modeling" ? "active" : ""}">모델링</a>`, `<a href="../essentials/index.html">필수 정리</a>`])
+      .concat([`<a href="../glossary.html">용어집</a>`, `<a href="../cheatsheet.html">명령어 모음</a>`, `<a href="../index.html">← 7일 버전</a>`]);
+  } else {
+    links = DAYS.map((d, i) => {
+      const done = store.get(d.id + ":done", false);
+      return `<a href="${href(d.file)}" class="${d.id === page ? "active" : ""} ${done ? "done" : ""}" title="${d.title}">${i + 1}</a>`;
+    }).concat(EXTRA.map((e) => `<a href="${href(e.file)}" class="${e.id === page ? "active" : ""}">${e.title}</a>`));
+  }
+  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${in30 || inEss ? "index.html" : root + "index.html"}">${in30 ? "DAS · dbt 30일" : inEss ? "DAS · 필수 정리" : "DAS"}</a><nav class="topnav">${links.join("")}</nav></div>`;
   body.prepend(top);
 
   const main = document.querySelector("main");
@@ -159,7 +180,8 @@
   }
 
   /* ---------- 완료 버튼 + 이전/다음 ---------- */
-  const di = DAYS.findIndex((d) => d.id === page);
+  const LIST = in30 ? D30 : DAYS;
+  const di = LIST.findIndex((d) => d.id === page);
   if (di >= 0) {
     const row = document.createElement("div");
     row.className = "done-row";
@@ -180,10 +202,13 @@
 
     const pager = document.createElement("nav");
     pager.className = "pager";
-    const prev = DAYS[di - 1], next = DAYS[di + 1];
+    const prev = LIST[di - 1], next = LIST[di + 1];
+    const home = in30 ? "index.html" : "../index.html";
+    const ok = (d) => d && (!in30 || d.ready);
     pager.innerHTML =
-      (prev ? `<a href="${prev.file}">← ${di} · ${prev.title}</a>` : `<a href="../index.html">← 전체 커리큘럼</a>`) +
-      (next ? `<a href="${next.file}">${di + 2} · ${next.title} →</a>` : `<a href="../index.html">전체 커리큘럼 →</a>`);
+      (ok(prev) ? `<a href="${prev.file}">← ${di} · ${prev.title}</a>` : `<a href="${home}">← 전체 커리큘럼</a>`) +
+      (ok(next) ? `<a href="${next.file}">${di + 2} · ${next.title} →</a>`
+        : next ? `<a href="${home}#w${next.week}">Day ${di + 2} · ${next.title} (본문 준비 중) →</a>` : `<a href="${home}">전체 커리큘럼 →</a>`);
     main.appendChild(pager);
   }
 

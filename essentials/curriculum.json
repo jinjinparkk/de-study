@@ -1,0 +1,203 @@
+{
+  "title": "필수 정리 — 데이터 아키텍트·엔지니어 30일",
+  "weeks": [
+    {
+      "week": 1,
+      "title": "Week 1 · 관계형 모델링 기본기 (운영계)"
+    },
+    {
+      "week": 2,
+      "title": "Week 2 · 물리 설계, 표준화, 거버넌스"
+    },
+    {
+      "week": 3,
+      "title": "Week 3 · DW 차원 모델링 (Kimball)"
+    },
+    {
+      "week": 4,
+      "title": "Week 4 · 파이프라인, 성능, BI, 프로젝트 리딩"
+    }
+  ],
+  "days": [
+    {
+      "day": 1,
+      "week": 1,
+      "title": "데이터 모델링과 아키텍트의 역할",
+      "summary": "개념·논리·물리 3단계, 아키텍트·엔지니어·모델러의 경계, OLTP와 OLAP"
+    },
+    {
+      "day": 2,
+      "week": 1,
+      "title": "ERP 업무 흐름과 원천 테이블 구조",
+      "summary": "영업(주문→출고→매출)·구매·생산·회계 흐름과 그 흔적이 남는 원천 테이블"
+    },
+    {
+      "day": 3,
+      "week": 1,
+      "title": "엔터티·속성·관계 도출",
+      "summary": "약국 주문 요구사항 문장을 엔터티 후보와 ERD로, 카디널리티·옵셔널리티"
+    },
+    {
+      "day": 4,
+      "week": 1,
+      "title": "식별자 설계",
+      "summary": "본질 vs 인조 식별자, 식별·비식별 관계, 복합키의 함정과 주문상세 PK"
+    },
+    {
+      "day": 5,
+      "week": 1,
+      "title": "정규화와 반정규화",
+      "summary": "주문 엑셀로 보는 이상현상과 1NF~BCNF, 언제·어떻게 반정규화하고 정합성을 지키나"
+    },
+    {
+      "day": 6,
+      "week": 1,
+      "title": "슈퍼타입/서브타입, 계층 구조",
+      "summary": "병원·약국·도매상 거래처 변환 3방식, BOM 자기참조와 재귀 쿼리"
+    },
+    {
+      "day": 7,
+      "week": 1,
+      "title": "이력 모델링",
+      "summary": "선분·시점 이력, 스냅샷, 변경로그, 특정 일자 기준 약가 조회와 선분 중복 검증"
+    },
+    {
+      "day": 8,
+      "week": 2,
+      "title": "물리 모델링",
+      "summary": "타입·NULL·제약조건, 인덱스 원칙, 파티셔닝, 월 1억 건 출고 테이블"
+    },
+    {
+      "day": 9,
+      "week": 2,
+      "title": "코드 설계",
+      "summary": "공통코드 vs 개별 코드 테이블, 코드 체계 원칙, 코드 변경 영향도"
+    },
+    {
+      "day": 10,
+      "week": 2,
+      "title": "데이터 표준화",
+      "summary": "표준단어 → 도메인 → 용어 → 코드, 명명규칙, 금칙어·이음동의어"
+    },
+    {
+      "day": 11,
+      "week": 2,
+      "title": "메타데이터와 리니지",
+      "summary": "비즈니스·기술·운영 메타데이터, 카탈로그, 컬럼 리니지와 영향도 분석"
+    },
+    {
+      "day": 12,
+      "week": 2,
+      "title": "데이터 품질",
+      "summary": "품질 차원, 검증 SQL, 원천 대비 대사, 제약 데이터 무결성(ALCOA+·감사 추적)"
+    },
+    {
+      "day": 13,
+      "week": 2,
+      "title": "데이터 거버넌스와 MDM",
+      "summary": "오너·스튜어드, 거래처·품목 마스터 통합과 골든 레코드, 로트·유효기한 관리"
+    },
+    {
+      "day": 14,
+      "week": 2,
+      "title": "Week 1~2 종합 실습",
+      "summary": "제약 영업 운영계를 요구사항 → 논리 ERD → 테이블정의서로, 설계 리뷰 체크리스트"
+    },
+    {
+      "day": 15,
+      "week": 3,
+      "title": "DW 아키텍처 비교",
+      "summary": "Inmon·Kimball·Data Vault·메달리온, Staging/ODS/DW/DM 레이어와 선택 기준"
+    },
+    {
+      "day": 16,
+      "week": 3,
+      "title": "차원 모델링 4단계",
+      "summary": "프로세스 → Grain → Dimension → Fact, fan-out 사고로 보는 Grain의 무게"
+    },
+    {
+      "day": 17,
+      "week": 3,
+      "title": "Fact 테이블 유형",
+      "summary": "트랜잭션·주기·누적 스냅샷, 가산성, 재고를 합산하면 안 되는 이유"
+    },
+    {
+      "day": 18,
+      "week": 3,
+      "title": "Dimension 설계",
+      "summary": "Conformed 차원과 버스 매트릭스, 날짜 차원, Role-playing·Junk·Degenerate"
+    },
+    {
+      "day": 19,
+      "week": 3,
+      "title": "SCD (Slowly Changing Dimension)",
+      "summary": "Type 0/1/2/3/6, 담당 영업사원 변경과 실적 귀속, Type 2 MERGE"
+    },
+    {
+      "day": 20,
+      "week": 3,
+      "title": "고급 패턴",
+      "summary": "팩트리스 팩트, 브리지 테이블, 헤더-라인 grain 불일치, 집계 팩트, Late-arriving"
+    },
+    {
+      "day": 21,
+      "week": 3,
+      "title": "업무별 케이스 실습",
+      "summary": "주문·재고·구매·총계정원장 차원 모델과 그룹사 버스 매트릭스"
+    },
+    {
+      "day": 22,
+      "week": 4,
+      "title": "ETL vs ELT, CDC, 증분 적재",
+      "summary": "전체 vs 증분, 워터마크, MERGE, 삭제 감지, 멱등성, DB 간 복제 재설계"
+    },
+    {
+      "day": 23,
+      "week": 4,
+      "title": "적재 설계 디테일",
+      "summary": "서로게이트 키 매핑, Unknown(-1), 감사 컬럼, 오류 테이블, 매핑정의서"
+    },
+    {
+      "day": 24,
+      "week": 4,
+      "title": "오케스트레이션과 운영",
+      "summary": "의존성·SLA·백필·재시도·알림, 배치 시간대, 장애 복구 시나리오"
+    },
+    {
+      "day": 25,
+      "week": 4,
+      "title": "대용량 SQL과 성능",
+      "summary": "실행계획, NL/Hash/Merge 조인, 파티션 프루닝, 인덱스 vs 풀스캔, MV"
+    },
+    {
+      "day": 26,
+      "week": 4,
+      "title": "BI 성능을 고려한 마트 설계",
+      "summary": "스타 vs OBT, Power BI 실습(관계·측정값), Tableau 추출 vs 라이브, 지표 표준화"
+    },
+    {
+      "day": 27,
+      "week": 4,
+      "title": "클라우드 DW/레이크하우스",
+      "summary": "컬럼너·스토리지-컴퓨트 분리, Snowflake·Databricks·BigQuery·Redshift, 이관 고려사항"
+    },
+    {
+      "day": 28,
+      "week": 4,
+      "title": "아키텍처 의사결정과 설계서",
+      "summary": "기능·비기능 요구사항 → 아키텍처, 트레이드오프 설명법, ADR"
+    },
+    {
+      "day": 29,
+      "week": 4,
+      "title": "DW 프로젝트 리딩",
+      "summary": "분석→설계→구축→테스트→이행 산출물, 요구사항·일정·리스크, 현업 인터뷰"
+    },
+    {
+      "day": 30,
+      "week": 4,
+      "title": "종합 케이스 스터디",
+      "summary": "제약사 영업실적 대시보드 DW 처음부터 끝까지, 시니어 면접 예상 질문 10선"
+    }
+  ]
+}

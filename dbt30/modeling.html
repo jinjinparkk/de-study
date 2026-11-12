@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>모델링 관점 — 데이터 모델링 고전으로 보는 dbt 설계 · dbt 30일</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="d30-modeling">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">dbt 30일 · 모델링 관점</div>
+<h1>데이터 모델링 고전으로 보는 dbt 설계</h1>
+<p class="lead">dbt는 <b>모델을 짓는 도구</b>이고, 무엇을 어떤 모양으로 지을지는 <b>모델링</b>이 정합니다. 이 페이지는 데이터 모델링 고전들의 핵심 관점을 정리하고, Ad Performance Validator에 어떻게 적용되는지 연결합니다. Day 8~10 전에 읽고, 설계가 막힐 때마다 돌아오세요.</p>
+<p class="meta-line">읽기 약 40분 · 퀴즈 5문제 · 함께 보면 좋은 날: Day 5, 8, 9, 10, 16, 26</p>
+
+<div class="box warn">
+<span class="box-title">이 페이지의 성격</span>
+책 내용을 옮긴 것이 아니라, 각 책의 <b>핵심 개념을 제 말로 요약</b>하고 이 프로젝트에 적용한 해설입니다. 정확한 정의와 예시는 원서를 확인하세요. 프로젝트에 맞춘 설계 예시는 일부러 빈칸(<code>?</code>)으로 남겨 두었습니다 — Day 8~9에서 직접 채웁니다.
+</div>
+
+<div class="box tip">
+<span class="box-title">필수 정리와 나눠 맡는 부분</span>
+학파 비교·차원 모델링 4단계·fact 유형·SCD 같은 <b>일반 이론과 정통 예시</b>(한빛제약그룹 ERP·물류 데이터)는 <a href="../essentials/index.html#w3">필수 정리 Week 3</a>에 있습니다. 이 페이지는 그 이론을 <b>dbt·BigQuery·Ad Performance Validator에 적용할 때</b> 필요한 판단만 남겼습니다.
+</div>
+
+<h2 id="why">왜 모델링 관점이 필요한가</h2>
+<p>dbt를 배우면 "staging → intermediate → marts"로 나누는 법은 금방 익힙니다. 그런데 막상 mart를 만들 때 막히는 질문은 dbt 문서에 없습니다.</p>
+<ul>
+<li>매체 리포트(광고그룹×일)와 GA4 구매(주문 1건)를 한 테이블에 둬야 하나, 나눠야 하나?</li>
+<li>ROAS를 mart 컬럼으로 저장해도 되나?</li>
+<li>캠페인 이름이 바뀌면 과거 성과는 옛 이름으로 보여야 하나, 새 이름으로 보여야 하나?</li>
+<li>"전환일"은 클릭한 날인가, 구매한 날인가?</li>
+</ul>
+<p>이건 전부 <b>모델링 질문</b>이고, 수십 년 전부터 정리된 답의 틀이 있습니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>dbt는 <b>잘 정리된 공구함</b>이고, 모델링은 <b>설계도를 그리는 법</b>입니다. 공구함이 아무리 좋아도 "방은 몇 개, 문은 어디로, 배관은 어디로 지나가나"를 정하지 않으면 집이 아니라 벽돌 더미가 됩니다. 고전 모델링 책들은 수많은 집을 지어 본 건축가들이 남긴 "이렇게 그리면 나중에 안 무너진다"는 설계 원칙 모음입니다.</p>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+dbt 계층은 <b>"어디에 둘까"</b>를 정해 주고, 모델링은 <b>"어떤 모양으로, 어떤 그레인으로 만들까"</b>를 정해 줍니다. 둘 다 있어야 유지보수되는 플랫폼이 됩니다.
+</div>
+
+<h2 id="books">책 지도 — 무엇을 왜 읽나</h2>
+<div class="table-wrap">
+<table>
+<tr><th>책</th><th>핵심 관점</th><th>이 코스에서 쓰는 곳</th></tr>
+<tr><td><b>The Data Warehouse Toolkit</b> (3판, 2013)<br>Ralph Kimball · Margy Ross</td><td>차원 모델링의 표준 교과서. 4단계 설계, 그레인, fact·dimension, SCD, conformed dimension, bus matrix</td><td>Day 8~10의 기본 틀. <b>가장 먼저 읽을 책</b></td></tr>
+<tr><td><b>Building the Data Warehouse</b> (4판, 2005)<br>W. H. Inmon</td><td>기업 전체를 정규화(3NF)된 통합 웨어하우스로 먼저 만들고, 마트는 그 아래에 둔다(top-down)</td><td>intermediate를 "통합 계층"으로 볼 때의 관점</td></tr>
+<tr><td><b>Building a Scalable Data Warehouse with Data Vault 2.0</b> (2015)<br>Dan Linstedt · Michael Olschimke</td><td>Hub(업무 키)·Link(관계)·Satellite(속성·이력)로 원천 변화에 강한 이력 보존 계층</td><td>원천이 많아지고 감사 추적이 중요할 때의 대안 비교</td></tr>
+<tr><td><b>Agile Data Warehouse Design</b> (2011)<br>Lawrence Corr · Jim Stagnitto</td><td>BEAM✲. 현업과 함께 "비즈니스 이벤트"를 7W 질문으로 풀어내는 요구사항 모델링(modelstorming)</td><td>지표 정의·마트 요구사항을 마케터와 맞출 때 (Day 8, 26)</td></tr>
+<tr><td><b>Star Schema: The Complete Reference</b> (2010)<br>Christopher Adamson</td><td>스타 스키마 설계 패턴과 함정을 사례 중심으로 정리. 여러 fact를 함께 볼 때(drill-across)의 규칙</td><td>매체 fact와 GA4 fact를 나란히 비교할 때 (Day 9)</td></tr>
+<tr><td><b>Data Modeling Essentials</b> (3판, 2005)<br>Graeme Simsion · Graham Witt</td><td>개념·논리·물리 모델의 구분, 정규화, 키 설계 같은 모델링 기본기</td><td>staging에서 원천 구조를 해석할 때</td></tr>
+<tr><td><b>Fundamentals of Data Engineering</b> (2022)<br>Joe Reis · Matt Housley</td><td>8장에서 Inmon·Kimball·Data Vault·넓은 비정규화 테이블을 현대 클라우드 관점으로 비교</td><td>BigQuery 환경에서 무엇을 고를지 판단할 때</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">읽는 순서 추천</span>
+Kimball 1~3장(설계 4단계·리테일 사례) → Corr 1~2장(BEAM✲) → Fundamentals of DE 8장(비교) → 필요할 때 Kimball의 관련 장(SCD 기법, 전자상거래·클릭스트림 사례 장)과 Data Vault 개요. 전부 통독할 필요는 없습니다. 이 프로젝트에 닿는 장만 골라 읽으세요.
+</div>
+
+<h2 id="levels">개념 · 논리 · 물리 모델</h2>
+<p class="meta-line">일반 이론: <a href="../essentials/day.html?d=1">필수 정리 Day 1</a></p>
+<p>Simsion·Witt를 비롯한 모델링 기본서들이 공통으로 강조하는 구분입니다. 단계를 섞으면 "BigQuery에서 어떻게 파티션할까"를 고민하느라 "주문과 캠페인은 어떤 관계인가"를 놓칩니다.</p>
+<pre class="diagram">  개념 모델   무엇이 있고 서로 어떤 관계인가         광고주 ─ 캠페인 ─ 광고그룹 ─ 클릭 ─ 세션 ─ 주문
+     │        (업무 언어, 현업과 합의)
+     ▼
+  논리 모델   어떤 엔티티·속성·키·그레인으로 표현하나   fct_ad_daily(그레인: ?), dim_campaign(키: ?)
+     │        (DB 종류와 무관)
+     ▼
+  물리 모델   이 웨어하우스에서 어떻게 저장하나         BigQuery 파티션·클러스터, nested 컬럼,
+              (비용·성능)                             view/table/incremental</pre>
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+프로시저 시절에는 보통 물리 모델(테이블 DDL)부터 만들고, 개념·논리 모델은 엑셀 정의서나 머릿속에 있었습니다. dbt에서는 <b>논리 모델이 YAML(그레인 설명·키 테스트·contract)로 코드 옆에 남고</b>, 물리 모델은 config(materialized·partition_by)로 분리됩니다. 같은 논리 모델을 물리만 바꿔 다시 지을 수 있다는 뜻입니다.
+</div>
+
+<h2 id="schools">세 가지 학파 — Inmon · Kimball · Data Vault (+ 넓은 테이블)</h2>
+<p>각 학파의 출발점·강점·약점과 레이어 구성은 <a href="../essentials/day.html?d=15">필수 정리 Day 15</a>에서 비교합니다. dbt 프로젝트에서 보이는 모습만 짚으면 이렇습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>관점</th><th>dbt에서 보이는 모습</th></tr>
+<tr><td>Inmon (정규화된 통합 계층)</td><td>intermediate가 두꺼운 통합 계층이 됨</td></tr>
+<tr><td>Kimball (스타 스키마)</td><td>marts = <code>fct_</code> · <code>dim_</code></td></tr>
+<tr><td>Data Vault 2.0</td><td>AutomateDV 같은 패키지로 hub/link/sat 생성</td></tr>
+<tr><td>넓은 비정규화 테이블 (OBT)</td><td>marts 끝이나 BI용 view</td></tr>
+</table>
+</div>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+실무 dbt 프로젝트는 대부분 <b>"staging은 원천 정리, intermediate는 통합, marts는 Kimball식 스타 스키마, 소비 직전에 필요하면 넓은 테이블"</b>의 혼합입니다. 학파를 고르는 게 아니라 <b>각 계층에 어떤 관점을 쓸지</b>를 고르는 것입니다.
+</div>
+
+<h2 id="kimball4">Kimball의 설계 4단계</h2>
+<p class="meta-line">일반 이론과 fan-out 사고 예시: <a href="../essentials/day.html?d=16">필수 정리 Day 16</a></p>
+<p>차원 모델링의 핵심 절차입니다. 순서가 중요합니다 — 특히 2번(그레인)을 건너뛰고 3·4번부터 하면 거의 항상 문제가 생깁니다.</p>
+<pre class="diagram">  ① 업무 프로세스 고르기   "무엇을 측정하나"      → 예: 광고 노출·클릭·비용 집행 / 주문
+  ② 그레인 선언하기        "fact 한 행 = ?"        → 가장 중요. 한 문장으로 말할 수 있어야 함
+  ③ 차원 정하기            "누가·무엇을·언제·어디서" → 그레인이 정해지면 자연스럽게 따라 나옴
+  ④ 사실(측정값) 정하기    "얼마나"                → 그레인에서 참인 숫자만</pre>
+
+<div class="lab">
+<p><b>Ad Performance Validator에 적용해 보기</b> (빈칸은 Day 8에서 직접)</p>
+<div class="table-wrap">
+<table>
+<tr><th>업무 프로세스</th><th>그레인 (fact 한 행)</th><th>차원</th><th>측정값</th></tr>
+<tr><td>매체 광고 집행</td><td>광고그룹 × 날짜 × 매체 의 하루 성과</td><td>날짜, 매체, 캠페인, 광고그룹, ?</td><td>spend, impressions, clicks, 매체 주장 전환수·매출</td></tr>
+<tr><td>주문 (GA4 purchase)</td><td>?</td><td>?</td><td>?</td></tr>
+<tr><td>예산 변경</td><td>?</td><td>?</td><td>?</td></tr>
+</table>
+</div>
+</div>
+
+<h2 id="grain">그레인 — 모델링의 출발점</h2>
+<p>그레인은 "fact 테이블 한 행이 무엇을 뜻하는가"입니다. Kimball은 가능한 한 <b>가장 원자적인(쪼갤 수 없는) 그레인</b>으로 시작하라고 권합니다. 집계는 나중에 언제든 할 수 있지만, 이미 집계된 데이터를 다시 쪼갤 수는 없기 때문입니다.</p>
+<div class="box warn">
+<span class="box-title">이 프로젝트에서 가장 위험한 실수 — 그레인 섞기</span>
+<p>매체 리포트(광고그룹×일)와 GA4 주문(주문 1건)을 한 테이블에 조인하면, 주문 수만큼 광고비 행이 복제되어 <b>spend 합계가 부풀려집니다</b>(fan-out). 그레인이 다른 두 fact는 <b>각자 따로 두고, 공통 차원(날짜·캠페인·채널)으로 각각 집계한 뒤 나란히 비교</b>하는 것이 원칙입니다. Kimball·Adamson은 이를 drill-across라고 부릅니다.</p>
+</div>
+<pre class="diagram">  ✗ 잘못: fct_ad_daily  JOIN  주문 (campaign_id, date)  → spend 가 주문 수만큼 복제
+
+  ✓ 맞음:  fct_ad_daily ──집계──▶ (date, campaign) 의 spend
+                                          ├── 같은 키로 나란히 ──▶ 매체 주장 vs GA4 검증
+           주문 fact    ──집계──▶ (date, campaign) 의 GA4 매출</pre>
+
+<h2 id="facts">Fact 테이블의 종류와 측정값의 성질</h2>
+<p class="meta-line">일반 이론(재고 스냅샷·누적 스냅샷 예시): <a href="../essentials/day.html?d=17">필수 정리 Day 17</a></p>
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>한 행의 뜻</th><th>이 프로젝트 예시 후보</th></tr>
+<tr><td>Transaction</td><td>사건 하나 (발생 시점에 한 번 기록)</td><td>주문 1건, 예산 변경 1건</td></tr>
+<tr><td>Periodic snapshot</td><td>정해진 주기의 상태·누적 (매일·매월)</td><td>광고그룹의 하루 성과 — 매체 리포트가 원래 이 모양</td></tr>
+<tr><td>Accumulating snapshot</td><td>정해진 단계를 거치는 과정 하나, 단계가 진행될 때마다 같은 행을 갱신</td><td>클릭 → 세션 → 장바구니 → 구매 퍼널 하나</td></tr>
+<tr><td>Factless fact</td><td>측정값 없이 "일어났다/해당된다"만 기록</td><td>캠페인 × 상품군 노출 대상 여부</td></tr>
+</table>
+</div>
+
+<p>측정값은 <b>더할 수 있는지</b>로 나눕니다. 이 구분이 Semantic Layer 설계(Day 26)의 출발점입니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>성질</th><th>뜻</th><th>예시</th></tr>
+<tr><td>Additive</td><td>모든 차원으로 더해도 의미가 맞음</td><td>spend, clicks, revenue</td></tr>
+<tr><td>Semi-additive</td><td>일부 차원(보통 시간)으로는 더하면 안 됨</td><td>일별 잔여 예산, 누적 팔로워 수</td></tr>
+<tr><td>Non-additive</td><td>어떤 차원으로도 더하면 안 됨</td><td><b>ROAS, CPA, CTR, 전환율</b></td></tr>
+</table>
+</div>
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+비율 지표는 <b>테이블에 저장하지 말고, 분자·분모(더할 수 있는 값)를 저장한 뒤 집계 시점에 나눕니다</b>. 일별 ROAS를 평균내면 틀린 숫자가 나옵니다. 그래서 ROAS 정의는 mart가 아니라 Semantic Layer 한 곳에 둡니다 — "BI와 LLM이 같은 숫자"의 출발점이 여기입니다.
+</div>
+
+<h2 id="dims">Dimension 기법</h2>
+
+<h3>Conformed dimension과 Bus matrix</h3>
+<p>여러 fact가 <b>같은 차원 테이블을 공유</b>해야 서로 비교할 수 있습니다. 매체 fact의 "캠페인"과 GA4 fact의 "캠페인"이 다른 테이블·다른 키면 나란히 놓을 수 없습니다. Kimball은 이를 <b>bus matrix</b>(행 = 업무 프로세스, 열 = 차원)로 관리합니다.</p>
+<pre class="diagram">  Bus matrix (Day 8에서 ? 를 채우세요)
+
+                      날짜   매체/채널   캠페인   광고그룹   상품   고객/사용자
+  매체 광고 집행        ✓       ✓          ✓        ✓        ?        ?
+  주문 (GA4)           ✓       ?          ?        ?        ✓        ✓
+  예산 변경            ✓       ✓          ✓        ?        ?        ?</pre>
+<div class="box proc">
+<span class="box-title">프로시저 감각으로 옮기면</span>
+프로시저 시절 "마트마다 캠페인 매핑 CASE WHEN이 조금씩 달라서 숫자가 안 맞는" 문제가 바로 conformed dimension이 없는 상태입니다. dbt에서는 <code>dim_campaign</code> 하나를 만들고 모든 fact가 그걸 <code>ref()</code>합니다. 매핑 규칙은 seed(Reference Data) 한 곳에 둡니다(Day 10).
+</div>
+
+<h3>Slowly Changing Dimension (SCD)</h3>
+<p>Type 0/1/2/3/6의 차이와 Type 2 적재 SQL은 <a href="../essentials/day.html?d=19">필수 정리 Day 19</a>에서 다룹니다. dbt에서는 Type 1 = 일반 table/view, Type 2 = <b>snapshot</b>(Day 16)입니다.</p>
+<p>이 프로젝트의 질문: <b>캠페인 이름이 8월에 바뀌었다면, 7월 성과 리포트에는 어느 이름이 보여야 하나요?</b> 답은 "누가 무엇을 보려고 하나"에 달렸고, 그 결정이 Type 1과 Type 2 중 무엇을 쓸지 정합니다.</p>
+
+<h3>그 밖에 자주 쓰는 기법</h3>
+<p class="meta-line">일반 이론: <a href="../essentials/day.html?d=18">필수 정리 Day 18</a>, <a href="../essentials/day.html?d=20">Day 20</a></p>
+<div class="table-wrap">
+<table>
+<tr><th>기법</th><th>뜻</th><th>이 프로젝트에서</th></tr>
+<tr><td>Surrogate key</td><td>원천 키 대신 웨어하우스가 만든 키. 원천이 여러 개거나 SCD2일 때 필요</td><td>매체마다 캠페인 ID 체계가 다름 → 매체 + 원천 ID로 키 생성 (<code>dbt_utils.generate_surrogate_key</code>)</td></tr>
+<tr><td>Role-playing dimension</td><td>같은 차원이 한 fact에서 여러 역할</td><td><b>클릭일 vs 구매일</b> — 같은 날짜 차원, 다른 역할. 귀속 기준 날짜 선택과 직결</td></tr>
+<tr><td>Degenerate dimension</td><td>차원 테이블 없이 fact에 남는 식별자</td><td>transaction_id</td></tr>
+<tr><td>Junk dimension</td><td>자잘한 플래그·코드를 묶은 차원</td><td>기기 유형 × 신규/재방문 × 결제수단 같은 조합</td></tr>
+<tr><td>Snowflaking</td><td>차원을 다시 정규화해 쪼갬. Kimball은 대개 권하지 않음</td><td>캠페인 → 광고주를 따로 떼기보다 dim_campaign에 펼쳐 둠</td></tr>
+</table>
+</div>
+
+<h2 id="beam">BEAM✲ — 현업과 함께 모델링하기 (Corr)</h2>
+<p>Corr는 모델링을 "데이터를 보고 설계"하는 대신 <b>현업과 함께 비즈니스 이벤트를 이야기로 풀어내는</b> 것에서 시작하자고 합니다. 이벤트 하나를 7W 질문으로 쪼개면 차원과 측정값이 자연스럽게 나옵니다.</p>
+<pre class="diagram">  이벤트: "고객이 광고를 클릭한 뒤 상품을 구매한다"
+
+  Who      누가          → 사용자(GA4 user_pseudo_id), 광고주
+  What     무엇을        → 상품, 상품 분류
+  When     언제          → 클릭 시각, 구매 시각   ← 역할이 두 개 (role-playing)
+  Where    어디서        → 매체, 채널, 기기
+  How many 얼마나        → 매출, 수량
+  Why      왜            → 캠페인, 프로모션(쿠폰)
+  How      어떻게        → 귀속 방식(라스트 논-다이렉트 등), transaction_id</pre>
+<div class="box tip">
+<span class="box-title">실무 팁</span>
+마케터와 "ROAS 정의"를 맞출 때 수식부터 꺼내면 대화가 길어집니다. "어떤 구매를, 어떤 클릭에, 며칠 안이면 붙이나요?"처럼 7W로 물으면 귀속 기간·기준 날짜·중복 처리 규칙이 빠르게 합의됩니다. 이 합의가 Day 26의 metric 정의 문서가 됩니다.
+</div>
+
+<h2 id="vault">Data Vault는 언제 꺼내나</h2>
+<pre class="diagram">  Hub        업무 키만        hub_campaign (campaign_bk, 처음 본 시각, 출처)
+  Link       키 사이 관계     link_campaign_adgroup
+  Satellite  속성과 이력      sat_campaign_google (이름, 상태, 예산 … 변경될 때마다 행 추가)
+             ─ insert-only, 해시 키, 원천별로 satellite 분리 ─</pre>
+<ul>
+<li><b>잘 맞는 경우</b>: 원천 시스템이 많고 자주 바뀜, 감사(언제 무엇이 들어왔나) 요구가 강함, 여러 팀이 병렬로 적재.</li>
+<li><b>과한 경우</b>: 원천이 몇 개 안 되고 분석 마트가 목적인 소규모 프로젝트. 테이블 수가 몇 배로 늘고, 결국 위에 스타 스키마를 또 만들어야 조회할 수 있습니다.</li>
+<li><b>이 프로젝트</b>: 원천은 매체 2~3개 + GA4. Data Vault 전체를 도입하기보다, <b>"원천을 덮어쓰지 않고 이력을 남긴다"</b>는 정신만 snapshot·raw 보존으로 가져가는 것이 현실적입니다. 직접 판단해서 ARCHITECTURE.md에 남기세요.</li>
+</ul>
+
+<h2 id="modern">BigQuery 시대의 모델링 — 무엇이 바뀌었나</h2>
+<p>고전 책들은 저장 공간이 비싸고 조인이 느리던 시절에 쓰였습니다. Fundamentals of Data Engineering 등 최근 책들은 클라우드 컬럼형 웨어하우스에서 달라진 점을 짚습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>바뀐 것</th><th>모델링에 주는 영향</th></tr>
+<tr><td>저장은 싸고, 스캔량이 비용</td><td>정규화로 저장 공간을 아낄 이유는 줄고, <b>파티션·클러스터로 읽는 양을 줄이는 것</b>이 중요해짐</td></tr>
+<tr><td>컬럼형 저장</td><td>넓은 테이블도 쓰는 컬럼만 읽으므로 비용 부담이 적음 → 소비 끝단의 넓은 테이블이 현실적 선택지</td></tr>
+<tr><td>nested · repeated 컬럼</td><td>GA4의 <code>event_params</code>처럼 한 행 안에 배열이 들어감. staging에서 필요한 키만 펼치고(UNNEST), 그레인이 바뀌는지 꼭 확인</td></tr>
+<tr><td>Semantic Layer 등장</td><td>지표 정의가 테이블 밖 한 곳으로 이동. 마트는 "더할 수 있는 원자 값 + 잘 정리된 차원"에 집중</td></tr>
+</table>
+</div>
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+도구가 바뀌어도 <b>그레인 선언, conformed dimension, 측정값의 가산성</b>은 그대로 유효합니다. 바뀐 것은 물리 모델(저장 방식)이고, 논리 모델의 원칙은 그대로입니다.
+</div>
+
+<h2 id="map">dbt 계층에 옮기면</h2>
+<pre class="diagram">  raw (적재된 그대로)
+    │   ── Data Vault의 정신: 덮어쓰지 않고 남긴다
+    ▼
+  staging       원천 1개당 모델 1개. 이름·타입·단위 정리, nested 펼치기
+    │           ── Simsion: 원천 구조(논리 모델)를 해석하는 곳
+    ▼
+  snapshots     차원 속성의 변경 이력 (SCD Type 2)
+    │
+    ▼
+  intermediate  매체 통합(union), 매핑, 귀속 계산, surrogate key
+    │           ── Inmon의 통합 계층 역할
+    ▼
+  marts         fct_* (그레인 고정, 가산 측정값) · dim_* (conformed)
+    │           ── Kimball 스타 스키마
+    ▼
+  semantic      metric = 비율·귀속 규칙 정의 (ROAS, CPA, 전환율)
+                ── 지표는 한 곳에서만</pre>
+
+<h2 id="anti">자주 하는 모델링 실수</h2>
+<div class="table-wrap">
+<table>
+<tr><th>실수</th><th>증상</th><th>원칙</th></tr>
+<tr><td>그레인 섞기</td><td>spend 합계가 매체 리포트보다 큼</td><td>fact마다 그레인 한 문장 + 키 유일성 테스트</td></tr>
+<tr><td>비율 평균내기</td><td>일별 ROAS 평균 ≠ 기간 ROAS</td><td>분자·분모를 저장하고 집계 시점에 나눔</td></tr>
+<tr><td>마트마다 다른 매핑</td><td>대시보드끼리 캠페인별 숫자가 다름</td><td>conformed dimension + Reference Data 한 곳</td></tr>
+<tr><td>스마트 키</td><td>ID 문자열을 잘라서 채널을 판별 → 네이밍 바뀌면 붕괴</td><td>의미는 속성 컬럼으로, 키는 식별만</td></tr>
+<tr><td>날짜 역할 혼동</td><td>"9월 전환"이 팀마다 다름</td><td>클릭일·구매일을 별도 컬럼으로, 지표마다 기준 날짜 명시</td></tr>
+<tr><td>너무 이른 집계</td><td>새 질문이 오면 원천부터 다시</td><td>가장 원자적인 그레인을 먼저 남김</td></tr>
+</table>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="3">
+<p class="q-text">Kimball의 설계 4단계에서 "차원 정하기"보다 반드시 먼저 해야 하는 것은?</p>
+<ol class="q-opts">
+<li>측정값 목록 작성</li>
+<li>BigQuery 파티션 컬럼 결정</li>
+<li>그레인 선언</li>
+<li>SCD 타입 결정</li>
+</ol>
+<p class="q-explain">순서는 프로세스 선택 → 그레인 → 차원 → 사실입니다. 그레인이 정해져야 "이 행에 붙을 수 있는 차원과 숫자"가 정해집니다. 파티션(②)은 물리 모델, SCD(④)는 차원을 정한 뒤의 문제입니다.</p>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">mart에 저장하기에 가장 부적절한 컬럼은?</p>
+<ol class="q-opts">
+<li>일별 ROAS</li>
+<li>일별 spend</li>
+<li>일별 매체 주장 매출</li>
+<li>일별 클릭 수</li>
+</ol>
+<p class="q-explain">ROAS는 non-additive라 일별 값을 더하거나 평균내면 기간 ROAS가 틀립니다. 분자(매출)·분모(spend)를 저장하고 Semantic Layer에서 나눕니다. 나머지는 additive 측정값입니다.</p>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">캠페인 이름이 바뀌었을 때, 과거 리포트에는 <b>당시 이름</b>이 보이게 하려면?</p>
+<ol class="q-opts">
+<li>SCD Type 1로 덮어쓴다</li>
+<li>fact 테이블에 캠페인 이름을 복사해 둔다</li>
+<li>SCD Type 0으로 최초 이름만 남긴다</li>
+<li>SCD Type 2로 유효 기간이 있는 행을 남긴다</li>
+</ol>
+<p class="q-explain">Type 2는 변경마다 새 행과 유효 기간을 남겨, fact를 그 시점의 차원 행에 연결할 수 있습니다. dbt에서는 snapshot입니다. Type 1은 과거도 새 이름으로, Type 0은 최초 이름으로 보입니다. fact에 이름을 복사(②)하면 차원 관리가 깨집니다.</p>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">매체 리포트(광고그룹×일)와 GA4 주문(주문 1건)을 비교하는 올바른 방법은?</p>
+<ol class="q-opts">
+<li>campaign_id와 날짜로 두 테이블을 바로 조인한다</li>
+<li>각각 공통 차원(날짜·캠페인)으로 집계한 뒤 같은 키로 나란히 놓는다</li>
+<li>GA4 주문을 광고그룹×일 테이블에 컬럼으로 합친다</li>
+<li>두 데이터를 UNION ALL 한 뒤 합계를 낸다</li>
+</ol>
+<p class="q-explain">그레인이 다른 fact를 바로 조인하면 fan-out으로 spend가 복제됩니다. 각자 같은 그레인으로 집계한 뒤 conformed dimension 키로 비교하는 것이 drill-across입니다.</p>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">이 프로젝트(원천: 매체 2~3개 + GA4, 분석 마트가 목적)에서 Data Vault 2.0에 대한 판단으로 가장 합리적인 것은?</p>
+<ol class="q-opts">
+<li>모든 원천을 Hub·Link·Satellite로 먼저 만들어야 한다</li>
+<li>Data Vault는 BigQuery에서 쓸 수 없다</li>
+<li>전체 도입보다 "덮어쓰지 않고 이력을 남긴다"는 원칙을 raw 보존·snapshot으로 가져간다</li>
+<li>Data Vault를 쓰면 스타 스키마가 필요 없다</li>
+</ol>
+<p class="q-explain">원천이 적고 마트가 목적이면 Data Vault 전체는 테이블 수 대비 이득이 작습니다. BigQuery에서도 쓸 수 있고(②), Data Vault 위에도 조회용 마트(스타 스키마)를 보통 따로 만듭니다(④).</p>
+</div>
+
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>내 프로젝트의 mart 하나를 골라 그레인을 한 문장으로 말하고, 그 그레인을 지키는 테스트를 말해 보세요.</li>
+<li>"BI와 LLM이 같은 ROAS를 낸다"를 측정값의 가산성과 Semantic Layer로 설명해 보세요.</li>
+<li>Inmon·Kimball·Data Vault 중 무엇을 고른 게 아니라 계층별로 섞었다는 말을, 내 dbt 폴더 구조로 설명해 보세요.</li>
+</ol>
+</div>
+
+<p style="margin-top:30px"><a href="index.html">← 30일 홈으로</a></p>
+
+</main>
+</div>
+<script src="../assets/dbt30-days.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

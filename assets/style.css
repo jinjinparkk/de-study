@@ -236,3 +236,23 @@ body[data-page="day7"] { --accent: var(--spark); --accent-soft: var(--spark-soft
 .why > :first-child, .field > :first-child { margin-top: 0; }
 table.cmd { font-size: 14.5px; }
 table.cmd td:first-child { font-family: var(--mono); white-space: nowrap; }
+
+/* 필수 정리(essentials) */
+body.ess .layout { max-width: 1120px; }
+body.ess main { max-width: 760px; }
+body.ess .layout.single main { max-width: 1000px; }
+.ess-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 14px 0 8px; }
+.ess-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); display: flex; flex-direction: column; }
+.ess-card.done { border-color: var(--ok); background: var(--ok-soft); }
+.ess-link { display: flex; flex-direction: column; gap: 4px; padding: 14px 14px 8px; text-decoration: none; color: var(--text); flex: 1; }
+.ess-link:hover .ess-title { color: var(--accent); }
+.ess-num { font-size: 13px; font-weight: 800; color: var(--accent); }
+.ess-title { font-weight: 800; font-size: 16.5px; line-height: 1.4; }
+.ess-sum { font-size: 14px; color: var(--muted); line-height: 1.5; }
+.ess-check { display: flex; gap: 6px; align-items: center; padding: 8px 14px 12px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.ess-check input { width: 17px; height: 17px; accent-color: var(--ok); }
+.ess-check.big { padding: 0; font-size: 15.5px; font-weight: 700; color: var(--text); }
+details.answer { border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; background: var(--surface); }
+details.answer[open] > summary { margin-bottom: 6px; }
+body.ess .pager a:nth-child(2) { color: var(--muted); }
+@media (max-width: 640px) { .pager { flex-direction: column; } }

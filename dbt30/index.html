@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dbt 30일 집중 코스 · DAS</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+.week-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.week-head .wsub { color:var(--muted); font-size:14.5px; }
+.day-list .dlab { font-size:14px; margin:6px 0 0; }
+.day-list .dlab b { color:var(--muted); font-weight:700; }
+.day-list .locked a.dtitle, .day-list span.dtitle { font-weight:800; font-size:18px; color:var(--muted); }
+.stat-badge { display:inline-block; font-size:12.5px; font-weight:700; padding:1px 8px; border-radius:99px; border:1px solid var(--line); }
+.stat-badge.open { color:var(--ok); border-color:var(--ok); }
+.stat-badge.done { background:var(--ok-soft); color:var(--ok); border-color:var(--ok); }
+.stat-badge.lock { color:var(--muted); }
+</style>
+</head>
+<body data-page="d30-home">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">dbt 30-Day Intensive Mastery Program</div>
+<h1>dbt 30일 집중 코스</h1>
+<p class="lead">SQL·ETL·마트 구축 경험이 있는 데이터 엔지니어가 <b>30일 안에 dbt 기반 데이터 플랫폼을 혼자 설계하고 구축</b>할 수 있게 만드는 코스입니다. 문법보다 설계 의도를 설명할 수 있는지가 기준입니다.</p>
+<p class="meta-line">하루 2~3시간 · 이론 30% / 실습 70% · 실습 프로젝트 Ad Performance Validator · dbt Core + BigQuery</p>
+
+<div style="margin:22px 0 8px; display:flex; justify-content:space-between; font-size:14.5px; color:var(--muted)">
+  <span>30일 진도</span><span id="overall-num"></span>
+</div>
+<div class="bar"><span id="overall-bar"></span></div>
+
+<div class="box tip" style="margin-top:22px">
+<span class="box-title">7일 코스와 무엇이 다른가요</span>
+<a href="../index.html">7일 코스</a>는 DuckDB로 dbt·Airflow·Spark의 개념을 훑습니다. 30일 코스는 <b>BigQuery 위에서 dbt 하나를 깊게</b>, 실제 운영 수준(품질·증분·이력·CI/CD·Semantic Layer)까지 갑니다. 7일 코스를 먼저 끝냈다면 Day 1~5 이론이 빠르게 읽힙니다.
+</div>
+
+<div style="margin-top:18px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+  <a class="btn primary" href="modeling.html" style="text-decoration:none">모델링 관점 →</a>
+  <span style="color:var(--muted); font-size:14.5px">Kimball · Inmon · Data Vault · BEAM✲ 등 데이터 모델링 고전으로 보는 설계 원칙 (Day 8~10 전에)</span>
+</div>
+
+<h2 id="goal">최종 목표</h2>
+<p>30일 뒤 아래 역량을 <b>직접 만든 코드와 설계 문서로</b> 보여줄 수 있어야 합니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>역량</th><th>주로 다루는 날</th></tr>
+<tr><td>dbt Project Architecture 설계</td><td>Day 1, 5, 25</td></tr>
+<tr><td>Data Modeling · Data Mart 구축</td><td>Day 8, 9</td></tr>
+<tr><td>Business Rule · Reference Data 관리</td><td>Day 4, 10</td></tr>
+<tr><td>Data Quality Framework 구축</td><td>Day 11, 12, 14</td></tr>
+<tr><td>Incremental Processing · Snapshot 관리</td><td>Day 15, 16, 20</td></tr>
+<tr><td>Jinja · Macro로 재사용 가능한 코드 설계</td><td>Day 17, 18, 19</td></tr>
+<tr><td>Git 기반 협업 · CI/CD</td><td>Day 22, 23, 24</td></tr>
+<tr><td>dbt Semantic Layer · Metric 관리</td><td>Day 26, 27</td></tr>
+<tr><td>Production 데이터 파이프라인 이해</td><td>Day 25, 28, 29</td></tr>
+</table>
+</div>
+
+<h2 id="days">30일 일정</h2>
+<p>하루에 한 단계씩 진행합니다. <b>앞 Day를 완료로 표시해야 다음 Day가 열립니다.</b> 본문은 진행에 맞춰 하루씩 추가됩니다.</p>
+<div id="weeks"></div>
+
+<h2 id="project">실습 프로젝트 — Ad Performance Validator</h2>
+<p>광고 매체 데이터와 GA4 데이터를 통합하고, <b>매체가 주장하는 성과와 GA4가 본 실제 전환이 맞는지</b> 검증하는 데이터 플랫폼을 30일 동안 하나씩 쌓아 올립니다.</p>
+<pre class="diagram">  ┌──────────────────┐    ┌──────────────────┐
+  │ Python Generator │──▶│   BigQuery Raw     │  매체 리포트 · GA4 이벤트 · 캠페인 · 예산 이력
+  └──────────────────┘    └─────────┬────────┘
+                                    │
+  ┌─────────────────────────────────▼──────────────────────────────────┐
+  │ dbt Core                                                            │
+  │   Staging ──▶ Intermediate ──▶ Mart        + seeds(Reference Data)  │
+  │   (매체별 정제)  (통합·매핑·귀속)  (fact·dim)    + tests · snapshots       │
+  └─────────────────────────────────┬──────────────────────────────────┘
+                                    │
+                         ┌──────────▼─────────┐
+                         │ Cube Semantic Layer │  ROAS · CPA · 전환율 정의는 여기 한 곳
+                         └─────┬────────┬─────┘
+                               │        │
+                       ┌───────▼──┐  ┌──▼────────────────┐
+                       │ Metabase │  │ LLM Chatbot (Claude)│   같은 지표 → 같은 숫자
+                       └──────────┘  └───────────────────┘
+
+  오케스트레이션: Airflow (Docker)      협업·배포: Git / GitHub Actions</pre>
+
+<div class="compare">
+<div>
+<p class="label">주요 데이터</p>
+<ul>
+<li>광고 매체별 Spend · Impression · Click · Conversion</li>
+<li>GA4 Events · Purchase · Revenue</li>
+<li>Campaign Mapping · Product Classification</li>
+<li>Budget History</li>
+</ul>
+</div>
+<div>
+<p class="label">구현 목표</p>
+<ul>
+<li>매체별 데이터 통합, Campaign Mapping</li>
+<li>Reference Data 관리, Business Rule 표준화</li>
+<li>중복·이상 데이터 검증, 데이터 품질 테스트</li>
+<li>Incremental Processing, 변경 이력 추적</li>
+<li>KPI 정의 및 통합</li>
+</ul>
+</div>
+</div>
+
+<h2 id="env">학습 환경과 버전</h2>
+<div class="table-wrap">
+<table>
+<tr><th>도구</th><th>기준 버전</th><th>쓰는 날</th></tr>
+<tr><td>dbt Core / dbt-bigquery</td><td>1.12.6 / 1.12.2</td><td>전체</td></tr>
+<tr><td>BigQuery</td><td>개인 GCP 프로젝트, 무료 한도 + 안전장치</td><td>전체</td></tr>
+<tr><td>Python</td><td>3.12 (가상환경)</td><td>전체</td></tr>
+<tr><td>Git / GitHub</td><td>—</td><td>Day 1부터 커밋, 22~24 집중</td></tr>
+<tr><td>dbt-metricflow</td><td>0.15.0</td><td>26</td></tr>
+<tr><td>Cube Core · Metabase · Claude API</td><td>Docker로 로컬 실행</td><td>27, 29</td></tr>
+<tr><td>Airflow 3 · Docker</td><td>로컬, 포트 8083</td><td>28</td></tr>
+</table>
+</div>
+<div class="box warn">
+<span class="box-title">버전 확인 기준</span>
+버전은 2026-11-10 PyPI 기준입니다. dbt는 1.10부터 테스트 키가 <code>data_tests:</code>, generic test 인자는 <code>arguments:</code> 아래, 사용자 정의 config 키는 <code>meta:</code> 아래로 바뀌었습니다. 각 Day에서 버전에 따라 다른 부분은 따로 짚습니다. 공식 문서: <a href="https://docs.getdbt.com/">docs.getdbt.com</a>
+</div>
+
+<h2 id="method">하루 진행 방식</h2>
+<pre class="diagram">  ① 학습 목표 → ② 핵심 개념 → ③ 아키텍처 → ④ 실무 사례 → ⑤ 코드 예제
+                                                              │
+  ⑩ 다음 예고 ◀ ⑨ 완료 조건 ◀ ⑧ 퀴즈 5문제 ◀ ⑦ 코드 리뷰 ◀ ⑥ 직접 구현</pre>
+<ul>
+<li><b>코드는 직접 씁니다.</b> 정답은 먼저 보여 주지 않습니다. 실습 단계에는 힌트만 있습니다.</li>
+<li><b>코드 리뷰는 Claude Code에 제출</b>합니다. "dbt 30일 Day N 제출"과 프로젝트 경로를 알려 주면 리뷰합니다. 실행 성공보다 <b>유지보수성·확장성</b>을 봅니다. 설계가 잘못되면 그대로 지적합니다.</li>
+<li><b>완료 조건을 못 채우면 다음 Day로 넘어가지 않습니다.</b> 완료 버튼은 스스로 정직하게 누릅니다.</li>
+<li>Day 7 · 14 · 21 · 30에 주간 평가를 하고, 부족한 부분은 다음 주 시작 전에 보충합니다.</li>
+</ul>
+
+<h2 id="eval">평가 기준 — 설명할 수 있어야 하는 질문</h2>
+<p>기능을 쓸 줄 아는지가 아니라 <b>설계 의도를 설명할 수 있는지</b>를 봅니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>질문</th><th>다루는 날</th></tr>
+<tr><td>왜 이 모델을 Staging으로 분리하는가?</td><td>1, 5</td></tr>
+<tr><td>Intermediate Layer는 언제 필요한가?</td><td>5, 9</td></tr>
+<tr><td>Incremental과 Snapshot은 어떻게 구분하는가?</td><td>15, 16</td></tr>
+<tr><td>Business Rule은 어디에서 관리하는가?</td><td>10</td></tr>
+<tr><td>Reference Data는 어떻게 관리하는가?</td><td>4, 10</td></tr>
+<tr><td>데이터 품질 테스트는 어느 계층에 배치하는가?</td><td>11, 14</td></tr>
+<tr><td>변경된 데이터의 영향 범위를 어떻게 파악하는가?</td><td>1, 13, 24</td></tr>
+<tr><td>Git 협업 시 충돌을 어떻게 해결하는가?</td><td>23</td></tr>
+<tr><td>배포 실패 시 어떻게 대응하는가?</td><td>25</td></tr>
+<tr><td>BI와 LLM이 동일한 지표를 사용하도록 어떻게 설계하는가?</td><td>26, 27</td></tr>
+</table>
+</div>
+
+<h2 id="final">최종 평가 (Day 30)</h2>
+<p>12개 영역을 각각 100점으로 평가하고, 부족한 영역에는 구체적인 보완 과제를 냅니다. 점수를 적어 두면 이 브라우저에 저장됩니다.</p>
+<div class="table-wrap">
+<table id="final-table">
+<tr><th>영역</th><th style="width:110px">점수 (0~100)</th></tr>
+</table>
+</div>
+<p id="final-avg" style="font-weight:700"></p>
+
+<p style="margin-top:30px"><button class="btn" id="reset-30">30일 코스 진도 초기화</button></p>
+
+</main>
+</div>
+<div class="footer">개인 학습용 · 실습 데이터는 가상 데이터입니다</div>
+<script src="../assets/dbt30-days.js"></script>
+<script src="../assets/app.js"></script>
+<script>
+(function () {
+  const S = window.DE_STORE, D = window.DBT30_DAYS;
+  const WEEKS = [
+    { w: 1, name: "Week 1 · Fundamentals", sub: "구조·계층·설정의 뼈대" },
+    { w: 2, name: "Week 2 · Data Modeling & Quality", sub: "그레인·fact/dim·규칙·테스트" },
+    { w: 3, name: "Week 3 · Advanced dbt", sub: "증분·이력·Jinja·매크로·재처리" },
+    { w: 4, name: "Week 4 · Production & Semantic Layer", sub: "협업·CI/CD·배포·지표·오케스트레이션" },
+  ];
+  const isDone = (d) => S.get(d.id + ":done", false);
+  const box = document.getElementById("weeks");
+  let total = 0;
+  WEEKS.forEach((W) => {
+    const head = document.createElement("div");
+    head.className = "week-head";
+    head.innerHTML = `<h3 id="w${W.w}">${W.name}</h3><span class="wsub">${W.sub}</span>`;
+    box.appendChild(head);
+    const ul = document.createElement("ul");
+    ul.className = "day-list";
+    D.filter((d) => d.week === W.w).forEach((d) => {
+      const prev = D[d.n - 2];
+      const unlocked = d.n === 1 || (prev && isDone(prev));
+      const done = isDone(d);
+      const st = S.get(d.id + ":stat", null);
+      let pct = done ? 1 : 0;
+      if (!done && st) { const den = st.stepsTotal + st.quizTotal; pct = den ? (st.steps + st.quiz) / den * 0.9 : 0; }
+      total += pct;
+      let badge, title;
+      if (done) badge = `<span class="stat-badge done">✓ 완료 ${S.get(d.id + ":doneAt", "")}</span>`;
+      else if (!d.ready) badge = `<span class="stat-badge lock">본문 준비 중</span>`;
+      else if (!unlocked) badge = `<span class="stat-badge lock">🔒 Day ${d.n - 1} 완료 후</span>`;
+      else badge = `<span class="stat-badge open">열림</span>` + (st ? `<br>실습 ${st.steps}/${st.stepsTotal} · 퀴즈 ${st.quiz}/${st.quizTotal}` : "");
+      title = d.ready && (unlocked || done)
+        ? `<a class="dtitle" href="${d.file}">${d.title}</a>`
+        : `<span class="dtitle">${d.title}</span>`;
+      const li = document.createElement("li");
+      li.innerHTML = `<div class="dnum">Day ${d.n}</div>
+        <div>${title}<p class="ddesc">${d.desc}</p>
+        <p class="dlab"><b>실습</b> ${d.lab}<br><b>완료 조건</b> ${d.done}</p></div>
+        <div class="dprog">${badge}</div>`;
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  });
+  const pct = Math.round(total / D.length * 100);
+  document.getElementById("overall-bar").style.width = pct + "%";
+  document.getElementById("overall-num").textContent = pct + "%";
+
+  const AREAS = ["dbt 프로젝트 아키텍처", "데이터 모델링", "Data Mart 구축", "Business Rule 관리", "Data Quality",
+    "Incremental Processing", "Snapshots", "Jinja / Macros", "Git / CI/CD", "Semantic Layer", "Orchestration", "운영 및 장애 대응"];
+  const tbl = document.getElementById("final-table");
+  const scores = S.get("d30-final", {});
+  const avg = () => {
+    const v = Object.values(S.get("d30-final", {})).filter((x) => x !== "" && !isNaN(x)).map(Number);
+    document.getElementById("final-avg").textContent = v.length ? `입력 ${v.length}/12 · 평균 ${Math.round(v.reduce((a, b) => a + b, 0) / v.length)}점` : "";
+  };
+  AREAS.forEach((a, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${a}</td><td><input type="number" min="0" max="100" style="width:80px" value="${scores[i] ?? ""}"></td>`;
+    tr.querySelector("input").addEventListener("input", (e) => { const s = S.get("d30-final", {}); s[i] = e.target.value; S.set("d30-final", s); avg(); });
+    tbl.appendChild(tr);
+  });
+  avg();
+
+  document.getElementById("reset-30").addEventListener("click", () => {
+    if (!confirm("30일 코스의 진도·퀴즈·점수를 지울까요? (7일 코스 진도는 그대로)")) return;
+    Object.keys(localStorage).filter((k) => k.startsWith("de-study:d30")).forEach((k) => localStorage.removeItem(k));
+    location.reload();
+  });
+})();
+</script>
+</body>
+</html>
