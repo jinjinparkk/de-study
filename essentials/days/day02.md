@@ -163,7 +163,7 @@ SELECT po.po_no, po.po_dt, po.co_cd, pd.item_cd, pd.po_qty,
          ON rd.rcv_no = r.rcv_no AND rd.item_cd = pd.item_cd;
 ```
 
-샘플에서는 PO2026010001(R20001 500 KG)이 RC2026020001(500 KG)과 짝이 맞습니다. 하지만 같은 구매처에 같은 원료를 두 번 발주하면 이 조인은 2 × 2 = 4행을 만듭니다. 추정 매칭을 DW에 넣기 전에 ERP에 발주번호를 들고 있는 다른 테이블(입고 예정, 검수 등)이 있는지 반드시 물어야 합니다. 발주 회사는 4000 한빛케미칼인데 입고 창고 W01은 2000 한빛로지스 소속이라는 점도 확인 대상입니다. 계열사 간 물류 위탁 구조라면 DW에서 "누구의 재고인가"를 따로 정의해야 합니다.
+샘플에서는 PO2026010001(R20001 500 KG)이 RC2026020001(500 KG)과 짝이 맞습니다. 하지만 같은 구매처에 같은 원료를 두 번 발주하고 두 번 입고하면 이 조인은 최대 2 × 2 = 4행까지 만듭니다(두 입고가 모두 두 번째 발주보다 늦으면). 추정 매칭을 DW에 넣기 전에 ERP에 발주번호를 들고 있는 다른 테이블(입고 예정, 검수 등)이 있는지 반드시 물어야 합니다. 발주 회사는 4000 한빛케미칼인데 입고 창고 W01은 2000 한빛로지스 소속이라는 점도 확인 대상입니다. 계열사 간 물류 위탁 구조라면 DW에서 "누구의 재고인가"를 따로 정의해야 합니다.
 
 ### 7단계: 수불과 스냅샷 대조
 
@@ -333,5 +333,5 @@ SELECT s.ship_dt, 'SHIP', s.ship_no, sd.ship_qty, c.cust_nm
 ## 참고할 원전
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 4 "Inventory", Chapter 5 "Procurement", Chapter 6 "Order Management", Chapter 7 "Accounting": 업무 프로세스별로 원천을 읽고 팩트를 정하는 방식.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 요건 분석 영역: 현행 시스템 분석과 요건 수집.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 요건 분석 과목: 현행 시스템 분석과 요건 수집.
 - PostgreSQL 공식 문서 — System Catalogs의 `pg_constraint`, The Information Schema.

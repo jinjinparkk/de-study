@@ -97,7 +97,8 @@
           i++;
         }
         const tag = ordered ? "ol" : "ul";
-        out.push(`<${tag}>${items.map((t) => `<li>${inline(t)}</li>`).join("")}</${tag}>`);
+        const start = ordered ? parseInt(l, 10) : 1; // 코드 블록 등으로 끊긴 뒤 "6." 으로 다시 시작하는 목록
+        out.push(`<${tag}${start !== 1 ? ` start="${start}"` : ""}>${items.map((t) => `<li>${inline(t)}</li>`).join("")}</${tag}>`);
         continue;
       }
       const buf = [];

@@ -6,7 +6,7 @@
 
 ## 왜 중요한가
 
-주문상태코드에 '25 출고지시'를 새로 넣는 날, 어디선가 `WHERE ORD_STAT_CD < '30'`으로 "미출고 주문"을 뽑던 배치가 출고지시 건까지 미출고로 세기 시작합니다. 다른 화면은 `IN ('10','20')`으로 짜여 있어 25를 빠뜨립니다. 같은 "미출고 주문"이 화면마다 다른 숫자가 되고, 정 과장은 대시보드를 믿지 않게 됩니다. 코드 하나 추가가 수십 개 프로그램의 영향도 분석이 되는 이유입니다.
+주문상태코드에 '25 출고지시'를 새로 넣는 날, `WHERE ORD_STAT_CD < '30'`으로 "미출고 주문"을 뽑던 배치는 우연히 25를 포함하지만, `IN ('10','20')`으로 짜인 다른 화면은 25를 빠뜨립니다. 같은 "미출고 주문"이 화면마다 다른 숫자가 되고, 정 과장은 대시보드를 믿지 않게 됩니다. 코드 하나 추가가 수십 개 프로그램의 영향도 분석이 되는 이유입니다.
 
 ## 핵심 개념
 
@@ -66,7 +66,8 @@ Day 6에서 품목유형에 SF(반제품)가 추가됐습니다. `ITEM_TP_CD <> 
 코드그룹코드를 **컬럼 물리명과 같게** 짓는 것이 작지만 강력한 규칙입니다. "이 컬럼의 코드 목록은?"이 이름만으로 찾아지고, 다음 절의 자동 점검이 가능해집니다. CMM(공통), GRP(그룹), SORT(정렬)는 표준 약어표에 없으므로 Day 10의 표준단어 신청 대상입니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.tb_cmm_cd_grp (               -- 공통코드그룹
   cd_grp_cd   VARCHAR(30) PRIMARY KEY,
@@ -308,5 +309,5 @@ SELECT 'new', COUNT(*)
 
 ## 참고할 원전
 
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 표준화 영역: 표준 코드.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 표준화 과목: 표준 코드.
 - DAMA International, "DAMA-DMBOK: Data Management Body of Knowledge", 2nd ed. (Technics Publications, 2017) — Reference and Master Data 장 (참조 데이터와 코드값 관리).

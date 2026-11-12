@@ -10,7 +10,7 @@
 
 ## 핵심 개념
 
-### 1. 함수 종속: 정규화의 유일한 도구
+### 1. 함수 종속: 1NF~BCNF 정규화의 핵심 도구
 
 쉽게 말하면 "A를 알면 B가 하나로 정해진다"는 관계입니다. 거래처번호를 알면 거래처명이 하나로 정해지므로 CUST_NO → CUST_NM입니다. 정확한 용어로 함수 종속(functional dependency)이라고 합니다.
 
@@ -83,7 +83,8 @@
 칸을 쪼개고 품목마다 행을 나눈 1NF 시트를 공통 스키마에서 재현합니다. 엑셀이 ERP 화면을 내려받아 만든 것이라고 보면 됩니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- 1NF: 한 칸에 값 하나, 한 행에 품목 하나. 키 = (주문번호, 주문순번)
 CREATE TABLE lab.stg_ord_xls AS
@@ -129,7 +130,7 @@ HAVING COUNT(DISTINCT rgn_cd) > 1;
 
 결과는 C000101 청솔내과의원, 2, GGD,SEL입니다. 이제 지역별 매출을 내면 같은 병원의 60,000원은 경기, 64,000원은 서울로 잡힙니다.
 
-**삽입 이상.** 신규 약국 C000203 푸른숲약국이 거래를 시작했지만 아직 주문이 없습니다. 이 시트는 PK (ORD_NO, ORD_SEQ)가 비어 있는 행을 받지 않으므로 거래처를 등록할 방법이 없고, 결국 'TEMP0001' 같은 가짜 주문번호가 생깁니다.
+**삽입 이상.** 신규 약국 C000203 새봄약국이 거래를 시작했지만 아직 주문이 없습니다. 이 시트는 PK (ORD_NO, ORD_SEQ)가 비어 있는 행을 받지 않으므로 거래처를 등록할 방법이 없고, 결국 'TEMP0001' 같은 가짜 주문번호가 생깁니다.
 
 **삭제 이상.** 바른팜유통의 주문 SO2026030003을 시트에서 지우면, 바른팜유통이 도매상이고 경기 지역이라는 사실도, 박지훈이 경기팀이라는 사실도 함께 사라집니다.
 
@@ -150,7 +151,7 @@ TB_ORD     (ORD_NO, ORD_DT, CUST_NO, EMP_NO, ORD_STAT_CD)
 TB_ORD_DTL (ORD_NO, ORD_SEQ, ITEM_CD, ORD_QTY, UPRC, ORD_AMT)
 ```
 
-공통 스키마 구조 그대로입니다. 지역은 TB_CUST 한 행에만 있으니 일부만 고칠 수 없고, 푸른숲약국은 주문 없이 등록되며, 주문을 지워도 거래처와 사원은 남습니다.
+공통 스키마 구조 그대로입니다. 지역은 TB_CUST 한 행에만 있으니 일부만 고칠 수 없고, 새봄약국은 주문 없이 등록되며, 주문을 지워도 거래처와 사원은 남습니다.
 
 ### 단가는 왜 품목으로 빼지 않는가
 
@@ -246,7 +247,7 @@ COMMIT;
 
 ### 반정규화 2: 일별 집계 테이블과 과거분 재계산
 
-정 과장의 "일별 거래처·품목 주문금액" 화면을 위해 집계 테이블을 둡니다. 표준 약어를 따라 TB_ORD_DAILY로 이름 짓습니다(TB_INV_DAILY와 같은 규칙).
+정 과장의 "일별 거래처·품목 주문금액" 화면을 위해 집계 테이블을 둡니다. 기존 TB_INV_DAILY와 같은 관례로 TB_ORD_DAILY라 이름 짓습니다(DAILY는 약어표에 없으므로 Day 10의 표준단어 신청 대상입니다).
 
 ```sql
 CREATE TABLE lab.tb_ord_daily (          -- 일별주문집계
@@ -439,4 +440,4 @@ SELECT COALESCE(a.ord_dt, s.ord_dt) AS ord_dt, a.amt AS daily_amt, s.amt AS src_
 
 - E. F. Codd, "A Relational Model of Data for Large Shared Data Banks", Communications of the ACM, 1970 — 관계 모델과 정규화의 출발점.
 - Graeme Simsion, Graham Witt, "Data Modeling Essentials", 3rd ed. (Morgan Kaufmann, 2005) — 기본 정규화와 고급 정규화를 다루는 장들.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역(정규화), 데이터베이스 설계와 이용 영역(반정규화, 성능 설계).
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목(정규화), 데이터베이스 설계와 이용 과목(반정규화, 성능 설계).

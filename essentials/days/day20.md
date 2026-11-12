@@ -39,7 +39,8 @@ grain 한 행에 차원 값이 둘 이상이면(공동 담당, 복수 진단, �
 방문 기록과 프로모션 대상은 학습용 가상 데이터입니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.fct_visit (                 -- 방문팩트 (팩트리스): 일자 × 사원 × 거래처
   visit_dt_sk INTEGER NOT NULL, emp_sk INTEGER NOT NULL, cust_sk INTEGER NOT NULL,

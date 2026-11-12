@@ -101,7 +101,8 @@ B를 고른 이유는 세 가지입니다. 주문상세는 거의 항상 주문 
 실습은 `lab` 스키마에 복사본을 만들어 진행합니다. 운영계(`erp`) 테이블 구조는 바꾸지 않습니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- 후보 A: (주문번호, 품목코드)를 PK로 잡은 주문상세
 CREATE TABLE lab.tb_ord_dtl_a (
@@ -350,4 +351,4 @@ SELECT ord_dtl_no, ord_no, ord_seq, item_cd, ord_dtl_tp_cd
 
 - Graeme Simsion, Graham Witt, "Data Modeling Essentials", 3rd ed. (Morgan Kaufmann, 2005) — 기본키 선택과 식별(identity)을 다루는 장.
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 3 "Retail Sales": 자연키와 서로게이트 키를 구분하는 이유.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 식별자 도출, 식별·비식별 관계.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목: 식별자 도출, 식별·비식별 관계.

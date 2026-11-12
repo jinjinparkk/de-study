@@ -68,7 +68,7 @@
   adapter (dbt-bigquery) : SQL 방언 · DDL · 인증 차이를 흡수</pre>
 <ul>
 <li><b>project</b>: 무엇을 만들지. 모델·테스트·설정. git으로 관리합니다.</li>
-<li><b>profile</b>: 어디에 어떤 권한으로 연결할지. 인증 정보가 있으니 저장소 밖(<code>%USERPROFILE%\.dbt\profiles.yml</code>)에 둡니다.</li>
+<li><b>profile</b>: 어디에 어떤 권한으로 연결할지. 인증 정보가 있으니 저장소 밖(<code>$HOME\.dbt\profiles.yml</code>, 폴더가 없으면 <code>mkdir $HOME\.dbt</code>)에 둡니다.</li>
 <li><b>target</b>: 한 profile 안의 환경(dev·ci·prod). 같은 코드를 <code>--target prod</code>로 다른 곳에 짓습니다.</li>
 <li><b>adapter</b>: 웨어하우스별 번역기. <code>create or replace table</code>, <code>merge</code>, 파티션 문법 같은 차이를 흡수합니다.</li>
 </ul>
@@ -84,7 +84,7 @@
                      (threads 만큼 병렬, 실패하면 하위 노드 skip)
 
   다른 명령이 남기는 것:  docs generate → catalog.json   source freshness → sources.json
-                        MetricFlow → semantic_manifest.json</pre>
+                        parse(semantic model 이 있을 때) → semantic_manifest.json, MetricFlow 가 이걸 읽음</pre>
 
 <div class="box proc">
 <span class="box-title">프로시저 감각으로 옮기면</span>
@@ -144,7 +144,7 @@ dbt의 진짜 산출물은 테이블이 아니라 <b>manifest</b>입니다. 테�
 <p>prod target의 dataset을 <code>analytics</code>로 두고 mart 폴더에 <code>+schema: analytics</code>를 줬더니 <code>analytics_analytics</code>가 생겼습니다. dbt 기본 규칙은 <code>&lt;target dataset&gt;_&lt;custom schema&gt;</code>이기 때문입니다. 개발자 각자의 dev가 서로 덮어쓰지 않게 하려는 의도된 동작인데, 모르고 쓰면 이름이 엉망이 됩니다. 이 동작을 바꾸는 매크로(<code>generate_schema_name</code>)는 Day 18에서 직접 씁니다. 오늘은 기본 동작을 눈으로 확인합니다.</p>
 
 <h3>사례 3 · dev에서 GA4 원천 풀스캔</h3>
-<p>날짜 조건 없이 이벤트 테이블을 조인한 모델을 dev에서 몇 번 돌렸더니 하루 무료 한도를 넘었습니다. BigQuery profile의 <code>maximum_bytes_billed</code>를 걸어 두면 한도를 넘는 쿼리는 실행 전에 실패합니다. 안전장치는 "나중에"가 아니라 <b>프로젝트 첫날</b> 겁니다.</p>
+<p>날짜 조건 없이 이벤트 테이블을 조인한 모델을 dev에서 몇 번 돌렸더니 한 달 무료 쿼리 한도를 며칠 만에 다 썼습니다. BigQuery profile의 <code>maximum_bytes_billed</code>를 걸어 두면 한도를 넘는 쿼리는 실행 전에 실패합니다. 안전장치는 "나중에"가 아니라 <b>프로젝트 첫날</b> 겁니다.</p>
 
 <h2 id="code">5. 코드 예제</h2>
 <p>아래 예시는 <b>다른 도메인(커머스 주문)</b>입니다. 그대로 복사하지 말고, 형태만 보고 실습에서 Ad Performance Validator에 맞게 직접 설계하세요.</p>
@@ -197,7 +197,7 @@ models:
       +materialized: table
       +schema: marts
       +labels:
-        layer: marts        # BigQuery 작업 라벨 → 비용을 계층별로 집계 가능</code></pre>
+        layer: marts        # 테이블·뷰에 붙는 라벨(저장소 분류). 쿼리 비용을 계층별로 보려면 query-comment 의 job-label</code></pre>
 
 <div class="box warn">
 <span class="box-title">버전 차이 (1.10+)</span>
@@ -228,7 +228,7 @@ dbt --version</code></pre>
 
 <div class="step" data-id="auth">
 <div class="step-title">2. BigQuery 인증과 profiles.yml 작성</div>
-<p><code>gcloud auth application-default login</code>으로 인증한 뒤, <code>%USERPROFILE%\.dbt\profiles.yml</code>에 <b>dev와 prod 두 target</b>을 직접 작성하세요. 조건:</p>
+<p><code>gcloud auth application-default login</code>으로 인증한 뒤, <code>$HOME\.dbt\profiles.yml</code>에 <b>dev와 prod 두 target</b>을 직접 작성하세요. 조건:</p>
 <ul>
 <li>profile 이름은 프로젝트 이름과 같게 (<code>ad_performance_validator</code>)</li>
 <li>dev는 개인용 데이터셋, prod는 별도 데이터셋</li>
@@ -279,7 +279,8 @@ dbt run --select _smoke --target prod</code></pre>
 <p>아래를 실행하고 질문에 답을 적으세요.</p>
 <pre data-file="PowerShell"><code>dbt parse
 dbt ls --resource-type model
-dbt compile --select _smoke</code></pre>
+dbt compile --select _smoke
+dbt run --select _smoke     # compile 은 run_results.json 을 덮어쓰고 adapter_response 가 비어 있어서, 마지막에 run 을 한 번 더</code></pre>
 <ul>
 <li><code>dbt parse</code>는 BigQuery에 접속했나요? 어떻게 확인했나요?</li>
 <li><code>target/manifest.json</code>에서 <code>_smoke</code> 노드의 <code>config.materialized</code>와 <code>schema</code> 값은? 그 값은 어느 설정에서 왔나요?</li>
@@ -300,7 +301,7 @@ dbt compile --select _smoke</code></pre>
 <li>비용 안전장치</li>
 <li>raw를 읽을 수 있는 계층과, 그 규칙을 어떻게 지킬지</li>
 </ol>
-<p>그다음 <code>.gitignore</code>를 정리하고(<code>target/</code>, <code>dbt_packages/</code>, <code>logs/</code>, <code>.venv/</code>) 첫 커밋을 만드세요. <code>_smoke.sql</code>은 커밋 전에 지웁니다.</p>
+<p>그다음 <code>$HOME\dbt30</code>을 git 저장소 루트로 정하고(<code>.venv</code>·<code>requirements.txt</code>·<code>ad_performance_validator\</code>가 함께 들어가도록) <code>.gitignore</code>를 정리한 뒤(<code>.venv/</code>, <code>target/</code>, <code>dbt_packages/</code>, <code>logs/</code>) 첫 커밋을 만드세요. <code>_smoke.sql</code>은 커밋 전에 지웁니다.</p>
 <details class="hint"><summary>힌트</summary><p>"버린 대안"을 못 쓰겠다면 결정을 아직 안 한 것입니다. 예: "dev를 사람마다 다른 데이터셋으로" vs "dev 하나 공유" — 혼자 하는 프로젝트여도 팀이 생기면 무엇이 문제가 되는지 적어 보세요.</p></details>
 </div>
 

@@ -54,7 +54,8 @@ DW 일정에서 늦어지는 곳은 대개 개발이 아니라 **원천 의존**
 ### 요구사항 추적과 위험 대장
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.prj_req (                 -- 요구사항
   req_id    VARCHAR(10) PRIMARY KEY,
@@ -249,4 +250,4 @@ FR-02·FR-03도 실제로는 FCT_ORD_LINE을 읽지만(측정값이 그 위에 �
 - Ralph Kimball 외, "The Data Warehouse Lifecycle Toolkit", 2nd ed. (Wiley) — 요구사항 수집, 프로젝트 계획과 관리.
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 17 "Kimball DW/BI Lifecycle Overview".
 - PMI, "A Guide to the Project Management Body of Knowledge (PMBOK Guide)" — 범위·일정·위험 관리.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 전사 아키텍처·데이터 요구사항 영역.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 전사아키텍처 이해, 데이터 요건 분석 과목.

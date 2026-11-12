@@ -53,7 +53,7 @@ PK 누락, 인덱스 없는 FK, 설명 없는 컬럼, 표준 미등록 단어(Da
 | A. RTN_DTL에 LOT_NO, ITEM_CD 저장 | 로트별 반품 조회가 조인 없이 빠름 | 출고상세와 다른 로트가 들어갈 수 있음. 정합성 점검 필요 |
 | B. 저장하지 않고 출고상세 FK로 가져옴 | 구조적으로 어긋날 수 없음 | 로트별 조회 때 출고상세 조인 필요 |
 
-반품은 건수가 적고 출고상세는 PK로 조인되므로 조인 비용이 작습니다. **B안을 택합니다.** 반대로 반품이 많고 로트별 반품 조회가 핵심 화면이라면 A안 + 정합성 점검 규칙(Day 12의 DQ07과 같은 형태)을 택할 수 있습니다. 반품 시 다른 로트로 교환해 주는 업무가 생긴다면 그때는 "교환 출고"라는 별도 거래로 설계합니다.
+반품은 건수가 적고 출고상세는 PK로 조인되므로 조인 비용이 작습니다. **B안을 택합니다.** 반대로 반품이 많고 로트별 반품 조회가 핵심 화면이라면 A안 + 정합성 점검 규칙(Day 12의 DQ01~06에 "DQ07 반품 로트 = 출고 로트"를 추가)을 택할 수 있습니다. 반품 시 다른 로트로 교환해 주는 업무가 생긴다면 그때는 "교환 출고"라는 별도 거래로 설계합니다.
 
 ### 논리 ERD
 
@@ -85,7 +85,8 @@ RTN_RSN_CD ..... TB_RTN_DTL               반품사유 (공통코드)
 ### 물리 DDL
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.tb_rtn_stat (                 -- 반품상태 (개별 코드)
   rtn_stat_cd  VARCHAR(2)  PRIMARY KEY,
@@ -340,6 +341,6 @@ SELECT c.conrelid::regclass AS table_nm, c.conname
 
 ## 참고할 원전
 
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역 전반, 데이터 표준화 영역.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링, 데이터 표준화 과목.
 - Graeme Simsion, Graham Witt, "Data Modeling Essentials", 3rd ed. (Morgan Kaufmann, 2005).
 - PostgreSQL 공식 문서 — "System Catalogs" (pg_constraint, pg_index), "Constraints".

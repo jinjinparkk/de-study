@@ -26,7 +26,7 @@ Type 6이라는 이름은 1 + 2 + 3 = 6에서 왔습니다. 이 밖에 자주 �
 
 쉽게 말하면 거래처 하나가 담당 변경 때마다 **새 버전 행**을 갖고, 버전마다 서로게이트 키(CUST_SK)가 다릅니다. 팩트는 사건 일자에 유효했던 버전의 SK를 들고 있으므로, 팩트를 차원과 조인하기만 하면 자동으로 당시 값이 나옵니다.
 
-공통 DW의 DIM_CUST가 이미 이 구조입니다. 유효시작일자(EFF_STRT_DT), 유효종료일자(EFF_END_DT, 포함, 현재 = 9999-12-31), 현재여부(CURR_YN)를 두고 Day 7의 선분이력 규칙을 그대로 따릅니다. 업무 키(CUST_NO)는 버전마다 반복되므로 "거래처 수"는 `COUNT(DISTINCT CUST_NO)` 또는 `CURR_YN = 'Y'`로 셉니다.
+공통 DW의 DIM_CUST가 이미 이 구조입니다. 유효시작일자(EFF_STRT_DT), 유효종료일자(EFF_END_DT, 포함, 현재 = 9999-12-31), 현재여부(CURR_YN)를 두고 Day 7의 선분이력 규칙을 그대로 따릅니다. 업무 키(CUST_NO)는 버전마다 반복되므로 "거래처 수"는 `COUNT(DISTINCT CUST_NO)` 또는 `CURR_YN = 'Y'`로 셉니다(알 수 없음 -1 행은 제외).
 
 ### 3. 유효기간은 업무 일자인가, 적재 일자인가
 
@@ -73,7 +73,8 @@ Type 1로 보면 김도윤의 3월 청솔내과의원 실적은 0원이 됩니�
 5월 1일 배치에서 원천이 다음을 줬다고 가정합니다(모두 가상). 늘봄약국(C000202) 담당이 5월 1일부터 최하은 → 박지훈, 신규 거래처 새봄약국(C000203) 등록, 미래종합병원 거래처명 정정(Type 1).
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- 실습용 차원 복사본 (서로게이트 키 시퀀스를 현재 최댓값 뒤로)
 CREATE TABLE lab.dim_cust (LIKE dw.dim_cust INCLUDING ALL);
@@ -94,7 +95,7 @@ INSERT INTO lab.stg_cust VALUES ('C000203', '새봄약국', '02', 'SEL', 'E1002'
 적재는 두 단계입니다. Type 1 속성은 **모든 버전**을 덮어쓰고, Type 2 속성은 MERGE로 "현재 행 닫기 + 새 버전 넣기"를 한 문장에 처리합니다.
 
 ```sql
--- 1단계: Type 1 속성(거래처명·유형·지역) 덮어쓰기 — 과거 버전까지 전부
+-- 1단계: Type 1 속성(거래처명) 덮어쓰기 — 과거 버전까지 전부
 UPDATE lab.dim_cust t
    SET cust_nm = s.cust_nm, load_dtm = CURRENT_TIMESTAMP, batch_id = 'B20260502'
   FROM lab.stg_cust s
@@ -150,11 +151,11 @@ SELECT COUNT(*) AS pending_chg_cnt
   JOIN lab.dim_cust d ON d.cust_no = s.cust_no AND d.curr_yn = 'Y'
  WHERE d.emp_no <> s.emp_no;
 
--- 선분 규칙 점검 (Day 7): 거래처마다 현재 행 1개, 다음 시작 = 이전 종료 + 1
+-- 선분 규칙 점검 (Day 7): 다음 시작 = 이전 종료 + 1 (현재 행 1개 점검은 Day 7의 두 번째 쿼리와 같은 방식)
 SELECT cust_no, eff_strt_dt, eff_end_dt, next_strt_dt
   FROM (SELECT d.*, LEAD(eff_strt_dt) OVER (PARTITION BY cust_no ORDER BY eff_strt_dt) AS next_strt_dt
           FROM lab.dim_cust d) x
- WHERE next_strt_dt IS NOT NULL AND next_strt_dt <> eff_end_dt + 1;
+ WHERE next_strt_dt IS NOT NULL AND next_strt_dt - 1 <> eff_end_dt;
 ```
 
 두 쿼리 모두 0건입니다.

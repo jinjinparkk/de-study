@@ -97,10 +97,11 @@ CREATE TABLE tb_ship_dtl_bad (
 ) PARTITION BY RANGE (ship_dt);
 ```
 
-PK를 (SHIP_NO, SHIP_SEQ, SHIP_DT)로 넓힙니다. 업무 식별자는 여전히 (SHIP_NO, SHIP_SEQ)이고, 한 출고번호의 출고일자는 하나뿐이므로 실질적인 유일성은 같습니다.
+PK를 (SHIP_NO, SHIP_SEQ, SHIP_DT)로 넓힙니다. 업무 식별자는 여전히 (SHIP_NO, SHIP_SEQ)이고, 한 출고번호의 출고일자는 하나뿐이므로 실질적인 유일성은 같습니다. 다만 이 보장은 업무 규칙에 기대므로, (SHIP_NO, SHIP_SEQ) 중복 점검을 품질 규칙(Day 12)으로 둡니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.tb_ship_dtl (                 -- 출고상세 (월 범위 파티션)
   ship_dt   DATE        NOT NULL,
@@ -139,7 +140,7 @@ SELECT tableoid::regclass AS partition_nm, COUNT(*) AS row_cnt, SUM(ship_qty) AS
  ORDER BY 1;
 ```
 
-출고 6행은 모두 3월이라 `lab.tb_ship_dtl_202603`에 6행, 435 BOX가 들어갑니다. 파티션 범위는 `FROM` 포함, `TO` 미포함인 반열림 구간이라 말일이 며칠인지 신경 쓸 필요가 없습니다.
+출고 6행은 모두 3월이라 `lab.tb_ship_dtl_202603`에 6행(수량 합 435 = BOX 415 + EA 20, 단위가 달라 실제로는 합치지 않습니다)이 들어갑니다. 파티션 범위는 `FROM` 포함, `TO` 미포함인 반열림 구간이라 말일이 며칠인지 신경 쓸 필요가 없습니다.
 
 이제 프루닝을 눈으로 확인합니다. 비용 숫자가 아니라 **어떤 파티션을 읽는지**만 봅니다.
 
@@ -339,4 +340,4 @@ FK 38개 중 29개가 나옵니다(TB_ORD.CUST_NO, TB_SHIP_DTL.LOT_NO 등). 전�
 
 - PostgreSQL 공식 문서 — "Data Types", "Constraints", "Indexes", "Table Partitioning".
 - Oracle Database 공식 문서 — "VLDB and Partitioning Guide".
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 물리 데이터 모델링.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링, 데이터베이스 설계와 이용 과목: 물리 설계.

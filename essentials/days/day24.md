@@ -51,7 +51,8 @@ SLA(Service Level Agreement)는 "업무기준일 D의 데이터가 D+1일 몇 �
 오케스트레이터(Airflow)의 실행 기록과 별도로, DW 안에 작업 정의·의존성·실행 이력을 둡니다. 도구를 바꿔도 운영 이력이 남고, SQL로 SLA·영향 범위를 바로 계산할 수 있습니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.batch_job (               -- 배치작업
   job_id    VARCHAR(30) PRIMARY KEY,       -- 작업ID
@@ -180,7 +181,7 @@ def notify_failure(context):
 
 # 업무기준일: 논리 날짜가 "업무일"인지 "실행일"인지는 버전·timetable 설정에 따라 다르므로
 # 한 곳에서만 정의하고 모든 SQL에 이 값을 넘긴다
-BIZ_DT = "{{ ds }}"
+BIZ_DT = "{{ ds }}"   # Airflow 3 기본(CronTriggerTimetable)이면 ds 가 실행일이라 "{{ macros.ds_add(ds, -1) }}"
 
 default_args = {
     "owner": "group-dw",
@@ -206,6 +207,7 @@ with DAG(
     stg_ord  = SQLExecuteQueryOperator(task_id="stg_ord",  conn_id="group_dw", sql=f"CALL stg.sp_ord('{BIZ_DT}')")
     stg_ship = SQLExecuteQueryOperator(task_id="stg_ship", conn_id="group_dw", sql=f"CALL stg.sp_ship('{BIZ_DT}')")
     stg_cust = SQLExecuteQueryOperator(task_id="stg_cust", conn_id="group_dw", sql=f"CALL stg.sp_cust('{BIZ_DT}')")
+    # SCD2 는 버전 생성이 순서에 의존 → 자동 재시도 대신 원인 확인 후 수동 재실행(백필도 날짜 오름차순으로 한 번씩)
     dim_cust = SQLExecuteQueryOperator(task_id="dim_cust", conn_id="group_dw", retries=0,
                                        sql=f"CALL dw.sp_dim_cust('{BIZ_DT}')")
     fct_ord  = SQLExecuteQueryOperator(task_id="fct_ord_line",  conn_id="group_dw", sql=f"CALL dw.sp_fct_ord('{BIZ_DT}')")
@@ -330,4 +332,3 @@ SELECT g.biz_dt::DATE AS biz_dt
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 19 "ETL Subsystems and Techniques"(작업 스케줄러, 의존성, 복구와 재시작, 오류 처리 하위 시스템).
 - Apache Airflow 공식 문서 — DAG, Task 재시도, Sensor, Backfill, 템플릿 변수(사용 버전 기준으로 확인).
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 아키텍처 영역: 데이터 통합 운영.

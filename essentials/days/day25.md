@@ -30,7 +30,7 @@ DW의 전형적인 쿼리(팩트 한 달치 × 작은 차원)는 Hash Join이 �
 
 ### 4. 인덱스 vs 전체 읽기
 
-인덱스는 "소수 행을 빨리 찾는" 도구입니다. 테이블의 상당 부분을 읽는 조건(상태 = 출고완료가 95%)이면 인덱스를 타고 한 행씩 찾아가는 것보다 전체를 순서대로 읽는 편이 쌉니다. 그래서 DW 집계 쿼리는 인덱스보다 **파티션으로 읽는 범위를 줄이는 것**이 주 수단이고, 인덱스는 주문번호 조회·드릴스루 같은 점 조회용입니다. 파티션 테이블의 인덱스는 파티션마다 따로 있는 로컬 인덱스여서, 파티션 키 조건 없이 주문번호로만 찾으면 모든 파티션의 인덱스를 뒤집니다.
+인덱스는 "소수 행을 빨리 찾는" 도구입니다. 테이블의 상당 부분을 읽는 조건(상태 = 출고완료가 95%)이면 인덱스를 타고 한 행씩 찾아가는 것보다 전체를 순서대로 읽는 편이 쌉니다. 그래서 DW 집계 쿼리는 인덱스보다 **파티션으로 읽는 범위를 줄이는 것**이 주 수단이고, 인덱스는 주문번호 조회·드릴스루 같은 점 조회용입니다. PostgreSQL에서 파티션 테이블의 인덱스는 파티션마다 따로 있는 로컬 인덱스여서(Oracle은 글로벌 인덱스도 둘 수 있습니다), 파티션 키 조건 없이 주문번호로만 찾으면 모든 파티션의 인덱스를 뒤집니다.
 
 ### 5. 집계 테이블과 MV
 
@@ -43,7 +43,8 @@ DW의 전형적인 쿼리(팩트 한 달치 × 작은 차원)는 Hash Join이 �
 공통 샘플은 몇 행뿐이라 어떤 쿼리든 전체 읽기가 가장 쌉니다. 계획을 읽는 연습을 위해 FCT_ORD_LINE과 같은 모양의 가상 데이터 12만 행을 2026년 월별 파티션 12개에 만듭니다. 이 정도 크기에서도 계획의 **모양**은 운영과 비슷하게 나오지만, 비용 숫자와 방식 선택은 데이터 크기·분포·통계·설정에 따라 달라지므로 운영 판단은 운영 규모의 계획으로 합니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 CREATE TABLE lab.fct_ord_big (            -- 주문상세팩트 대용량 실습본 (가상 데이터)
   ord_dt_sk   INTEGER     NOT NULL,       -- 파티션 키
   cust_sk     INTEGER     NOT NULL,
@@ -123,7 +124,7 @@ Oracle 실행계획은 `EXPLAIN PLAN FOR ...` 후 `SELECT * FROM TABLE(DBMS_XPLA
 -- (라) 주문번호 하나: 파티션 키 조건 없음
 EXPLAIN SELECT * FROM lab.fct_ord_big WHERE ord_no = 'SX0000012345';
 -- (마) 주문번호 + 주문일자 범위
-EXPLAIN SELECT * FROM lab.fct_ord_big WHERE ord_no = 'SX0000012345' AND ord_dt_sk BETWEEN 20260301 AND 20260331;
+EXPLAIN SELECT * FROM lab.fct_ord_big WHERE ord_no = 'SX0000012345' AND ord_dt_sk BETWEEN 20260601 AND 20260630;
 -- (바) 95%가 해당하는 조건
 EXPLAIN SELECT COUNT(*) FROM lab.fct_ord_big WHERE ord_stat_cd = '30';
 ```
@@ -132,7 +133,7 @@ EXPLAIN SELECT COUNT(*) FROM lab.fct_ord_big WHERE ord_stat_cd = '30';
 (라) Append
        -> Index Scan using fct_ord_big_202601_..._idx   12개 파티션 인덱스
        -> ... (12개)
-(마) Index Scan using fct_ord_big_202603_..._idx         1개
+(마) Index Scan using fct_ord_big_202606_..._idx         1개
        Index Cond: ord_no = 'SX0000012345'
 (바) Aggregate -> Append -> Seq Scan 12개 (Filter: ord_stat_cd = '30')
 ```

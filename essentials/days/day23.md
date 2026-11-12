@@ -39,10 +39,13 @@
 
 ### 4월 5일 배치: 정상 2건, 경고 2건, 거부 2건
 
+Day 22의 원천 변경(수량 정정, 물리 삭제, SO2026040003 신규)은 그날 lab 원천에서만 일어난 가상 변경입니다. 오늘부터는 다시 공통 erp 기준으로 스테이징합니다.
+
 ERP의 4월 주문 2건에 가상의 문제 데이터 4건을 섞은 스테이징입니다. 다온약국(C000204)은 아직 거래처 차원에 없고, P10004는 ERP에 막 등록된 신규 품목이라 품목 차원에 없다고 가정합니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 CREATE TABLE lab.dim_cust (LIKE dw.dim_cust INCLUDING ALL);
 INSERT INTO lab.dim_cust SELECT * FROM dw.dim_cust;
 SELECT setval(pg_get_serial_sequence('lab.dim_cust', 'cust_sk'), (SELECT MAX(cust_sk) FROM lab.dim_cust));
@@ -304,4 +307,3 @@ SELECT COUNT(*) AS stg_cnt,
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 19 "ETL Subsystems and Techniques"(서로게이트 키 파이프라인, 오류 이벤트 처리, 감사 차원), Chapter 20 "ETL System Design and Development Process and Tasks".
 - Kimball Group 웹사이트의 Dimensional Modeling Techniques 항목 — 늦게 도착하는 차원, 알 수 없는 차원 행.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 아키텍처 영역: 데이터 통합과 매핑 설계.

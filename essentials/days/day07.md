@@ -109,7 +109,8 @@ SELECT o.ord_no, o.ord_dt, d.ord_seq, d.item_cd,
 일부러 잘못된 데이터를 넣어 봅니다. 운영계는 그대로 두고 `lab`에 복사본을 만듭니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 CREATE TABLE lab.tb_item_uprc_hist (LIKE erp.tb_item_uprc_hist INCLUDING ALL);
 INSERT INTO lab.tb_item_uprc_hist SELECT * FROM erp.tb_item_uprc_hist;
 ALTER TABLE lab.tb_item_uprc_hist
@@ -137,14 +138,14 @@ SELECT a.item_cd, a.uprc_tp_cd,
    AND b.aply_strt_dt > a.aply_strt_dt
    AND b.aply_strt_dt <= a.aply_end_dt;
 
--- 겹침과 빈틈을 한 번에: 다음 행 시작일이 "종료일 + 1"이 아닌 곳
+-- 겹침과 빈틈을 한 번에: "다음 행 시작일 - 1"이 종료일이 아닌 곳
 SELECT item_cd, uprc_tp_cd, aply_strt_dt, aply_end_dt, next_strt_dt,
        CASE WHEN next_strt_dt <= aply_end_dt THEN 'OVERLAP' ELSE 'GAP' END AS issue_tp
   FROM (SELECT h.*,
                LEAD(aply_strt_dt) OVER (PARTITION BY item_cd, uprc_tp_cd ORDER BY aply_strt_dt) AS next_strt_dt
           FROM lab.tb_item_uprc_hist h) x
  WHERE next_strt_dt IS NOT NULL
-   AND next_strt_dt <> aply_end_dt + 1;
+   AND next_strt_dt - 1 <> aply_end_dt;
 
 -- 현재 유효 행(9999-12-31)이 키마다 정확히 1개인가
 SELECT item_cd, uprc_tp_cd, COUNT(*) AS open_cnt
@@ -159,7 +160,7 @@ HAVING COUNT(*) <> 1;
 | P10002 | 01 | 2025-01-01 | 9999-12-31 | 2026-05-01 | OVERLAP |
 | P10003 | 02 | 2025-07-01 | 2026-02-27 | 2026-03-01 | GAP |
 
-세 번째 쿼리는 P10002 기준가의 현재 행이 2개라고 알려 줍니다. `aply_end_dt + 1`은 날짜에 하루를 더하는 식이며 Oracle과 PostgreSQL 모두 같은 의미입니다.
+세 번째 쿼리는 P10002 기준가의 현재 행이 2개라고 알려 줍니다. 날짜 ± 정수는 Oracle과 PostgreSQL 모두 일 단위입니다. 다만 Oracle DATE의 최댓값이 9999-12-31이라 `aply_end_dt + 1`로 쓰면 현재 행(9999-12-31)에서 연도 범위 오류(ORA-01841)가 나므로, 다음 시작일에서 1을 빼서 비교합니다.
 
 ### 변경로그를 붙이고, 정해진 절차로 고치기
 
@@ -235,7 +236,7 @@ SELECT item_cd, uprc_tp_cd, aply_strt_dt, aply_end_dt, next_strt_dt
                LEAD(aply_strt_dt) OVER (PARTITION BY item_cd, uprc_tp_cd ORDER BY aply_strt_dt) AS next_strt_dt
           FROM lab.tb_item_uprc_hist h) x
  WHERE next_strt_dt IS NOT NULL
-   AND next_strt_dt <> aply_end_dt + 1;
+   AND next_strt_dt - 1 <> aply_end_dt;
 
 -- 변경로그: 언제 누가 무엇을 바꿨나
 SELECT chg_seq, chg_tp_cd, item_cd, uprc_tp_cd, aply_strt_dt,
@@ -244,7 +245,7 @@ SELECT chg_seq, chg_tp_cd, item_cd, uprc_tp_cd, aply_strt_dt,
  ORDER BY chg_seq;
 ```
 
-변경로그에는 정정 과정의 삭제 1건(D: 잘못 들어갔던 5월 12,500원 행), 수정 2건(U: 기존 행 종료일 9999-12-31 → 2026-04-30, 시럽 종료일 2월 27일 → 28일), 등록 1건(I)이 순서대로 남습니다. 선분이력만 보면 지금은 깨끗하지만, 변경로그는 "5월 인상분이 한 번 잘못 등록됐다가 정정됐다"는 사실까지 보여 줍니다. 감사 대응에 필요한 것이 바로 이 기록입니다.
+변경로그에는 정정 과정의 삭제(D: 잘못 들어갔던 5월 12,500원 행) → 수정(U: 기존 행 종료일 9999-12-31 → 2026-04-30) → 등록(I: 5월 12,500원 행) → 수정(U: 시럽 종료일 2월 27일 → 28일) 순으로 4건이 남습니다. 선분이력만 보면 지금은 깨끗하지만, 변경로그는 "5월 인상분이 한 번 잘못 등록됐다가 정정됐다"는 사실까지 보여 줍니다. 감사 대응에 필요한 것이 바로 이 기록입니다.
 
 반대로 처음의 잘못된 등록 3건은 로그에 없습니다. 트리거를 그 뒤에 만들었기 때문입니다. 변경로그는 테이블을 만들 때 **처음부터** 붙여야 하며, 나중에 붙이면 그 전의 변경은 영영 알 수 없다는 점을 이 결과가 그대로 보여 줍니다.
 
@@ -426,4 +427,4 @@ Oracle에는 `generate_series`가 없습니다. `SELECT DATE '2026-03-29' + LEVE
 - Richard T. Snodgrass, "Developing Time-Oriented Database Applications in SQL" (Morgan Kaufmann, 1999) — 유효 시간·기록 시간, 기간 겹침 검사, 이원 시간 설계.
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 4 "Inventory"(주기 스냅샷), Chapter 5 "Procurement"(천천히 변하는 차원 기법).
 - Graeme Simsion, Graham Witt, "Data Modeling Essentials", 3rd ed. (Morgan Kaufmann, 2005) — 시간에 따라 변하는 데이터를 다루는 장.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 이력 관리 유형.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목: 이력 관리.

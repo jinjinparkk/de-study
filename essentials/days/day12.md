@@ -24,7 +24,7 @@
 
 ### 2. 품질 규칙은 "데이터"로 관리합니다
 
-규칙 ID, 차원, 점검 SQL, 오너를 **규칙 테이블**에 넣고 실행 결과를 **결과 테이블**에 쌓습니다. 배치 코드에 흩어 두면 몇 개가 있는지, 언제 실패했는지 아무도 모릅니다. Day 8에서 DB에 걸지 못한 FK·CHECK도 이 틀로 옮깁니다.
+규칙 ID, 차원, 설명, 점검 SQL을 **규칙 테이블**에 넣고(실무에서는 오너·조치 등급 컬럼도 둡니다) 실행 결과를 **결과 테이블**에 쌓습니다. 배치 코드에 흩어 두면 몇 개가 있는지, 언제 실패했는지 아무도 모릅니다. Day 8에서 DB에 걸지 못한 FK·CHECK도 이 틀로 옮깁니다.
 
 규칙마다 **위반 시 조치**도 정합니다. 적재를 멈출 것인가(차대 불일치), 적재하고 경고할 것인가(사업자번호 형식), 오류 테이블로 분리할 것인가(Day 23).
 
@@ -34,7 +34,7 @@
 
 ### 4. ALCOA+: 제약 데이터 무결성 원칙
 
-ALCOA+는 GMP 규제를 받는 제약 제조·품질 영역의 **데이터 무결성 원칙**으로, 값이 맞는지보다 **기록을 믿을 수 있는지**를 묻습니다.
+ALCOA+는 GxP(GMP·GDP·GLP·GCP) 규제 영역의 **데이터 무결성 원칙**으로(이 과정에서는 제조·품질, 즉 GMP 데이터 중심으로 봅니다), 값이 맞는지보다 **기록을 믿을 수 있는지**를 묻습니다.
 
 | 원칙 | 뜻 | 데이터 설계로 옮기면 |
 |---|---|---|
@@ -56,7 +56,7 @@ ALCOA+는 GMP 규제를 받는 제약 제조·품질 영역의 **데이터 무�
 
 - **왜(사유) 필수**: 사유 없는 변경은 거부합니다.
 - **사람 기준 귀속**: DB 접속 계정은 대개 공용 계정이므로 애플리케이션이 실제 사용자 ID를 넘깁니다.
-- **변경 불가(immutability)**: 감사 기록 자체의 UPDATE·DELETE를 권한(REVOKE)과 트리거로 막습니다.
+- **변경 불가(immutability)**: 감사 기록 자체의 UPDATE·DELETE·TRUNCATE를 권한(REVOKE)과 트리거로 막습니다. 행 단위 트리거는 TRUNCATE에 걸리지 않으므로 문장 단위 TRUNCATE 트리거나 권한 회수가 따로 필요합니다.
 - **시각은 서버가**: 사용자 입력 시각이 아니라 DB 서버 시각.
 
 DW는 여기서 한 가지를 더 지켜야 합니다. 원천이 정정되면 DW는 **덮어쓰지 않고 새 버전으로 쌓아** 정정 전 값과 정정 시점을 보존합니다. DW가 UPDATE로 최신값만 남기면, 원천에는 남아 있는 감사 추적이 DW에서 끊깁니다.
@@ -66,7 +66,8 @@ DW는 여기서 한 가지를 더 지켜야 합니다. 원천이 정정되면 DW
 ### 품질 규칙 테이블과 실행기
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.tb_dq_rule (                  -- 품질 규칙
   rule_id    VARCHAR(10)  PRIMARY KEY,
@@ -225,6 +226,9 @@ BEGIN
 END $$;
 CREATE TRIGGER trg_audit_immutable BEFORE UPDATE OR DELETE ON lab.tb_audit_trail
 FOR EACH ROW EXECUTE FUNCTION lab.fn_audit_immutable();
+-- 행 트리거는 TRUNCATE 를 못 막으므로 문장 단위로 하나 더
+CREATE TRIGGER trg_audit_no_truncate BEFORE TRUNCATE ON lab.tb_audit_trail
+FOR EACH STATEMENT EXECUTE FUNCTION lab.fn_audit_immutable();
 ```
 
 사유 없이 고치려 하면 거부됩니다.
@@ -290,7 +294,7 @@ SELECT 'as_of_0107', wo_no, lot_no, ver_no, good_qty, defect_qty
  WHERE rn = 1;
 ```
 
-현재값은 1,990, 1월 7일 기준으로는 2,000입니다.1월 7일 보고서가 왜 2,000이었는지 DW가 스스로 설명합니다. Day 7의 기록 시간, Day 19의 SCD Type 2, Day 22의 CDC가 모두 이 생각 위에 있습니다.
+현재값은 1,990, 1월 7일 기준으로는 2,000입니다. 1월 7일 보고서가 왜 2,000이었는지 DW가 스스로 설명합니다. Day 7의 기록 시간, Day 19의 SCD Type 2, Day 22의 CDC가 모두 이 생각 위에 있습니다.
 
 ## Before / After
 
@@ -360,7 +364,7 @@ SELECT chg_dtm, bf_val, af_val, chg_id, chg_rsn
 
 ## 참고할 원전
 
-- MHRA, "'GXP' Data Integrity Guidance and Definitions" — ALCOA+와 감사 추적의 정의.
+- MHRA, "'GXP' Data Integrity Guidance and Definitions" — ALCOA 원칙과 감사 추적의 정의(이 지침은 ALCOA로 쓰고 + 요소를 그 안에 포함된 것으로 봅니다. ALCOA+ 항목을 하나씩 정리한 문서로는 아래 PIC/S 지침을 봅니다).
 - U.S. FDA, "Data Integrity and Compliance With Drug CGMP: Questions and Answers" (Guidance for Industry).
 - PIC/S, "Good Practices for Data Management and Integrity in Regulated GMP/GDP Environments".
 - DAMA International, "DAMA-DMBOK: Data Management Body of Knowledge", 2nd ed. (Technics Publications, 2017) — Data Quality 장.

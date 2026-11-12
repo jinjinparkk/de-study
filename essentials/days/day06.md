@@ -71,7 +71,8 @@
 HOSP(병원), PHAR(약국), WHSL(도매상), BED(병상), CNT(수), MAIN(주), CRDT(여신), LMT(한도)는 표준 약어표에 없는 단어입니다. 실제 프로젝트라면 Day 10의 표준단어 신청 대상입니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.tb_cust_hosp (          -- 병원거래처
   cust_no     VARCHAR(10) PRIMARY KEY REFERENCES erp.tb_cust (cust_no),
@@ -94,7 +95,7 @@ INSERT INTO lab.tb_cust_whsl VALUES ('C000301', 50000000);
 
 병상수 300, 여신한도 5천만 원은 가상 값입니다. 주목할 점은 두 가지입니다. 도매상의 여신한도 필수 규칙이 NOT NULL 한 줄로 끝났고, 약국의 주거래병원은 **병원 서브타입**을 FK로 참조하므로 약국이 다른 약국을 주거래병원으로 잡는 실수를 DB가 막습니다. 단일 테이블이었다면 둘 다 CHECK나 애플리케이션 로직으로 지켜야 합니다.
 
-이 방식의 약점은 "판별자 CUST_TP_CD와 서브타입 테이블이 서로 맞는가"를 FK만으로는 보장하지 못한다는 점입니다. 약국(02) 거래처가 병원 서브타입 테이블에 들어가도 막히지 않습니다. 슈퍼타입에 UNIQUE (CUST_NO, CUST_TP_CD)를 두고 서브 테이블이 (CUST_NO, CUST_TP_CD)를 복합 FK로 참조하면서 `CHECK (CUST_TP_CD = '02')`를 거는 기법으로 막을 수 있지만, 운영계 TB_CUST 변경이 필요하므로 ERP 운영팀 승인 사항입니다. 그 전까지는 점검 쿼리로 지킵니다.
+이 방식의 약점은 "판별자 CUST_TP_CD와 서브타입 테이블이 서로 맞는가"를 FK만으로는 보장하지 못한다는 점입니다. 약국(02) 거래처가 병원 서브타입 테이블에 들어가도 막히지 않습니다. 슈퍼타입에 UNIQUE (CUST_NO, CUST_TP_CD)를 두고 서브 테이블마다 판별자 컬럼 CUST_TP_CD를 두어 고정값 CHECK(병원 `CHECK (CUST_TP_CD = '01')`, 약국 '02', 도매상 '03')를 걸고 (CUST_NO, CUST_TP_CD)를 복합 FK로 참조하는 기법으로 막을 수 있지만, 운영계 TB_CUST 변경이 필요하므로 ERP 운영팀 승인 사항입니다. 그 전까지는 점검 쿼리로 지킵니다.
 
 ```sql
 -- 판별자와 서브타입 테이블의 정합성: 배타·완전 규칙 점검 (0건이어야 정상)
@@ -373,7 +374,7 @@ TB_BOM_FLAT
 
 1. **서브타입 고유 속성을 슈퍼타입 테이블에 계속 덧붙이는 실수.** 처음에는 컬럼 하나라 괜찮아 보이지만, 몇 년 뒤엔 절반이 NULL이고 어떤 유형에 어떤 컬럼이 필수인지 아무도 모르는 테이블이 됩니다.
 2. **재귀 쿼리에서 기준일자를 앵커에만 거는 실수.** 첫 단계만 유효 행을 고르고 하위 단계에서 필터를 빠뜨리면 종료된 구성까지 따라가 소요량이 부풉니다. 모든 단계에 같은 기준일자를 겁니다.
-3. **순환 감지 없이 재귀 쿼리를 배치에 넣는 실수.** 잘못 등록된 관계 하나로 배치가 끝나지 않거나 재귀 한도 오류로 멈춥니다. 순환 감지 절과 BOM 등록 후 점검을 함께 둡니다.
+3. **순환 감지 없이 재귀 쿼리를 배치에 넣는 실수.** 잘못 등록된 관계 하나로 PostgreSQL에서는 배치가 끝나지 않고, Oracle에서는 순환 감지 오류(ORA-32044)로 멈춥니다. 순환 감지 절과 BOM 등록 후 점검을 함께 둡니다.
 
 ## 셀프 체크 질문
 
@@ -474,4 +475,4 @@ SELECT repeat('  ', t.lvl - 1) || t.dept_nm AS dept_tree,
 - Joe Celko, "Joe Celko's Trees and Hierarchies in SQL for Smarties" (Morgan Kaufmann) — 인접 리스트, 경로, 중첩 집합 등 계층 저장 방식 비교.
 - PostgreSQL 공식 문서 — "WITH Queries (Common Table Expressions)"의 재귀 쿼리, SEARCH, CYCLE 절.
 - Oracle Database SQL Language Reference — "Hierarchical Queries"(CONNECT BY)와 재귀 서브쿼리 팩토링.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 슈퍼타입/서브타입 변환, 순환 관계.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목: 슈퍼타입/서브타입 변환, 순환 관계.

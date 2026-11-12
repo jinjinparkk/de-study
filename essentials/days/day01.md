@@ -302,4 +302,4 @@ SELECT COALESCE(o.rgn_cd, s.rgn_cd) AS rgn_cd,
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 1 "Data Warehousing, Business Intelligence, and Dimensional Modeling Primer": 운영계와 DW의 목적 차이, DW/BI 시스템 구성 요소.
 - Martin Kleppmann, "Designing Data-Intensive Applications" (O'Reilly, 2017) — Chapter 3 "Storage and Retrieval": 트랜잭션 처리와 분석 처리의 접근 패턴 차이.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 전사 아키텍처 이해, 데이터 모델링 영역: 개념·논리·물리 모델의 구분과 아키텍트의 역할.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 전사아키텍처 이해, 데이터 모델링 과목: 개념·논리·물리 모델의 구분과 아키텍트의 역할.

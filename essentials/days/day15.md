@@ -31,7 +31,7 @@ Bill Inmon의 방식은 **전사 통합 DW를 3정규형에 가깝게 먼저 만
 
 ### 3. Kimball: 차원 모델이 곧 DW, 버스로 통합
 
-Ralph Kimball의 방식은 **업무 프로세스 단위로 스타 스키마를 만들되, 공통 차원(Conformed Dimension)을 공유해서 통합**하는 상향식(bottom-up)입니다. 통합의 장치는 정규화 모델이 아니라 "주문 팩트와 출고 팩트가 같은 품목 차원, 같은 날짜 차원을 쓴다"는 약속이고, 이 약속을 표로 그린 것이 버스 매트릭스(Day 18)입니다.
+Ralph Kimball의 방식은 **업무 프로세스 단위로 스타 스키마를 만들되, 공통 차원(Conformed Dimension)을 공유해서 통합**하는 방식으로, 흔히 상향식(bottom-up)이라 불립니다. 다만 Kimball·Ross는 이 꼬리표에 반대합니다. 계획은 버스 매트릭스로 전사 차원에서 먼저 세우고, 구현만 프로세스 단위로 나눠 한다는 입장입니다. 통합의 장치는 정규화 모델이 아니라 "주문 팩트와 출고 팩트가 같은 품목 차원, 같은 날짜 차원을 쓴다"는 약속이고, 이 약속을 표로 그린 것이 버스 매트릭스(Day 18)입니다.
 
 장점은 속도와 사용성입니다. 1차 범위(영업실적)만으로도 바로 쓸 수 있는 스타 스키마가 나오고, BI 도구가 그대로 붙습니다. 약점은 규율입니다. 공통 차원을 지키지 않으면 프로세스마다 다른 거래처 차원이 생겨 "독립 마트 난립"이 되고, 이것이 Kimball 방식을 쓴다고 하면서 가장 흔히 실패하는 모습입니다.
 
@@ -43,7 +43,7 @@ Data Vault(Dan Linstedt)는 통합 레이어를 세 종류의 테이블로만 �
 |---|---|---|
 | Hub | 업무 키(Business Key)와 최초 적재 정보만 | HUB_CUST (CUST_NO) |
 | Link | 업무 키 간 관계 | LNK_ORD_CUST (주문 ↔ 거래처) |
-| Satellite | 속성과 그 변경 이력 (적재일시 기준) | SAT_CUST_EMP (담당영업사원) |
+| Satellite | 속성과 그 변경 이력 (적재일시 기준) | SAT_CUST_EMP (담당영업사원. 엄밀히는 거래처-사원 Link + effectivity satellite이지만 여기서는 단순화) |
 
 원천에 새 속성이 생기면 Satellite를 하나 더 붙이면 되고, 기존 테이블을 고치지 않습니다. 원천 값을 가공 없이 적재일시와 함께 남기므로 "그때 원천이 뭐라고 줬나"를 재현하는 감사에 강합니다. 대신 테이블 수가 많고 조회가 어려워서 **사용자에게 직접 열지 않고**, 그 위에 차원 모델(정보 마트)을 반드시 한 겹 더 올립니다. 즉 Data Vault는 Kimball의 대체재가 아니라 통합 레이어 자리의 선택지입니다.
 
@@ -107,7 +107,8 @@ UNION ALL SELECT 'FCT_INV_DAILY', COUNT(*) FROM dw.fct_inv_daily;
 거래처 담당 정보를 Staging → Data Vault → 차원으로 옮겨 봅니다. 모두 `lab` 스키마에 만듭니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- 1) Staging: 원천 그대로 + 적재 회차 정보
 CREATE TABLE lab.stg_cust_emp_hist AS
@@ -304,4 +305,4 @@ SELECT (SELECT COUNT(*) FROM erp.tb_ord_dtl)   AS src_cnt,
 - W. H. Inmon, "Building the Data Warehouse" (Wiley) — 정규화된 전사 DW와 하향식 접근.
 - Dan Linstedt, Michael Olschimke, "Building a Scalable Data Warehouse with Data Vault 2.0" (Morgan Kaufmann, 2015) — Hub·Link·Satellite, 해시 키.
 - Databricks 공식 문서 — medallion lakehouse architecture (Bronze·Silver·Gold).
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 아키텍처 영역: DW 아키텍처와 레이어 구성.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 전사아키텍처 이해 과목.

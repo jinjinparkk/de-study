@@ -24,7 +24,7 @@ Week 3에서 배운 기법은 하나씩 보면 쉽지만, 실제 프로젝트에
 
 ### 4. 회계(총계정원장): grain은 전표상세, 잔액은 스냅샷
 
-총계정원장 팩트의 grain은 전표상세(전표 × 순번 × 계정) 한 줄입니다. 차변·대변 금액은 가산이고, 계정잔액은 반가산입니다(Day 17의 재고와 같은 수위). 그래서 전표상세 트랜잭션 팩트와 월말 계정잔액 스냅샷을 짝으로 둡니다. 전표마다 차변 합 = 대변 합이라는 회계 항등식이 가장 강력한 적재 검증입니다.
+총계정원장 팩트의 grain은 전표상세(전표 × 순번 × 계정) 한 줄입니다. 차변·대변 금액은 가산이고, 재무상태표 계정(외상매출금, 부가세예수금 등)의 잔액은 반가산입니다(Day 17의 재고와 같은 수위). 손익 계정(제품매출 등)은 기간 발생액이라 월끼리 더해 회계연도 누계를 만듭니다. 그래서 전표상세 트랜잭션 팩트와 월말 계정잔액 스냅샷을 짝으로 둡니다. 전표마다 차변 합 = 대변 합이라는 회계 항등식이 가장 강력한 적재 검증입니다.
 
 ### 5. 그룹 버스 매트릭스: 계열사를 한 장에
 
@@ -45,7 +45,8 @@ Week 3에서 배운 기법은 하나씩 보면 쉽지만, 실제 프로젝트에
 ### 케이스 2. 재고: 수불 트랜잭션 팩트와 대사
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- 재고수불팩트: 일자 × 창고 × 품목 × 로트 × 수불유형, 수량은 부호 있음 (입고 +, 출고 -)
 CREATE TABLE lab.fct_inv_txn AS
@@ -132,7 +133,7 @@ SELECT TO_CHAR(s.slip_dt, 'YYYYMMDD')::INT AS slip_dt_sk, s.co_cd, a.acct_sk,
 SELECT slip_no, SUM(dr_amt) AS dr_sum, SUM(cr_amt) AS cr_sum
   FROM lab.fct_gl_line GROUP BY slip_no HAVING SUM(dr_amt) <> SUM(cr_amt);
 
--- 계정별 3월 발생액과 월말 잔액 (잔액 = 반가산: 월끼리 더하지 않음)
+-- 계정별 3월 발생액과 월말 잔액 (재무상태표 계정 잔액 = 반가산: 월끼리 더하지 않음)
 SELECT a.acct_cd, a.acct_nm, a.acct_cls_nm,
        SUM(f.dr_amt) AS dr_amt, SUM(f.cr_amt) AS cr_amt,
        CASE WHEN a.acct_cls_nm = '자산' THEN SUM(f.dr_amt - f.cr_amt)
@@ -275,4 +276,4 @@ SO2026030001은 82,000 / 82,000으로 차이 0, SO2026030002(60,000)와 SO202603
 ## 참고할 원전
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 4 "Inventory", Chapter 5 "Procurement", Chapter 6 "Order Management", Chapter 7 "Accounting"(총계정원장 팩트, 기간 잔액 스냅샷).
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 정보계 모델링.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목.

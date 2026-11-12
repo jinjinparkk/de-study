@@ -62,7 +62,7 @@ window.DBT30_DAYS = [
 
   // Week 3: Advanced dbt
   { n: 15, week: 3, title: "Incremental Models",
-    desc: "append·merge·insert_overwrite, is_incremental(), lookback(매체 사후 수정), unique_key, BigQuery 파티션 교체",
+    desc: "merge·insert_overwrite·microbatch(append 는 BigQuery 미지원), is_incremental(), lookback(매체 사후 수정), unique_key, BigQuery 파티션 교체",
     lab: "최근 N일 재수신을 반영하는 fct_ad_daily incremental",
     done: "늦게 도착한 데이터가 맞게 반영됨을 테스트로 증명" },
   { n: 16, week: 3, title: "Snapshots",

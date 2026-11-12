@@ -6,7 +6,7 @@
 
 ## 왜 중요한가
 
-ERP 운영팀이 "주문상세 단가(TB_ORD_DTL.UPRC)를 소수 둘째 자리까지 받도록 NUMERIC(15,2)로 바꾸겠다"고 통보합니다. DW 적재 매핑, 주문라인 팩트, 월 매출 마트, Power BI 측정값 중 어디가 영향을 받는지 아무도 목록을 갖고 있지 않으면, 변경 다음 날 아침 정 과장의 대시보드에서 매출이 원 단위 반올림 차이로 전표와 맞지 않는 것을 보고서야 알게 됩니다. 메타데이터와 리니지는 사고가 난 뒤가 아니라 **변경 전에** 답하기 위한 장치입니다.
+ERP 운영팀이 "주문상세 단가(TB_ORD_DTL.UPRC)를 소수 둘째 자리까지 받도록 NUMERIC(17,2)로 바꾸겠다"고 통보합니다. DW 적재 매핑, 주문라인 팩트, 월 매출 마트, Power BI 측정값 중 어디가 영향을 받는지 아무도 목록을 갖고 있지 않으면, 변경 다음 날 아침 정 과장의 대시보드에서 매출이 원 단위 반올림 차이로 전표와 맞지 않는 것을 보고서야 알게 됩니다. 메타데이터와 리니지는 사고가 난 뒤가 아니라 **변경 전에** 답하기 위한 장치입니다.
 
 ## 핵심 개념
 
@@ -24,7 +24,7 @@ ERP 운영팀이 "주문상세 단가(TB_ORD_DTL.UPRC)를 소수 둘째 자리�
 
 카탈로그는 세 종류의 메타데이터를 한 화면에 모아 "거래처별 매출은 어느 테이블을 보나요?(검색) 언제 적재됐나요?(운영) 오너는 누구인가요?(거버넌스, Day 13)"에 답하는 도구입니다.
 
-시작은 거창하지 않아도 됩니다. 테이블·컬럼 **COMMENT**를 DB에 넣는 것만으로 기술 메타데이터 옆에 비즈니스 설명이 붙고, 대부분의 카탈로그 도구와 BI 도구가 이를 읽어 갑니다. 전용 도구(오픈소스·상용 카탈로그)는 수집 대상이 여러 DB·BI·파이프라인으로 늘어날 때 검토합니다.
+시작은 거창하지 않아도 됩니다. 테이블·컬럼 **COMMENT**를 DB에 넣는 것만으로 기술 메타데이터 옆에 비즈니스 설명이 붙고, 대부분의 카탈로그 도구와 일부 SQL·BI 도구가 이를 읽어 갑니다. 전용 도구(오픈소스·상용 카탈로그)는 수집 대상이 여러 DB·BI·파이프라인으로 늘어날 때 검토합니다.
 
 ### 3. 리니지: 테이블 단위와 컬럼 단위
 
@@ -48,7 +48,8 @@ DB 안의 의존 관계(뷰, 제약, 프로시저)는 카탈로그로 정확히 
 운영계를 건드리지 않도록 주문상세를 `lab`에 복사하고, 그 위에 Week 1에서 쓴 것 같은 점검·집계 뷰 두 개를 만듭니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 CREATE TABLE lab.tb_ord_dtl (LIKE erp.tb_ord_dtl INCLUDING ALL);
 INSERT INTO lab.tb_ord_dtl SELECT * FROM erp.tb_ord_dtl;
 
@@ -80,7 +81,7 @@ SELECT c.column_name, c.data_type, c.numeric_precision, c.numeric_scale, c.is_nu
 
 ### 영향도 분석 1단계: DB 안에서 찾기
 
-UPRC를 NUMERIC(15,2)로 바꾸면 어디에 영향이 있는지 카탈로그로 찾습니다.
+UPRC를 NUMERIC(17,2)로 바꾸면 어디에 영향이 있는지 카탈로그로 찾습니다.
 
 ```sql
 -- (1) 같은 이름의 컬럼: 같은 의미일 가능성이 높은 곳 (운영계·실습 스키마)
@@ -106,11 +107,11 @@ SELECT c.conrelid::regclass AS child_tbl, c.conname
 PostgreSQL은 뷰가 쓰는 컬럼의 타입 변경을 거부합니다. 의존 관계를 DB가 알고 있다는 뜻입니다.
 
 ```sql 의도된 오류 — 뷰가 쓰는 컬럼은 타입을 바꿀 수 없음
-ALTER TABLE lab.tb_ord_dtl ALTER COLUMN uprc TYPE NUMERIC(15,2);
+ALTER TABLE lab.tb_ord_dtl ALTER COLUMN uprc TYPE NUMERIC(17,2);
 ```
 
 :::note Oracle 차이
-Oracle은 타입 변경을 허용하고 의존 뷰를 INVALID 상태로 바꿉니다(다음 사용 때 재컴파일). 오류가 나지 않으니 오히려 영향을 놓치기 쉽습니다. 의존 객체는 `ALL_DEPENDENCIES`로 찾되, 이 뷰는 객체 단위라 어느 컬럼을 쓰는지까지는 알려 주지 않습니다.
+Oracle은 타입 변경을 허용하고 의존 뷰를 INVALID 상태로 바꿉니다(다음 사용 때 재컴파일). 정수부를 유지하도록 NUMBER(17,2)로 잡은 이유도 있습니다. NUMBER(15,2)처럼 정수 자릿수가 줄면 Oracle은 데이터가 있는 컬럼의 변경을 거부합니다. 오류가 나지 않으니 오히려 영향을 놓치기 쉽습니다. 의존 객체는 `ALL_DEPENDENCIES`로 찾되, 이 뷰는 객체 단위라 어느 컬럼을 쓰는지까지는 알려 주지 않습니다.
 :::
 
 ### 영향도 분석 2단계: DB 밖은 리니지 저장소로
@@ -157,7 +158,7 @@ SELECT lvl, tgt_obj_nm || '.' || tgt_col_nm AS impacted, xform_tp_cd, xform_rule
 
 | lvl | impacted | xform_tp_cd | 확인할 것 |
 |---|---|---|---|
-| 1 | stg.stg_ord_dtl.uprc | COPY | 스테이징 타입도 NUMERIC(15,2)로 |
+| 1 | stg.stg_ord_dtl.uprc | COPY | 스테이징 타입도 NUMERIC(17,2)로 |
 | 2 | dw.fct_ord_line.disc_amt | CALC | 할인금액 계산 결과에 소수가 생김. 반올림 규칙 결정 |
 | 2 | dw.fct_ord_line.uprc | COPY | 팩트 타입 변경 |
 | 3 | dm.dm_sales_mon.disc_amt | AGG | 집계 결과가 원 단위 전표와 대사될 때 차이 |
@@ -257,7 +258,7 @@ SELECT tgt_obj_nm, MAX(end_dtm) FILTER (WHERE stat_cd = '20') AS last_success_dt
 비즈니스 메타데이터는 뜻과 책임입니다. 주문금액은 "수량 × 단가, 원 단위, 부가세 제외"이고 오너는 영업기획팀이라는 것. 기술 메타데이터는 형식입니다. NUMERIC(15), NOT NULL, PK. 운영 메타데이터는 상태입니다. 마지막 적재 일시, 건수, 실패 여부. 기술과 운영은 DB 카탈로그와 배치 로그에서 자동으로 모이지만 비즈니스 메타데이터는 사람이 써야 하므로 가장 어렵습니다. 그래서 표준용어사전의 정의를 컬럼에 상속시키고, 핵심 지표만 오너가 직접 정의·승인하게 하며, 설명이 빈 컬럼 비율을 품질 지표로 관리합니다.
 :::
 
-**Q2. ERP 운영팀이 TB_ORD_DTL.UPRC를 NUMERIC(15,2)로 바꾼다고 합니다. 영향도 분석을 어떻게 하시겠습니까?**
+**Q2. ERP 운영팀이 TB_ORD_DTL.UPRC를 NUMERIC(17,2)로 바꾼다고 합니다. 영향도 분석을 어떻게 하시겠습니까?**
 
 :::answer 모범 답안 보기
 세 갈래로 봅니다. 첫째, DB 안: information_schema와 pg_catalog로 이 컬럼을 쓰는 뷰·프로시저, 같은 이름의 컬럼(TB_PO_DTL.UPRC, TB_ITEM_UPRC_HIST.UPRC)을 찾습니다. 같은 단가 도메인을 쓰는 컬럼이 셋이므로 주문상세만 바꿀지 단가 도메인 전체를 바꿀지부터 정합니다. 둘째, DB 밖: 컬럼 리니지로 스테이징 → 팩트 → 마트 → BI 측정값까지 하류를 따라가며, 변환 유형별로 영향을 나눕니다. COPY는 타입만 맞추면 되지만 CALC·AGG는 반올림 규칙과 원 단위 전표 대사에 영향이 있습니다. 셋째, 원천 쪽 질문: ORD_AMT 계산 규칙도 바뀌는지, 과거 데이터는 그대로인지 확인합니다. 결과는 영향 객체 목록, 조치, 테스트 방법(변경 전후 합계 대사)을 담은 영향도 분석서로 남깁니다.
@@ -287,7 +288,7 @@ SELECT c.confrelid::regclass AS parent_tbl,
  ORDER BY child_cnt DESC, c.confrelid::regclass::text;
 ```
 
-품목(TB_ITEM)이 9개 테이블에서 참조되어 1위이고, 회사·로트가 4개로 뒤를 잇습니다. 품목코드 체계나 길이를 바꾸면 주문·출고·입고·재고·로트·BOM·발주·작업지시가 함께 바뀌어야 한다는 뜻입니다. 마스터의 키 설계(Day 4)가 무거운 이유이자, Day 13 MDM에서 품목 통합을 조심스럽게 다뤄야 하는 이유입니다.
+품목(TB_ITEM)이 9개 테이블에서 참조되어 1위이고, 회사·로트가 4개로 뒤를 잇습니다. 품목코드 체계나 길이를 바꾸면 주문·출고·입고·재고·로트·BOM·발주·작업지시·단가이력이 함께 바뀌어야 한다는 뜻입니다. 마스터의 키 설계(Day 4)가 무거운 이유이자, 품목 마스터를 통합할 때(Day 13의 거래처 통합과 같은 절차) 특히 조심해야 하는 이유입니다.
 :::
 
 **과제 2.** 위 리니지 테이블에서 "Power BI 측정값마다 최종 원천(erp 컬럼) 목록"을 뽑으세요. 결과 모양은 `measure, erp_source` 입니다.
@@ -330,4 +331,4 @@ SELECT DISTINCT measure, src_obj_nm || '.' || src_col_nm AS erp_source
 - Oracle Database 공식 문서 — "Database Reference" (ALL_TAB_COLUMNS, ALL_COL_COMMENTS, ALL_DEPENDENCIES).
 - DAMA International, "DAMA-DMBOK: Data Management Body of Knowledge", 2nd ed. (Technics Publications, 2017) — Metadata Management 장.
 - OpenLineage 프로젝트 문서 (openlineage.io) — 실행 시점 리니지 이벤트 표준.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 관리 체계: 메타데이터 관리.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재).

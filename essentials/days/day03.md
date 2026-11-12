@@ -278,4 +278,4 @@ SELECT o.ord_no, o.ord_dt, o.cust_no,
 
 - Graeme Simsion, Graham Witt, "Data Modeling Essentials", 3rd ed. (Morgan Kaufmann, 2005) — 엔터티·관계 도출과 E-R 표기법을 다루는 장들.
 - Peter Chen, "The Entity-Relationship Model — Toward a Unified View of Data", ACM Transactions on Database Systems, 1976 — E-R 모델의 원 논문.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 요건 분석, 데이터 모델링 영역: 엔터티·속성·관계 정의.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 요건 분석, 데이터 모델링 과목: 엔터티·속성·관계 정의.

@@ -57,7 +57,8 @@ TB_ORD에는 REG_DTM·UPD_DTM이 있지만 **TB_ORD_DTL에는 UPD_DTM이 없습�
 기존 작업은 "매일 01:00, ERP.TB_ORD WHERE REG_DTM >= 어제 → INSERT"입니다. 이것을 워터마크 + MERGE + 삭제 감지로 다시 짭니다. erp 테이블을 바꾸지 않도록 원천을 lab으로 복사해 "Oracle 원천" 역할을 맡기고, 등록·수정 일시는 가상 값으로 둡니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 -- (1) 원천 흉내: 주문 헤더·상세 복사, 등록·수정 일시는 가상 값으로 고정
 CREATE TABLE lab.src_ord AS
@@ -322,4 +323,3 @@ SELECT COALESCE(s.ord_yyyymm, o.ord_yyyymm) AS ord_yyyymm,
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 19 "ETL Subsystems and Techniques"(변경 데이터 캡처, 추출 하위 시스템).
 - PostgreSQL 공식 문서 — MERGE, PL/pgSQL.
 - Oracle Database SQL Language Reference — MERGE.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 아키텍처 영역: 데이터 통합(ETL)과 인터페이스.

@@ -75,19 +75,20 @@ SO2026030003의 1번 라인(한빛펜정 300 BOX)이 2행입니다. 이천물류
 
 ### fan-out 사고 재현
 
-많은 ERP의 주문 헤더에는 상세 합계를 담은 "주문합계금액" 컬럼이 있습니다(Day 5의 헤더 파생 컬럼). 공통 스키마에는 없으므로 `lab`에 만들어 재현합니다.
+많은 ERP의 주문 헤더에는 상세 합계를 담은 "총주문금액" 컬럼이 있습니다(Day 5의 헤더 파생 컬럼). 공통 스키마에는 없으므로 `lab`에 만들어 재현합니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
--- 주문 헤더 + 주문합계금액(ORD_TOT_AMT)을 가진 ERP를 흉내 낸 테이블
+-- 주문 헤더 + 총주문금액(TOT_ORD_AMT, Day 5와 같은 이름)을 가진 ERP를 흉내 낸 테이블
 CREATE TABLE lab.tb_ord_hdr AS
-SELECT o.ord_no, o.ord_dt, o.cust_no, o.ord_stat_cd, SUM(d.ord_amt) AS ord_tot_amt
+SELECT o.ord_no, o.ord_dt, o.cust_no, o.ord_stat_cd, SUM(d.ord_amt) AS tot_ord_amt
   FROM erp.tb_ord o JOIN erp.tb_ord_dtl d ON d.ord_no = o.ord_no
  GROUP BY o.ord_no, o.ord_dt, o.cust_no, o.ord_stat_cd;
 
 -- 잘못된 쿼리 1: 헤더 금액(헤더 grain)을 출고상세(로트 grain)에 조인해 합산
-SELECT h.ord_no, COUNT(*) AS joined_rows, SUM(h.ord_tot_amt) AS wrong_amt
+SELECT h.ord_no, COUNT(*) AS joined_rows, SUM(h.tot_ord_amt) AS wrong_amt
   FROM lab.tb_ord_hdr h
   JOIN erp.tb_ship s      ON s.ord_no = h.ord_no
   JOIN erp.tb_ship_dtl l  ON l.ship_no = s.ship_no
@@ -151,20 +152,20 @@ SELECT SUM(d.ord_amt) AS ord_amt_of_shipped_line, SUM(x.ship_qty) AS ship_qty
 | grain 키 | SHIP_NO + SHIP_SEQ (원천 TB_SHIP_DTL PK) |
 | 차원 | 출고일자, 주문일자(역할), 거래처(출고일자 기준 버전), 품목, 창고, 로트 |
 | 측정값 | 출고수량(가산), 출고금액 = 출고수량 × 주문상세 단가(가산, DW 계산) |
-| 넣지 않는 것 | 주문수량·주문금액(주문상세 grain), 주문합계금액(헤더 grain) |
+| 넣지 않는 것 | 주문수량·주문금액(주문상세 grain), 총주문금액(헤더 grain) |
 | 검증 규칙 | grain 키 중복 0건, 주문상세별 출고수량 합 ≤ 주문수량 |
 
 ## Before / After
 
 **Before: 대시보드 요구에 맞춰 컬럼을 모은 "주문출고 통합" 테이블**
 
-| 주문번호 | 주문순번 | 로트번호 | 주문수량 | 주문금액 | 출고수량 | 주문합계금액 |
+| 주문번호 | 주문순번 | 로트번호 | 주문수량 | 주문금액 | 출고수량 | 총주문금액 |
 |---|---|---|---|---|---|---|
 | SO2026030003 | 1 | L250901 | 300 | 960,000 | 200 | 2,160,000 |
 | SO2026030003 | 1 | L260105 | 300 | 960,000 | 100 | 2,160,000 |
 | SO2026030003 | 2 | L251110 | 100 | 1,200,000 | 100 | 2,160,000 |
 
-출고수량은 맞게 더해지지만 주문수량·주문금액·주문합계금액은 더하는 순간 틀립니다. Power BI 사용자는 어느 컬럼이 더해도 되는지 알 수 없습니다.
+출고수량은 맞게 더해지지만 주문수량·주문금액·총주문금액은 더하는 순간 틀립니다. Power BI 사용자는 어느 컬럼이 더해도 되는지 알 수 없습니다.
 
 **After: grain별 팩트 분리 + grain에 맞춘 측정값**
 
@@ -190,8 +191,8 @@ grain을 정할 때 시니어가 꼭 하는 질문은 "이 grain 한 행에 대�
 ## 흔한 실수 3가지
 
 1. **grain을 문장으로 적지 않고 "주문 팩트"라고만 부르는 실수.** 주문 헤더인지 상세인지 로트인지 아무도 모르는 채 개발이 시작되고, 측정값이 추가될 때마다 grain이 섞입니다. 팩트마다 grain 문장과 grain 키를 테이블정의서 첫 줄에 적습니다.
-2. **헤더 금액을 상세에 반복 저장하는 실수.** "조회 편하라고" 주문합계금액을 상세 행마다 넣으면, 상세를 합산하는 모든 사용자가 fan-out을 겪습니다. 헤더 숫자는 배분하거나 헤더 grain에 둡니다.
-3. **조인 후 행 수를 확인하지 않는 실수.** 금액 대사만 하고 행 수를 안 보면 fan-out을 놓칩니다. 조인 전후 행 수, grain 키 중복 0건 테스트를 적재 검증에 넣습니다(dbt라면 unique 테스트).
+2. **헤더 금액을 상세에 반복 저장하는 실수.** "조회 편하라고" 총주문금액을 상세 행마다 넣으면, 상세를 합산하는 모든 사용자가 fan-out을 겪습니다. 헤더 숫자는 배분하거나 헤더 grain에 둡니다.
+3. **조인 후 행 수를 확인하지 않는 실수.** 금액 대사만 하고 행 수를 안 보면 fan-out을 놓칩니다. 조인 전후 행 수, grain 키 중복 0건 테스트를 적재 검증에 넣습니다(dbt라면 grain 키가 두 컬럼이므로 `dbt_utils.unique_combination_of_columns`).
 
 ## 셀프 체크 질문
 
@@ -278,4 +279,4 @@ SELECT
 
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 2 "Kimball Dimensional Modeling Techniques Overview"(4단계 설계 절차, grain 선언), Chapter 3 "Retail Sales"(4단계를 처음부터 적용하는 사례), Chapter 6 "Order Management"(주문 헤더·라인).
 - Kimball Group 웹사이트의 Dimensional Modeling Techniques 항목 — "Four-Step Dimensional Design Process", "Declare the Grain".
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 모델링 영역: 정보계(DW) 모델링.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 데이터 모델링 과목.

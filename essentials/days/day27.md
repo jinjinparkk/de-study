@@ -6,7 +6,7 @@
 
 ## 왜 중요한가
 
-그룹 DW를 온프레미스 Oracle에서 클라우드 DW로 옮겼더니 대시보드의 "사업자번호 미등록 거래처 수"가 0에서 수십 건으로 바뀌었습니다. Oracle에서는 빈 문자열이 자동으로 NULL이었는데, 새 DW에서는 ''와 NULL이 다른 값이라 `IS NULL` 조건이 일부만 잡았기 때문입니다. 같은 날 "3월 주문"이 줄었는데, Oracle DATE에 들어 있던 시각이 이관 중 날짜로 잘리고 일부 조건은 시각 기준으로 바뀌어 경계일 데이터가 어긋났습니다. 클라우드 이관은 **SQL이 돌아가는 것과 숫자가 같은 것은 다르다**는 걸 증명하는 작업입니다.
+그룹 DW를 온프레미스 Oracle에서 클라우드 DW로 옮겼더니 대시보드의 "사업자번호 미등록 거래처 수"가 수십 건에서 몇 건으로 줄었습니다. Oracle에서는 빈 문자열이 자동으로 NULL이었는데, 새 DW에서는 ''와 NULL이 다른 값이라 `IS NULL` 조건이 일부만 잡았기 때문입니다. 같은 날 "3월 주문"이 줄었는데, Oracle DATE에 들어 있던 시각이 이관 중 날짜로 잘리고 일부 조건은 시각 기준으로 바뀌어 경계일 데이터가 어긋났습니다. 클라우드 이관은 **SQL이 돌아가는 것과 숫자가 같은 것은 다르다**는 걸 증명하는 작업입니다.
 
 ## 핵심 개념
 
@@ -48,9 +48,9 @@
 | 항목 | Oracle | 이관 대상에서 흔한 차이 | 대응 |
 |---|---|---|---|
 | 빈 문자열 | `''` 는 NULL로 저장 | `''` 와 NULL이 다른 값 | 적재 시 `NULLIF(TRIM(col), '')` 로 통일, 규칙을 매핑정의서에 |
-| 문자열 결합 | `'A' \|\| NULL = 'A'` | 많은 DBMS에서 결과가 NULL | `CONCAT` 또는 `COALESCE` 로 명시 |
+| 문자열 결합 | `'A' \|\| NULL = 'A'` | 많은 DBMS에서 결과가 NULL | `COALESCE(col, '')` 로 명시 (`CONCAT` 의 NULL 처리도 DBMS마다 다름: PostgreSQL은 무시, Snowflake·BigQuery는 NULL) |
 | DATE | 날짜 + 시각(초)까지 보유 | DATE는 날짜만, 시각은 TIMESTAMP | 원천 DATE에 시각이 실제로 있는지 프로파일링 후 DATE/TIMESTAMP 결정 |
-| 숫자 | NUMBER (정밀도 생략 가능) | 정수형으로 옮기면 나눗셈이 정수 나눗셈 | 금액·수량은 NUMERIC(p,s) 명시, 비율 계산은 형 변환 |
+| 숫자 | NUMBER (정밀도 생략 가능) | 대상에 따라 정수 나눗셈(PostgreSQL·Redshift·SQL Server)이 되거나, 정밀도 없는 NUMBER가 소수 0자리로 잡혀 소수가 사라짐(Snowflake) | 금액·수량은 NUMERIC(p,s) 명시, 비율 계산은 형 변환 |
 | 시퀀스 | SEQUENCE.NEXTVAL | IDENTITY 또는 시퀀스, 이관 후 시작값 재설정 필요 | 데이터 이관 후 MAX + 1 로 재설정 |
 | MERGE·힌트·PL/SQL | Oracle 문법 | 문법·제약 차이 (Day 19·22 참고) | 저장 프로시저는 dbt 모델·SQL 스크립트로 재작성 검토 |
 | 정렬·비교 | NLS 설정 따라 | 콜레이션 기본값 차이 | 한글 정렬·대소문자 비교 결과 검증 |
@@ -62,7 +62,8 @@
 Oracle에서 내려받은 거래처 추출 파일을 그대로 적재했다고 가정합니다. 원천 화면에서 비워 둔 사업자번호가 파일에는 빈 문자열로 왔습니다(값은 가상).
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.mig_cust_raw (           -- 이관 원본 그대로 (Oracle 추출 파일)
   cust_no    VARCHAR(10),
@@ -76,23 +77,23 @@ INSERT INTO lab.mig_cust_raw VALUES
  ('C000202', '늘봄약국',     NULL,           'BSN'),
  ('C000301', '바른팜유통',   '  ',           'GGD');
 
--- Oracle에서는 세 건이 모두 "미등록"(IS NULL)으로 잡히던 값
+-- Oracle IS NULL 로는 2건(''·NULL). 공백만 있는 값까지 미등록으로 보려면 TRIM 이 필요
 SELECT COUNT(*) FILTER (WHERE biz_reg_no IS NULL)                  AS is_null_cnt,
        COUNT(*) FILTER (WHERE biz_reg_no = '')                     AS empty_cnt,
        COUNT(*) FILTER (WHERE NULLIF(TRIM(biz_reg_no), '') IS NULL) AS unified_cnt
   FROM lab.mig_cust_raw;
 
--- 문자열 결합: NULL 이 섞이면 결과 전체가 NULL
+-- 문자열 결합: || 는 NULL 이 섞이면 결과 전체가 NULL (PostgreSQL CONCAT 은 NULL 을 무시하지만 DBMS마다 다름)
 SELECT cust_no, cust_nm || ' / ' || biz_reg_no AS concat_op,
        CONCAT(cust_nm, ' / ', biz_reg_no)      AS concat_fn
   FROM lab.mig_cust_raw ORDER BY cust_no;
 
--- 정수 나눗셈: 정수끼리 나누면 소수점이 버려짐
+-- 정수 나눗셈: PostgreSQL 은 정수끼리 나누면 소수점이 버려짐
 SELECT 7 / 2 AS int_div, 7::NUMERIC / 2 AS num_div,
        ROUND(100.0 * 146000 / 150000, 1) AS achv_rt;
 ```
 
-첫 쿼리는 IS NULL 1건, 빈 문자열 1건, 통일 후 3건입니다. Oracle 시절 보고서가 "미등록 3건"이었다면 새 DW에서는 규칙 없이 1건으로 줄어 보입니다. 결합 쿼리는 늘봄약국만 `concat_op` 가 NULL입니다. 나눗셈은 3, 3.5, 97.3입니다.
+첫 쿼리는 IS NULL 1건, 빈 문자열 1건, 통일 후 3건입니다. Oracle 시절 보고서(IS NULL)가 "미등록 2건"이었다면 새 DW에서는 규칙 없이 1건으로 줄어 보이고, 공백만 있는 값까지 미등록으로 보는 규칙(NULLIF(TRIM))을 정하면 3건입니다. 어느 쪽이 맞는지는 업무 정의로 정합니다. 결합 쿼리는 늘봄약국만 `concat_op` 가 NULL입니다. 나눗셈은 3, 3.5, 97.3입니다.
 
 ```sql
 -- 날짜 경계: 시각이 있는 값을 DATE 범위로 거르면 마지막 날 오후가 빠짐
@@ -126,14 +127,14 @@ SELECT 100 + ROW_NUMBER() OVER (ORDER BY cust_no),          -- 원천 시퀀스 
        TRIM(cust_no), TRIM(cust_nm), NULLIF(TRIM(biz_reg_no), ''), rgn_cd
   FROM lab.mig_cust_raw;
 
--- 값을 직접 넣었으므로 IDENTITY 시퀀스는 1에 머물러 있음 → 다음 INSERT가 충돌. MAX로 재설정
+-- 값을 직접 넣었으므로 IDENTITY 시퀀스는 1에 머물러 있음 → 다음 INSERT는 1번부터 채번되어 원천 번호와 섞이고, 101번에 닿으면 충돌. MAX로 재설정
 SELECT setval(pg_get_serial_sequence('lab.mig_cust', 'cust_id'), (SELECT MAX(cust_id) FROM lab.mig_cust));
 INSERT INTO lab.mig_cust (cust_no, cust_nm, rgn_cd) VALUES ('C000203', '새봄약국', 'SEL');
 
 SELECT cust_id, cust_no, biz_reg_no FROM lab.mig_cust ORDER BY cust_id;
 ```
 
-새봄약국은 105번을 받습니다. 재설정을 빼먹으면 이관 직후 첫 신규 등록이 PK 충돌로 실패하는데, 이관 리허설에서 잡지 않으면 오픈 당일 아침에 터집니다.
+새봄약국은 105번을 받습니다. 재설정을 빼먹으면 신규 등록이 1번부터 다시 채번되어 원천 번호와 섞이고, 101번에 닿는 날 PK 충돌로 실패합니다(원천 번호가 1부터였다면 이관 직후 첫 등록부터 충돌). 이런 문제는 이관 리허설에서 잡지 않으면 오픈 당일 아침에 터집니다.
 
 :::note Oracle 차이
 Oracle에서 `SELECT CASE WHEN '' IS NULL THEN 'Y' END FROM DUAL` 은 'Y'이고, `VARCHAR2` 컬럼에 ''를 넣으면 NULL이 저장됩니다. `'A' || NULL` 은 'A'입니다. Oracle 시퀀스는 `CREATE SEQUENCE ... START WITH`, 값은 `seq.NEXTVAL`로 얻고, 재설정은 `ALTER SEQUENCE ... RESTART START WITH n`(지원 버전 확인) 또는 시퀀스 재생성으로 합니다. Oracle DATE 리터럴 `DATE '2026-03-31'`도 0시이므로 BETWEEN 함정은 Oracle 안에서도 같습니다.
@@ -160,7 +161,7 @@ SELECT 'target', COUNT(*),
 |---|---|---|
 | 빈 문자열 | 원천 값 그대로 → '' 와 NULL 혼재 | 적재 시 NULLIF(TRIM) 통일, 품질 규칙으로 '' 0건 점검 |
 | 날짜 | Oracle DATE → DATE 일괄 | 프로파일링: 시각 있는 컬럼은 TIMESTAMP, 일시 조건은 반열림 |
-| 숫자 | NUMBER → 정수형 추정 | 금액·수량 NUMERIC(p,s) 명시, 비율은 형 변환 |
+| 숫자 | NUMBER → 정수형·소수 0자리로 추정 | 금액·수량 NUMERIC(p,s) 명시, 비율은 형 변환 |
 | 시퀀스 | 재설정 누락 | 이관 체크리스트에 시퀀스·IDENTITY 재설정 |
 | 검증 | "SQL이 에러 없이 돈다" | 테이블별 건수·합계·해시 대사, 주요 리포트 숫자 비교 |
 | 연산 | 한 자원으로 적재·조회 | 적재용·BI용 연산 분리, 비용 모니터링 |
@@ -198,7 +199,7 @@ DW 쿼리는 많은 행에서 적은 컬럼을 집계합니다. 컬럼 저장은
 **Q3. Oracle에서 클라우드 DW로 옮길 때 데이터 의미가 바뀌는 지점을 세 가지 이상 들고 대응을 말해 보세요.**
 
 :::answer 모범 답안 보기
-첫째, Oracle은 빈 문자열을 NULL로 저장하지만 이관 대상은 대개 둘을 구분합니다. 적재 시 NULLIF(TRIM)로 통일하고 '' 0건을 품질 규칙으로 점검합니다. 둘째, Oracle DATE는 시각을 가집니다. 컬럼별로 시각이 실제로 있는지 프로파일링해 DATE/TIMESTAMP를 정하고, 일시 조건은 반열림 범위로 씁니다. 셋째, NUMBER를 정수형으로 옮기면 나눗셈 결과가 달라지므로 금액·비율 컬럼의 정밀도를 명시합니다. 넷째, 문자열 결합에서 NULL 처리가 달라 CONCAT·COALESCE로 바꿉니다. 다섯째, 시퀀스는 이관 후 재설정합니다. 검증은 테이블별 건수·합계·해시와 주요 리포트 숫자 비교로 합니다.
+첫째, Oracle은 빈 문자열을 NULL로 저장하지만 이관 대상은 대개 둘을 구분합니다. 적재 시 NULLIF(TRIM)로 통일하고 '' 0건을 품질 규칙으로 점검합니다. 둘째, Oracle DATE는 시각을 가집니다. 컬럼별로 시각이 실제로 있는지 프로파일링해 DATE/TIMESTAMP를 정하고, 일시 조건은 반열림 범위로 씁니다. 셋째, NUMBER를 정수형이나 소수 0자리로 옮기면 나눗셈·금액 결과가 달라지므로(정수 나눗셈 여부도 DBMS마다 다름) 금액·비율 컬럼의 정밀도를 명시합니다. 넷째, 문자열 결합의 NULL 처리가 DBMS마다 달라(CONCAT 포함) COALESCE로 명시합니다. 다섯째, 시퀀스는 이관 후 재설정합니다. 검증은 테이블별 건수·합계·해시와 주요 리포트 숫자 비교로 합니다.
 :::
 
 ## 오늘의 과제

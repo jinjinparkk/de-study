@@ -51,7 +51,8 @@
 ### 영업 마트: 월 × 사원 실적과 목표
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.fct_sales_tgt (            -- 영업목표팩트 (Day 18 값, 가상): 연월 × 사원
   yyyymm  CHAR(6)     NOT NULL,
@@ -291,4 +292,4 @@ SELECT 'TGT_IN_DM' AS chk_cd, COUNT(*) AS result_val
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 6 "Order Management", Chapter 17 "Kimball DW/BI Lifecycle Overview", Chapter 19 "ETL Subsystems and Techniques".
 - Ralph Kimball 외, "The Data Warehouse Lifecycle Toolkit", 2nd ed. (Wiley) — 요구사항에서 배포까지의 전체 수명주기.
 - Microsoft Learn, Power BI 문서 — 스타 스키마 설계 지침.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 전 영역(요구사항, 모델링, 데이터 품질·표준·관리).
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 전 과목(전사아키텍처 이해부터 데이터 품질 관리 이해까지).

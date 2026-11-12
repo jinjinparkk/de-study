@@ -48,7 +48,8 @@ ADR은 결정의 기록이고, 설계서는 결정의 결과물입니다. DW 프
 적재 방식 결정의 평가표를 테이블로 둡니다. 가중치는 위 비기능 요구사항의 우선순위에서 나오고, 점수(1~5)는 PoC와 검토 회의 결과입니다. 숫자는 학습용 가상 값입니다.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS lab;
+DROP SCHEMA IF EXISTS lab CASCADE;   -- 앞 Day 실습 테이블 정리(한 DB에서 이어서 실행해도 되도록)
+CREATE SCHEMA lab;
 
 CREATE TABLE lab.adr_crit (                -- 평가 기준과 가중치 (합 100)
   adr_id   VARCHAR(10) NOT NULL,
@@ -237,5 +238,5 @@ SELECT 'OBT: 출고 라인', COUNT(*)
 
 - Michael Nygard, "Documenting Architecture Decisions" (2011년 블로그 글) — ADR 형식(제목, 상태, 맥락, 결정, 결과).
 - Len Bass, Paul Clements, Rick Kazman, "Software Architecture in Practice" (Addison-Wesley) — 품질 속성과 트레이드오프.
-- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드(DAsP)" — 데이터 아키텍처 영역: 요구사항 분석과 아키텍처 정의.
+- 한국데이터산업진흥원(K-DATA), "데이터아키텍처 전문가 가이드"(DAP·DAsP 공통 교재) — 전사아키텍처 이해, 데이터 요건 분석 과목.
 - Ralph Kimball, Margy Ross, "The Data Warehouse Toolkit", 3rd ed. (Wiley, 2013) — Chapter 17 "Kimball DW/BI Lifecycle Overview"(요구사항에서 기술 아키텍처로).
