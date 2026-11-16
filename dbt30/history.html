@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>이야기로 보는 데이터 역사 — SQL에서 dbt까지 · dbt 30일</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="d30-history">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">dbt 30일 · 쉬어 가는 페이지</div>
+<h1>이야기로 보는 데이터 역사 — SQL에서 dbt까지</h1>
+<p class="lead">dbt의 문법은 대부분 <b>누군가 예전에 겪은 문제의 답</b>입니다. "왜 이렇게 생겼지?"가 궁금할 때 읽는 페이지입니다. 외울 것은 없고, 각 장 끝의 <b>"그래서 dbt에서는"</b>만 기억하면 됩니다.</p>
+<p class="meta-line">읽기 약 20분 · 퀴즈 5문제 · 함께 보면 좋은 페이지: <a href="modeling.html">모델링 관점</a> (킴볼 · 인먼 이론 상세)</p>
+
+<div class="box warn">
+<span class="box-title">이 페이지의 성격</span>
+공부하다 나온 이야기를 모아 제 말로 정리한 것입니다. 연도와 인물은 널리 알려진 사실 위주로 적었지만, 인용하거나 발표에 쓸 때는 원문을 한 번 확인하세요. 특히 최근 일(2025년 이후 회사 합병 등)은 이후 상황이 바뀌었을 수 있습니다.
+</div>
+
+<h2 id="timeline">한눈에 보는 연표</h2>
+<pre class="diagram">  1970  코드(IBM)          관계형 모델 논문 — "데이터를 표로, 수학으로"
+  1974  체임벌린 · 보이스  SEQUEL 발표 → 상표 문제로 SQL
+  1979  오라클             첫 상용 SQL 데이터베이스 (IBM보다 먼저)
+  1986  ANSI               SQL 표준
+  1992  인먼               『Building the Data Warehouse』 — 위에서 아래로, 정규화
+  1996  킴볼               『The Data Warehouse Toolkit』 — 아래에서 위로, 스타 스키마
+  2000년대 린스테트        Data Vault — 이력 · 감사 추적에 강한 계층
+  2006  Hadoop             "SQL 말고 코드로" — 빅데이터 시대
+  2010~ BigQuery · Redshift · Snowflake — 클라우드 웨어하우스, 다시 SQL로
+  2012  Fivetran · Looker  수집 자동화(EL) · 지표 정의 언어(LookML)
+  2016  dbt                변환(T)을 SELECT + 소프트웨어 습관으로
+  2023  dbt Labs           Transform 인수 → MetricFlow (dbt Semantic Layer)
+  2025  Fivetran · dbt Labs 합병 발표 — EL과 T가 한 회사로</pre>
+
+<h2 id="codd">1970 · 코드 — "무엇을 원하는지만 말하라"</h2>
+<p>에드거 F. 코드(Edgar F. Codd)는 IBM 연구원이던 1970년, 논문 <b>「대규모 공유 데이터뱅크를 위한 관계형 데이터 모델」</b>을 냈습니다.</p>
+<ul>
+<li><b>그 전</b>: 데이터를 꺼내려면 "이 레코드에서 포인터를 따라 저 레코드로 가라"는 <b>경로</b>를 프로그래머가 직접 짰습니다. 저장 구조가 바뀌면 프로그램도 다 고쳐야 했습니다.</li>
+<li><b>코드의 생각</b>: 데이터를 <b>표(관계, relation)</b>로 두고 집합론으로 다룬다. 사용자는 <b>무엇을</b> 원하는지만 말하고, <b>어떻게</b> 찾을지는 시스템이 정한다.</li>
+<li>이 공로로 1981년 튜링상을 받았습니다. 정규화(1NF · 2NF · 3NF)도 코드에게서 나왔습니다.</li>
+</ul>
+<div class="box summary">
+<span class="box-title">💡 그래서 dbt에서는</span>
+dbt 모델에는 <b>SELECT만</b> 씁니다. CREATE TABLE, 실행 순서, 증분 처리 방식은 dbt가 정합니다. "무엇만 말하면 어떻게는 시스템이"라는 코드의 생각이 한 층 더 올라간 것입니다.
+</div>
+
+<h2 id="sql">1974 · SEQUEL → SQL</h2>
+<p>코드의 이론은 수학 기호라 일반인이 쓰기 어려웠습니다. 같은 IBM의 <b>도널드 체임벌린(Donald Chamberlin)</b>과 <b>레이먼드 보이스(Raymond Boyce)</b>가 이를 영어 문장처럼 쓰는 언어로 만들었습니다.</p>
+<ul>
+<li>이름은 <b>SEQUEL</b>(Structured English Query Language). 영국 항공기 회사가 이미 상표로 쓰고 있어서 <b>SQL</b>로 줄였습니다. 지금도 "에스큐엘"과 "시퀄" 두 발음이 다 쓰이는 이유입니다.</li>
+<li>보이스는 SEQUEL을 발표한 1974년, 20대의 나이로 세상을 떠났습니다. 정규화의 <b>BCNF(보이스-코드 정규형)</b>에 이름이 남아 있습니다.</li>
+<li>IBM은 연구용 시스템(System R)을 만들었지만, 첫 상용 제품은 1979년 <b>오라클</b>(당시 Relational Software)이 먼저 냈습니다. IBM이 공개한 논문을 보고 만들었습니다.</li>
+<li>1986년 ANSI 표준이 됐고, 50년 가까이 지난 지금도 BigQuery · DuckDB · Snowflake 모두 SQL을 씁니다.</li>
+</ul>
+<div class="box summary">
+<span class="box-title">💡 그래서 dbt에서는</span>
+dbt는 SQL을 대신하는 새 언어를 만들지 않았습니다. <b>SQL은 그대로 두고 주변을 채웠습니다</b>. 그래서 DuckDB에서 짠 모델을 BigQuery로 옮길 때도, 다른 건 DB마다 다른 몇 군데(UNNEST, 날짜 함수 등)뿐이고 매크로로 감출 수 있습니다.
+</div>
+
+<h2 id="dw">1990년대 · 인먼 vs 킴볼 — 웨어하우스를 어떻게 쌓을까</h2>
+<p>회사마다 데이터베이스가 늘자 "분석용 데이터를 한곳에 모으자"는 <b>데이터 웨어하우스</b>가 등장했고, 쌓는 방식을 두고 두 사람이 맞붙었습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th></th><th>빌 인먼 (Bill Inmon)</th><th>랄프 킴볼 (Ralph Kimball)</th></tr>
+<tr><td>별명</td><td>데이터 웨어하우스의 아버지</td><td>차원 모델링의 아버지</td></tr>
+<tr><td>대표 책</td><td>『Building the Data Warehouse』 (1992)</td><td>『The Data Warehouse Toolkit』 (1996)</td></tr>
+<tr><td>방향</td><td><b>위에서 아래로</b>: 회사 전체 웨어하우스를 먼저, 부서 마트는 거기서 뽑음</td><td><b>아래에서 위로</b>: 업무 하나씩 바로 쓰는 마트를 만들고 이어 붙임</td></tr>
+<tr><td>모양</td><td>정규화(3NF), 중복 없이 잘게 쪼갬</td><td>스타 스키마, 가운데 사실(fct) · 둘레에 차원(dim)</td></tr>
+<tr><td>장점</td><td>하나의 진실, 변화에 튼튼함</td><td>결과가 빨리 나옴, 분석가가 이해하기 쉬움</td></tr>
+<tr><td>단점</td><td>오래 걸리고 비쌈, 쓰려면 조인이 많음</td><td>마트끼리 기준이 어긋나면 숫자가 따로 놂</td></tr>
+</table>
+</div>
+<ul>
+<li><b>인먼</b>: "부서마다 마트를 따로 만들면 매출이 부서마다 다르다. 회사 기준부터 세워라."</li>
+<li><b>킴볼</b>: "그거 만들다 2년 간다. 업무별로 바로 쓰게 만들되 <b>공통 차원(conformed dimension)</b>을 같이 쓰면 안 어긋난다." → 업무 × 차원 표인 <b>버스 매트릭스</b></li>
+<li>킴볼이 가장 강조한 것: <b>그레인(한 행이 무엇인가)을 먼저 정하라.</b> 설계 4단계 = 업무 과정 → 그레인 → 차원 → 사실</li>
+<li>2000년대에는 댄 린스테트의 <b>Data Vault</b>(Hub · Link · Satellite)가 "원천이 바뀌어도 이력은 덮어쓰지 않는다"는 세 번째 길을 냈습니다.</li>
+</ul>
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>인먼은 <b>도시 계획부터 세우고 건물을 짓는 사람</b>, 킴볼은 <b>필요한 건물부터 짓되 도로 규격(공통 차원)만 맞추는 사람</b>입니다. 계획 없이 지으면 도로가 안 이어지고, 계획만 하면 아무도 입주를 못 합니다.</p>
+</div>
+<div class="box summary">
+<span class="box-title">💡 그래서 dbt에서는</span>
+지금은 둘 중 하나를 고르지 않고 <b>계층별로 섞습니다</b>. staging(원천 정리) → intermediate(통합된 하나의 기준, 인먼 느낌) → marts(스타 스키마, 킴볼). BI와 Semantic Layer 앞단은 거의 다 킴볼식이고, Cube의 measures · dimensions가 그대로 fct · dim입니다. 이론 상세는 <a href="modeling.html">모델링 관점</a>에.
+</div>
+
+<h2 id="cloud">2006 ~ 2010년대 · 빅데이터에서 다시 SQL로</h2>
+<ul>
+<li><b>Hadoop(2006)</b>: 데이터가 한 대에 안 들어가자 여러 대에 나눠 처리하는 방식이 퍼졌습니다. 처음엔 Java로 MapReduce 코드를 직접 짰고, 곧 그 위에 다시 SQL(Hive)을 얹었습니다. <b>결국 사람들은 SQL로 돌아왔습니다.</b></li>
+<li><b>클라우드 웨어하우스</b>: BigQuery(구글, 2010년 공개), Redshift(아마존, 2012년 발표), Snowflake(2012년 창업) — 저장 공간이 싸지고 계산을 필요한 만큼 빌려 쓰게 됐습니다.</li>
+<li>이 변화가 <b>ETL → ELT</b>를 만들었습니다.
+  <ul>
+  <li>ETL: 웨어하우스가 비싸서, 넣기 <b>전에</b> 변환(T)해서 필요한 것만 넣었습니다.</li>
+  <li>ELT: 일단 원천을 <b>그대로</b> 다 넣고(EL), 웨어하우스 안에서 SQL로 변환(T)합니다.</li>
+  </ul>
+</li>
+<li>EL을 자동화한 회사가 <b>Fivetran(2012)</b>, 지표 정의를 코드로 관리한 BI가 <b>Looker(2012, LookML)</b>입니다.</li>
+</ul>
+<div class="box summary">
+<span class="box-title">💡 그래서 dbt에서는</span>
+dbt는 <b>ELT의 T만</b> 맡습니다. 원천을 넣는 일(EL)은 하지 않습니다. 그래서 <code>source()</code>로 "이미 들어와 있는 원천"을 가리키는 것부터 시작합니다.
+</div>
+
+<h2 id="dbt">2016 · dbt — SQL에 개발자의 습관을</h2>
+<p>ELT로 웨어하우스 안에 SQL 변환이 쌓이자 새 문제가 생겼습니다. 수백 개의 SQL 파일을 <b>어떤 순서로 돌리나, 누가 고쳤나, 숫자가 맞는지 어떻게 아나</b>. 소프트웨어 개발자들은 이미 Git · 테스트 · 의존성 관리로 풀어 둔 문제였습니다.</p>
+<p>트리스턴 핸디(Tristan Handy)가 이끈 컨설팅 회사 Fishtown Analytics가 2016년 dbt(data build tool)를 만들었고, 회사는 2020년 이름을 <b>dbt Labs</b>로 바꿨습니다. dbt는 SQL을 새로 만든 게 아니라 이미 있던 것들을 조합했습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>원래 있던 것</th><th>dbt에서 쓰는 방식</th></tr>
+<tr><td>SQL <code>SELECT</code></td><td>모델 하나 = SELECT 하나 (CREATE TABLE은 dbt가 씀)</td></tr>
+<tr><td>Jinja (파이썬 템플릿)</td><td><code>{{ ref() }}</code>, 매크로, <code>target.type</code> 분기</td></tr>
+<tr><td>소프트웨어의 의존성 그래프 (make 등)</td><td><code>ref()</code>로 실행 순서 · 리니지 자동 생성</td></tr>
+<tr><td>개발자의 테스트 · Git · CI</td><td><code>dbt test</code>, PR, GitHub Actions</td></tr>
+<tr><td>킴볼의 SCD2</td><td><code>dbt snapshot</code></td></tr>
+<tr><td>웨어하우스의 증분 적재</td><td><code>materialized='incremental'</code></td></tr>
+<tr><td>소프트웨어의 API 계약</td><td><code>contract</code></td></tr>
+</table>
+</div>
+
+<h3>ref는 무슨 뜻인가</h3>
+<p><code>ref</code> = <b>reference(참조)</b>, "다른 모델을 가리킨다"입니다. 실행할 때 두 가지 일을 합니다.</p>
+<ol>
+<li><b>진짜 테이블 이름으로 바꿔 줌</b> — 개발에선 <code>dev</code> 스키마, 운영에선 <code>prod</code> 스키마. 같은 코드로 target만 바꾸면 됩니다.</li>
+<li><b>"이 모델은 저 모델 다음"이라고 기록</b> — 모든 ref를 모으면 의존성 그래프(DAG)가 되고, dbt가 순서를 스스로 정합니다. <code>dbt docs</code>의 리니지 그림이 이것입니다.</li>
+</ol>
+<pre><code>select * from dev.main.stg_google_ads__ad_group_daily        -- ❌ 순서 · 환경 · 리니지가 깨짐
+select * from {{ ref('stg_google_ads__ad_group_daily') }}    -- ✅</code></pre>
+<p><code>source()</code>는 dbt가 만들지 않은 원천, <code>ref()</code>는 dbt가 만든 모델. 그래서 <b>staging만 source를 읽고, 나머지는 전부 ref</b>로 읽습니다.</p>
+<div class="box summary">
+<span class="box-title">💡 그래서 dbt에서는</span>
+dbt의 핵심 아이디어는 <b>"분석가도 소프트웨어 엔지니어처럼 일하자"</b>입니다. 이 흐름에서 <b>애널리틱스 엔지니어(AE)</b>라는 직무 이름도 퍼졌습니다.
+</div>
+
+<h2 id="now">2020년대 · Semantic Layer와 합병</h2>
+<ul>
+<li><b>Semantic Layer</b>: 테이블은 하나로 맞췄는데, BI 도구마다 ROAS를 다르게 계산하는 문제가 남았습니다. 지표 정의를 한곳에 두자는 흐름 — Looker의 LookML이 앞서 했고, dbt Labs는 2023년 Transform을 인수해 <b>MetricFlow</b>(dbt Semantic Layer)를 만들었습니다. Cube도 같은 자리의 오픈소스입니다.</li>
+<li><b>dbt Fusion</b>(2025): 새 실행 엔진. dbt Core(Apache 2.0)와 라이선스가 달라(ELv2) 앞으로 방향을 지켜볼 부분입니다.</li>
+<li><b>Fivetran · dbt Labs 합병 발표</b>(2025년 10월): EL을 하던 회사와 T를 하던 회사가 합칩니다. ELT 두 칸을 한 회사가 가져가는 그림입니다. 무료 오픈소스 dbt Core를 로컬에서 쓰는 데에는 바로 영향이 없습니다.</li>
+</ul>
+<div class="box summary">
+<span class="box-title">💡 그래서 내 프로젝트에서는</span>
+수집(EL) 자리는 생성기 · 적재 코드가, 변환(T)은 직접 짜는 dbt가 맡습니다. 원천을 <b>실제 매체 API 응답 모양</b>으로 맞춰 둔 이유가 여기 있습니다 — 나중에 EL을 Fivetran 같은 도구로 바꿔도 dbt 쪽은 그대로 둘 수 있습니다.
+</div>
+
+<h2 id="project">내 프로젝트에 대 보기</h2>
+<div class="table-wrap">
+<table>
+<tr><th>역사 속 아이디어</th><th>마케팅 Semantic Layer 프로젝트에서</th></tr>
+<tr><td>코드 — 무엇만 말하라</td><td>모델은 SELECT만, 실행 순서는 <code>ref()</code>로 dbt가</td></tr>
+<tr><td>SQL 표준</td><td>DuckDB에서 개발 → BigQuery로 전환, 다른 부분만 매크로(<code>adapter.dispatch</code>)</td></tr>
+<tr><td>인먼 — 통합된 하나의 기준</td><td>intermediate: 매체 통합, GA4 세션, 랜딩 URL 매핑, 귀속</td></tr>
+<tr><td>킴볼 — 그레인 먼저</td><td>모델링 ①: 한 행 = 캠페인 × 날짜, 광고그룹 × 날짜 ...</td></tr>
+<tr><td>킴볼 — 공통 차원</td><td>매체 fct와 GA4 fct가 <b>같은 <code>dim_campaigns</code> · <code>dim_date</code></b>를 써야 매체 ÷ GA4 1.27배를 비교할 수 있음</td></tr>
+<tr><td>킴볼 — SCD2</td><td>캠페인 이름 · 랜딩 URL 이력 (<code>lag()</code>, 앞으로는 snapshot)</td></tr>
+<tr><td>Data Vault — 덮어쓰지 않는다</td><td>원천은 날짜 폴더(<code>_extract_date</code>)로 그대로 보존</td></tr>
+<tr><td>ELT</td><td>원천을 그대로 넣고, 변환은 웨어하우스 안에서</td></tr>
+<tr><td>Semantic Layer</td><td>ROAS 같은 비율은 Cube 한 곳에서 → BI와 챗봇이 같은 숫자</td></tr>
+</table>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="2">
+<p class="q-text">코드(Codd)의 관계형 모델이 그 전 방식과 가장 크게 달랐던 점은?</p>
+<ol class="q-opts">
+<li>데이터를 파일 대신 테이프에 저장했다</li>
+<li>사용자는 무엇을 원하는지만 말하고, 찾는 방법은 시스템이 정한다</li>
+<li>모든 데이터를 하나의 큰 표에 넣었다</li>
+<li>프로그래머가 레코드 사이 포인터를 직접 관리하게 했다</li>
+</ol>
+<p class="q-explain">그 전에는 데이터를 찾는 경로를 프로그래머가 짰습니다(④가 옛 방식). 코드는 "무엇"과 "어떻게"를 분리했고, dbt의 "SELECT만 쓰면 나머지는 dbt가"도 같은 생각입니다.</p>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">SQL이 처음 SEQUEL에서 이름을 바꾼 이유는?</p>
+<ol class="q-opts">
+<li>오라클이 먼저 SEQUEL이라는 제품을 냈다</li>
+<li>ANSI 표준에서 네 글자 이상을 금지했다</li>
+<li>다른 회사가 이미 SEQUEL을 상표로 쓰고 있었다</li>
+<li>구조화(Structured)라는 단어를 빼기로 했다</li>
+</ol>
+<p class="q-explain">영국 항공기 회사의 상표 때문에 모음을 빼고 SQL로 줄였습니다. 그래서 지금도 "시퀄"이라고 읽는 사람이 많습니다.</p>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">킴볼이 "부서별 마트를 따로 만들면 숫자가 어긋난다"는 인먼의 비판에 내놓은 답은?</p>
+<ol class="q-opts">
+<li>공통 차원(conformed dimension)을 모든 마트가 같이 쓴다</li>
+<li>모든 표를 3NF로 정규화한다</li>
+<li>마트를 하나만 만든다</li>
+<li>Data Vault의 Hub를 쓴다</li>
+</ol>
+<p class="q-explain">날짜 · 캠페인 같은 차원을 마트마다 따로 만들지 않고 하나를 같이 쓰면, 마트끼리 같은 기준으로 비교할 수 있습니다. 이 프로젝트의 매체 vs GA4 비교가 바로 이 원리입니다.</p>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">ETL에서 ELT로 바뀐 가장 큰 이유는?</p>
+<ol class="q-opts">
+<li>SQL이 표준이 되어서</li>
+<li>Hadoop이 SQL을 지원하지 않아서</li>
+<li>dbt가 E와 L을 대신해 줘서</li>
+<li>클라우드 웨어하우스로 저장 · 계산이 싸져서 원천을 그대로 넣을 수 있게 되어서</li>
+</ol>
+<p class="q-explain">웨어하우스가 비쌀 때는 넣기 전에 줄여야 했습니다. 싸지자 일단 다 넣고 안에서 SQL로 변환하게 됐고, 그 T를 맡은 것이 dbt입니다. dbt는 E · L을 하지 않습니다(③).</p>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">모델 안에서 테이블 이름을 직접 쓰지 않고 <code>ref()</code>를 쓸 때 얻는 것이 <b>아닌</b> 것은?</p>
+<ol class="q-opts">
+<li>dbt가 실행 순서를 스스로 정한다</li>
+<li>쿼리 실행 속도가 빨라진다</li>
+<li>dev / prod target에 따라 테이블 위치가 바뀐다</li>
+<li>리니지 그래프에 연결선이 생긴다</li>
+</ol>
+<p class="q-explain"><code>ref()</code>는 이름을 바꿔 끼우고 의존성을 기록할 뿐, 만들어지는 SQL은 테이블 이름을 직접 쓴 것과 같습니다. 속도는 그대로입니다.</p>
+</div>
+
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>"dbt는 새 언어가 아니다"를 SQL · Jinja · 소프트웨어 습관 세 단어로 설명해 보세요.</li>
+<li><code>dim_campaigns</code>를 매체 쪽과 GA4 쪽이 따로 만들면 어떤 일이 생기는지, 킴볼 vs 인먼 논쟁으로 설명해 보세요.</li>
+<li>Fivetran과 dbt의 합병을 ELT 세 글자로 설명해 보세요.</li>
+</ol>
+</div>
+
+<p style="margin-top:30px"><a href="index.html">← 30일 홈으로</a> · <a href="modeling.html">모델링 관점 →</a></p>
+
+</main>
+</div>
+<script src="../assets/dbt30-days.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

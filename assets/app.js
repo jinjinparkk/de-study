@@ -49,7 +49,7 @@
     links = [`<a href="index.html" class="${page === "d30-home" ? "active" : ""}">30일 홈</a>`]
       .concat([1, 2, 3, 4].map((w) => `<a href="index.html#w${w}">${w}주차</a>`))
       .concat(cur ? [`<a href="${cur.file}" class="active">Day ${cur.n}</a>`] : [])
-      .concat([`<a href="modeling.html" class="${page === "d30-modeling" ? "active" : ""}">모델링</a>`, `<a href="../essentials/index.html">필수 정리</a>`])
+      .concat([`<a href="modeling.html" class="${page === "d30-modeling" ? "active" : ""}">모델링</a>`, `<a href="history.html" class="${page === "d30-history" ? "active" : ""}">역사</a>`,`<a href="../essentials/index.html">필수 정리</a>`])
       .concat([`<a href="../glossary.html">용어집</a>`, `<a href="../cheatsheet.html">명령어 모음</a>`, `<a href="../index.html">← 7일 버전</a>`]);
   } else {
     links = DAYS.map((d, i) => {
