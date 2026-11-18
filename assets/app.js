@@ -57,6 +57,7 @@
   if (inCs) {
     links = [`<a href="index.html" class="${page === "cs-home" ? "active" : ""}">지도</a>`]
       .concat(CS.map((c, i) => `<a href="${c.file}" class="${c.id === page ? "active" : ""} ${store.get(c.id + ":done", false) ? "done" : ""}" title="${c.title}">${i + 1}</a>`))
+      .concat([`<a href="api.html" class="${page === "cs-api" ? "active" : ""}" title="컴퓨터끼리 대화하는 법 — API · REST의 역사">API 역사</a>`])
       .concat([`<a href="../glossary.html">용어집</a>`, `<a href="../days/day1.html">dbt 1일차</a>`, `<a href="../dbt30/index.html">dbt 30일</a>`, `<a href="../essentials/index.html">필수 정리</a>`, `<a href="../index.html">← 7일 버전</a>`]);
   } else if (inEss) {
     links = [`<a href="index.html" class="${page === "ess-home" ? "active" : ""}">목차</a>`]

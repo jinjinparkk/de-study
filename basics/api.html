@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4+ · 컴퓨터끼리 대화하는 법 — API · REST의 역사 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs-api">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 4장 심화</div>
+<h1>컴퓨터끼리 대화하는 법 — API · REST의 역사</h1>
+<p class="lead">4장에서 "HTTP로 요청하고 JSON으로 답받는다"까지 봤습니다. 이 장은 한 걸음 물러나서 묻습니다. <b>컴퓨터끼리는 원래 어떻게 대화했고, 왜 지금은 REST가 기본이 됐을까?</b> REST · RESTful · REST API가 각각 무슨 뜻인지, REST 말고는 어떤 방식이 있는지, 데이터 엔지니어가 실제로 마주치는 방식은 무엇인지 역사 순서로 정리합니다.</p>
+<p class="meta-line">읽기 약 45분 · 손으로 해 보기 4개 · 퀴즈 5문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>"API", "REST", "RESTful", "REST API"를 각각 한 문장으로 구분해서 말하기</li>
+<li>소켓 → RPC → SOAP → REST → GraphQL · gRPC로 이어지는 흐름을 "왜 바뀌었나" 중심으로 설명하기</li>
+<li>REST의 제약 6개와 "진짜 REST"와 "실무 REST API"의 차이 말하기</li>
+<li>요청-응답 · 폴링 · 웹훅 · 스트리밍 · 메시지 큐 · 파일 전달 중 상황에 맞는 방식 고르기</li>
+<li>광고 매체 API · BigQuery · Cube · Metabase · Airflow가 각각 어떤 방식으로 대화하는지 말하기</li>
+</ul>
+</div>
+
+<h2 id="words">먼저 단어 정리 — API · REST · RESTful · REST API</h2>
+<div class="table-wrap">
+<table>
+<tr><th>말</th><th>품사</th><th>한 문장 뜻</th><th>비유</th></tr>
+<tr><td><b>API</b></td><td>명사 (넓음)</td><td>"이렇게 요청하면 이렇게 답한다"는 <b>프로그램끼리의 약속 목록</b>. 방식은 무엇이든 됨</td><td>가게의 주문 창구</td></tr>
+<tr><td><b>REST</b></td><td>명사 (설계 스타일)</td><td>웹이 잘 굴러가는 원리를 정리한 <b>설계 규칙 묶음</b>. 기술 · 프로그램 · 규격 문서가 아님</td><td>"메뉴판을 보고 말로 주문한다"는 주문 예절</td></tr>
+<tr><td><b>RESTful</b></td><td>형용사</td><td>"REST 규칙을 <b>지키는</b>". RESTful한 설계, RESTful한 주소</td><td>"예절 바른"</td></tr>
+<tr><td><b>REST API</b> (RESTful API)</td><td>명사</td><td>REST 스타일로 만든 API. <b>실무에서는</b> "HTTP 주소 + 메서드 + JSON"이면 대개 이렇게 부름</td><td>예절대로 운영되는 주문 창구</td></tr>
+</table>
+</div>
+<p>REST API와 RESTful API는 사실상 같은 말입니다. 차이가 생기는 곳은 따로 있습니다. REST를 만든 사람이 말하는 <b>엄격한 REST</b>와, 업계가 부르는 <b>느슨한 REST API</b> 사이입니다. 이 차이는 <a href="#strict">아래</a>에서 다룹니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>"API"가 <b>교통수단</b>이라면 REST는 그중 <b>버스</b>입니다. 버스가 제일 흔하다고 해서 교통수단 = 버스는 아니죠. 기차(gRPC), 택시(GraphQL), 화물차(파일 전달)도 있습니다. "REST"는 버스 운행 규칙(정류장 · 노선 · 요금 체계), "RESTful"은 "규칙대로 다니는"이라는 형용사입니다.</p>
+</div>
+
+<h2 id="map">한 장으로 보는 역사</h2>
+<div class="table-wrap">
+<table>
+<tr><th>시기</th><th>한마디</th><th>대표</th><th>남긴 것</th></tr>
+<tr><td>1960s ~ 1980s</td><td><b>선을 잇는다</b></td><td>ARPANET (1969) · TCP/IP 전환 (1983) · 소켓 (1983, BSD)</td><td>IP · 포트 · TCP, 지금도 모든 통신의 바닥</td></tr>
+<tr><td>1980s ~ 1990s</td><td><b>남의 함수를 내 것처럼</b></td><td>RPC 논문 (1984) · CORBA (1991) · DCOM · Java RMI (1996~97) · ODBC (1992) · JDBC (1997)</td><td>"원격 호출" 아이디어, DB 드라이버 표준</td></tr>
+<tr><td>1998 ~ 2005</td><td><b>웹으로 함수 호출</b></td><td>XML-RPC (1998) · SOAP (1998~) · WSDL · UDDI</td><td>HTTP 위에 싣기, 기업 연동 표준</td></tr>
+<tr><td>2000 ~ 2010s</td><td><b>웹처럼 만들자</b></td><td>REST 논문 (2000) · JSON 확산 · OAuth · 웹훅 · OpenAPI</td><td>지금의 "REST API" 기본형</td></tr>
+<tr><td>2015 ~ 지금</td><td><b>목적별로 골라 쓰자</b></td><td>GraphQL · gRPC 공개 (2015) · HTTP/2 · HTTP/3 · AI 도구 연결 MCP (2024)</td><td>REST가 약한 곳(필드 낭비 · 속도 · 실시간)을 메움</td></tr>
+</table>
+</div>
+<p class="muted" style="font-size:14px">흐름: 연결 자체 → 함수 호출 흉내 → 무거운 표준 → 가볍고 단순한 웹 방식 → 상황별로 다시 특화</p>
+
+<p>한 줄로 줄이면 이렇습니다. <b>"남의 컴퓨터를 내 함수처럼 부르고 싶다"는 욕심이 계속 무거워지다가, 웹의 단순함(REST)이 이겼고, 그다음엔 REST가 약한 곳을 GraphQL · gRPC가 메웠다.</b></p>
+
+<h2 id="era1">1막 · 선을 잇는다 — 소켓 (1960s ~ 1980s)</h2>
+<p>1969년 ARPANET에서 처음으로 멀리 떨어진 컴퓨터끼리 메시지가 오갔습니다. 1983년에는 ARPANET 전체가 <b>TCP/IP</b>로 넘어가면서 "주소(IP) + 문(포트) + 순서 보장(TCP)"이라는 지금의 기초가 섰습니다. 같은 해 BSD 유닉스에 <b>소켓(socket)</b>이라는 프로그래밍 창구가 들어갔습니다.</p>
+<pre class="diagram">  프로그램 A ──[소켓]── 바이트들 ──▶ ──[소켓]── 프로그램 B
+                "0x48 0x45 0x4C 0x4C 0x4F ..."
+  소켓이 해 주는 것: 선을 잇고, 바이트를 순서대로 보내 준다
+  소켓이 안 해 주는 것: 그 바이트가 무슨 뜻인지 (→ 양쪽이 알아서 약속해야 함)</pre>
+<p>소켓은 <b>전화선</b>입니다. 통화는 되지만 무슨 말로 대화할지는 정해 주지 않습니다. 그래서 프로그램마다 자기만의 대화 규칙(프로토콜)을 만들었습니다. 메일은 SMTP, 파일은 FTP, DB는 각 DB 회사의 자체 규칙을 썼습니다. 지금도 PostgreSQL · MySQL은 이 시절 방식처럼 <b>자기만의 이진 규칙(와이어 프로토콜)</b>으로 대화합니다.</p>
+
+<h2 id="era2">2막 · 남의 함수를 내 것처럼 — RPC · CORBA · ODBC (1980s ~ 1990s)</h2>
+<p>바이트를 직접 주무르는 건 너무 힘들었습니다. 그래서 1984년 Birrell과 Nelson이 <b>RPC(원격 프로시저 호출)</b> 구현 논문을 냈습니다. 아이디어는 간단합니다. <b>"다른 컴퓨터의 함수를, 내 코드 안의 함수 부르듯 부르자."</b></p>
+<pre data-file="RPC의 꿈 (의사 코드)"><code># 내 코드에서는 그냥 함수 호출처럼 보이지만
+spend = ads_server.get_campaign_spend("C001", "2026-11-01")
+# 실제로는: 인자를 바이트로 포장 → 네트워크로 전송 → 저쪽에서 함수 실행 → 결과를 포장해 돌려받음</code></pre>
+<p>이 꿈은 여러 표준으로 커졌습니다. 기업용 <b>CORBA</b>(1991)는 언어가 달라도 서로 부를 수 있게 했고, 마이크로소프트의 <b>DCOM</b>(1996)과 자바의 <b>RMI</b>(1997)도 나왔습니다. 그런데 공통 문제가 있었습니다.</p>
+<ul>
+<li><b>네트워크는 함수가 아니다</b>: 내 함수는 실패하지 않지만, 네트워크는 느려지고 끊깁니다. "함수처럼 보이게" 숨긴 탓에 오히려 실패 처리가 어려웠습니다.</li>
+<li><b>양쪽이 단단히 묶임</b>: 서버 함수 모양이 바뀌면 클라이언트를 다시 빌드해야 했습니다.</li>
+<li><b>방화벽을 못 넘음</b>: 각자 쓰는 포트와 규칙이 달라서 회사 밖으로 나가기 어려웠습니다.</li>
+</ul>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면 — ODBC · JDBC</span>
+<p>같은 시기에 DB 쪽에도 "어느 DB든 같은 방식으로 부르자"는 표준이 생겼습니다. 1992년 <b>ODBC</b>, 1997년 자바의 <b>JDBC</b>입니다. 엑셀 · BI 도구가 오라클 · SQL Server · PostgreSQL에 똑같이 붙는 이유가 이것입니다. 각 DB의 와이어 프로토콜 차이는 <b>드라이버</b>가 숨겨 줍니다. 지금 쓰는 Metabase도 JDBC 드라이버로 DB에 붙습니다. 그래서 Cube가 "나는 PostgreSQL이야"라고 말하는 <b>SQL API</b>를 열어 두면, Metabase는 진짜 PostgreSQL인 줄 알고 붙습니다.</p>
+</div>
+
+<h2 id="era3">3막 · 웹이 이긴다 — HTTP와 SOAP (1990s ~ 2000s 초)</h2>
+<p>1989년 CERN의 팀 버너스리가 웹을 제안했고, 1991년부터 <b>HTTP</b> 위에서 문서가 오가기 시작했습니다. HTTP는 단순했습니다. 텍스트로 된 요청 한 번, 응답 한 번이고, 문은 80번(나중에 HTTPS 443번) 하나였습니다. 무엇보다 <b>방화벽이 이미 열어 둔 문</b>이었습니다.</p>
+<p>그러자 "함수 호출도 HTTP에 실어 보내자"는 흐름이 생겼습니다. 1998년 <b>XML-RPC</b>, 이어서 마이크로소프트 등이 키운 <b>SOAP</b>입니다. 함수 호출을 XML 봉투에 담아 HTTP로 보냈고, <b>WSDL</b>(서비스 설명서) · <b>UDDI</b>(서비스 전화번호부) 같은 표준이 줄줄이 붙었습니다.</p>
+<pre data-file="SOAP 요청 (캠페인 비용 하나 묻는 데 이만큼)"><code>POST /AdService HTTP/1.1
+Content-Type: text/xml; charset=utf-8
+SOAPAction: "GetCampaignSpend"
+
+&lt;soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"&gt;
+  &lt;soap:Header&gt;&lt;Auth&gt;&lt;Token&gt;abc123&lt;/Token&gt;&lt;/Auth&gt;&lt;/soap:Header&gt;
+  &lt;soap:Body&gt;
+    &lt;GetCampaignSpend&gt;
+      &lt;CampaignId&gt;C001&lt;/CampaignId&gt;
+      &lt;Date&gt;2026-11-01&lt;/Date&gt;
+    &lt;/GetCampaignSpend&gt;
+  &lt;/soap:Body&gt;
+&lt;/soap:Envelope&gt;</code></pre>
+<p>SOAP은 엄격하고 기업 시스템에 잘 맞았지만 <b>무거웠습니다</b>. 봉투가 크고, 도구 없이는 읽고 쓰기 어려웠고, 모든 요청이 POST 하나로 같은 주소에 몰려서 웹의 장점(캐시, 주소로 구분)을 못 썼습니다. 오래된 은행 · 공공 · 일부 광고 시스템에는 지금도 남아 있습니다.</p>
+
+<h2 id="era4">4막 · "웹처럼 만들자" — REST의 탄생 (2000)</h2>
+<p>2000년, <b>로이 필딩(Roy Fielding)</b>이 UC 어바인 박사 논문 <i>「Architectural Styles and the Design of Network-based Software Architectures」</i>의 5장에서 <b>REST</b>를 정리했습니다. 필딩은 HTTP/1.1 규격을 직접 쓴 사람 중 하나입니다. 그래서 질문이 남달랐습니다. "웹은 왜 이렇게 크게 커지고도 안 무너졌나? 그 원리를 규칙으로 뽑아 보자."</p>
+<p>이름은 <b>RE</b>presentational <b>S</b>tate <b>T</b>ransfer, 풀면 "자원의 <b>상태</b>를 JSON · HTML 같은 <b>표현</b>으로 <b>주고받는다</b>"입니다.</p>
+
+<h3 id="constraints">REST의 제약 6개</h3>
+<p>REST는 기술이 아니라 "이 6가지를 지키면 웹처럼 커져도 버틴다"는 <b>제약 조건</b>의 묶음입니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>#</th><th>제약</th><th>뜻</th><th>지키면 얻는 것</th></tr>
+<tr><td>1</td><td><b>클라이언트-서버</b></td><td>화면(요청하는 쪽)과 데이터(답하는 쪽)를 나눈다</td><td>각자 따로 바꿀 수 있음</td></tr>
+<tr><td>2</td><td><b>무상태 (stateless)</b></td><td>요청마다 필요한 걸 다 담아 보낸다. 서버는 "아까 그 사람"을 기억하지 않는다</td><td>서버를 여러 대로 늘리기 쉬움 (아무 서버나 받아도 됨)</td></tr>
+<tr><td>3</td><td><b>캐시 가능</b></td><td>응답에 "이건 10분간 다시 써도 됨" 같은 표시를 붙인다</td><td>같은 요청을 서버까지 안 보내도 됨</td></tr>
+<tr><td>4</td><td><b>균일한 인터페이스</b></td><td>모든 자원을 같은 방식으로 다룬다 (아래 4개 세부 규칙)</td><td>처음 보는 API도 읽는 법이 같음</td></tr>
+<tr><td>5</td><td><b>계층 구조</b></td><td>중간에 프록시 · 로드밸런서 · CDN이 끼어도 클라이언트는 모른다</td><td>보안 · 속도 장치를 사이에 넣기 쉬움</td></tr>
+<tr><td>6</td><td>코드 온 디맨드 (선택)</td><td>서버가 실행할 코드(자바스크립트)를 보내 줄 수도 있다</td><td>웹 페이지의 동작</td></tr>
+</table>
+</div>
+<p>4번 "균일한 인터페이스"가 REST의 핵심이고, 세부 규칙이 넷입니다.</p>
+<ol>
+<li><b>자원은 주소로 가리킨다</b>: <code>/campaigns/C001</code>. 주소는 <b>명사</b>입니다.</li>
+<li><b>표현으로 다룬다</b>: 서버 안의 실제 데이터가 아니라, 그걸 JSON으로 표현한 것을 주고받습니다.</li>
+<li><b>메시지가 스스로 설명한다</b>: 메서드(GET), 상태 코드(404), 헤더(<code>Content-Type: application/json</code>)만 보고도 무슨 일인지 압니다.</li>
+<li><b>하이퍼미디어 (HATEOAS)</b>: 응답 안에 "다음에 갈 수 있는 링크"가 들어 있어서, 클라이언트가 링크를 따라가며 움직입니다. 웹 페이지에서 링크를 누르며 돌아다니는 것과 같습니다.</li>
+</ol>
+
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>REST 스타일</th><th>함수 호출(RPC) 스타일</th></tr>
+<tr><td>캠페인 조회</td><td><code>GET /campaigns/C001</code></td><td><code>POST /getCampaign</code> + <code>{"id":"C001"}</code></td></tr>
+<tr><td>예산 수정</td><td><code>PATCH /campaigns/C001</code></td><td><code>POST /updateCampaignBudget</code> + <code>{"id":"C001", ...}</code></td></tr>
+<tr><td>캠페인 삭제</td><td><code>DELETE /campaigns/C001</code></td><td><code>POST /deleteCampaign</code> + <code>{"id":"C001"}</code></td></tr>
+<tr><td><b>특징</b></td><td>주소 = 명사, 행동 = HTTP 메서드</td><td>주소에 동사가 들어감, 거의 다 POST</td></tr>
+</table>
+</div>
+
+<h2 id="strict">"진짜 REST"와 "실무 REST API" — 리처드슨 성숙도 모델</h2>
+<p>2000년대 중반부터 JSON을 HTTP로 주고받는 API가 폭발했고, 다들 그걸 "REST API"라고 불렀습니다. 그런데 2008년 필딩은 블로그에 <i>"REST API는 하이퍼텍스트로 움직여야 한다"</i>는 글을 써서, <b>HATEOAS가 없으면 REST라고 부르지 말라</b>고 했습니다. 실무 API 대부분이 여기에 해당했습니다.</p>
+<p>이 간극을 정리한 것이 레너드 리처드슨의 <b>성숙도 모델</b>(2008년 발표, 2010년 마틴 파울러의 글로 널리 알려짐)입니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>단계</th><th>모양</th><th>예</th></tr>
+<tr><td>0단계</td><td>주소 하나에 POST만. HTTP를 "운반용 관"으로만 씀</td><td>SOAP, XML-RPC</td></tr>
+<tr><td>1단계</td><td>자원마다 주소가 생김</td><td><code>POST /campaigns/C001</code></td></tr>
+<tr><td>2단계</td><td>HTTP 메서드와 상태 코드를 제대로 씀</td><td><code>GET /campaigns/C001</code> → 200, 없으면 404 · <b>실무 "REST API" 대부분이 여기</b></td></tr>
+<tr><td>3단계</td><td>응답에 다음 행동 링크(HATEOAS)</td><td><code>"links": {"pause": "/campaigns/C001/pause"}</code> · 필딩이 말하는 진짜 REST</td></tr>
+</table>
+</div>
+<div class="box tip">
+<span class="box-title">실무에서는</span>
+<p>"REST API"라고 하면 거의 항상 <b>2단계</b>를 뜻합니다. 주소는 명사, 행동은 메서드, 결과는 상태 코드와 JSON입니다. 엄밀하게 말하고 싶은 사람은 이걸 <b>"HTTP API"</b>나 <b>"JSON API"</b>라고 부르기도 합니다. 면접이나 문서에서는 "엄밀한 REST는 HATEOAS까지 포함하지만, 보통 말하는 REST API는 리소스 주소 + HTTP 메서드 + JSON 수준"이라고 한 문장 덧붙이면 정확합니다.</p>
+</div>
+
+<h2 id="era5">5막 · REST의 시대 — JSON · OAuth · 웹훅 · OpenAPI (2000s ~ 2010s)</h2>
+<p>REST가 이긴 데는 같이 자란 도구들이 큰 몫을 했습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>시기</th><th>일</th><th>왜 중요했나</th></tr>
+<tr><td>2000 전후</td><td>Salesforce · eBay 등이 웹 API를 공개</td><td>"API를 열어 남이 우리 서비스 위에 무언가 만들게 하자"는 사업 모델의 시작</td></tr>
+<tr><td>2001 ~ 2006</td><td>더글러스 크록퍼드가 정리한 <b>JSON</b>이 퍼지고, 2006년 RFC 4627로 문서화</td><td>XML보다 훨씬 가볍고, 자바스크립트가 바로 읽음 → 웹 API 기본 형식이 됨</td></tr>
+<tr><td>2005</td><td>AJAX라는 말 등장 (페이지 새로고침 없이 데이터만 요청)</td><td>브라우저가 API를 직접 부르는 시대</td></tr>
+<tr><td>2007</td><td><b>웹훅(webhook)</b>이라는 말 등장</td><td>"다 됐니?"를 계속 묻는 대신, 일이 생기면 <b>서버가 먼저 알려 줌</b></td></tr>
+<tr><td>2007 · 2012</td><td><b>OAuth</b> 1.0 → OAuth 2.0 (RFC 6749)</td><td>비밀번호를 넘기지 않고 "이 앱이 내 광고 계정 읽어도 됨"만 위임. 광고 매체 API는 거의 다 이 방식</td></tr>
+<tr><td>2011 · 2015</td><td><b>Swagger</b> → <b>OpenAPI</b> 표준</td><td>REST API 설명서를 기계가 읽는 형식으로. 문서 · 테스트 화면 · 클라이언트 코드 자동 생성</td></tr>
+<tr><td>2015</td><td><b>JWT</b> (RFC 7519)</td><td>서명된 토큰 안에 "누구 · 언제까지"를 담음 → 서버가 기억할 필요 없음 (무상태와 잘 맞음)</td></tr>
+</table>
+</div>
+
+<h2 id="era6">6막 · REST가 약한 곳을 메운다 — GraphQL · gRPC · 실시간 (2010s ~)</h2>
+<p>REST가 표준이 되자 약점도 보였습니다.</p>
+<ul>
+<li><b>너무 많이 받거나 너무 적게 받음</b>: 모바일 화면 하나를 그리려고 주소 5개를 부르고, 각각 필요 없는 필드까지 받았습니다.</li>
+<li><b>서버끼리의 대량 통신엔 느림</b>: 텍스트 JSON을 매번 만들고 해석하는 비용이 컸습니다.</li>
+<li><b>실시간에 약함</b>: 요청해야만 답이 오므로, 채팅 · 주가처럼 계속 바뀌는 데이터에 안 맞았습니다.</li>
+</ul>
+<div class="table-wrap">
+<table>
+<tr><th>방식</th><th>나온 곳 · 시기</th><th>어떻게 다른가</th><th>잘 맞는 곳</th></tr>
+<tr><td><b>GraphQL</b></td><td>Facebook 내부 2012, 공개 2015</td><td>주소는 하나. "이 필드들만 줘"를 질의로 보냄 → 필요한 만큼만 한 번에</td><td>화면이 다양한 앱, 여러 데이터를 엮어 보여 주는 곳</td></tr>
+<tr><td><b>gRPC</b></td><td>Google 내부 도구를 2015 공개 (HTTP/2 · Protocol Buffers)</td><td>RPC의 귀환. 미리 정한 함수를 <b>이진 형식</b>으로 빠르게 호출, 스트리밍 지원</td><td>서버끼리 대량 · 고속 통신. <b>Google Ads API</b>가 이 방식 (REST도 같이 제공)</td></tr>
+<tr><td><b>WebSocket</b></td><td>RFC 6455, 2011</td><td>연결을 한 번 열어 두고 양쪽이 아무 때나 메시지를 보냄</td><td>채팅, 실시간 대시보드</td></tr>
+<tr><td><b>SSE</b> (Server-Sent Events)</td><td>HTML5 시기</td><td>서버 → 클라이언트 한 방향 스트림</td><td>진행률 표시, AI 답변이 글자씩 나오는 화면</td></tr>
+<tr><td><b>JSON-RPC 2.0</b> · <b>MCP</b></td><td>2010 규격 · MCP는 2024 공개</td><td>가벼운 RPC. MCP는 이걸로 <b>AI가 외부 도구 · 데이터에 붙는 방식</b>을 표준화</td><td>AI 챗봇이 DB · 문서 · API를 도구로 쓰기</td></tr>
+</table>
+</div>
+<p>결국 2막의 "함수 호출(RPC)"과 4막의 "자원 주소(REST)"는 둘 중 하나가 이긴 게 아니라 <b>쓰임새가 나뉘었습니다</b>. 밖에 공개하는 API는 REST, 회사 안 서버끼리는 gRPC, 화면 데이터는 GraphQL을 많이 씁니다.</p>
+
+<h2 id="patterns">대화의 모양 — 누가 먼저 말하나</h2>
+<p>방식(REST · gRPC…)과 별개로, <b>언제 · 누가 먼저 말하는지</b>도 고를 수 있습니다. 데이터 엔지니어에게는 이쪽이 더 자주 문제가 됩니다.</p>
+<pre class="diagram">  ① 요청응답   me ---request--->  server ---response--->  me
+                "지금 줘" (REST 기본)
+
+  ② 폴링       me ---"done?"---> (no) ... me ---"done?"---> (yes, here)
+                큰 리포트 생성을 기다릴 때
+
+  ③ 웹훅       server ---"done, here it is"--->  my URL
+                서버가 먼저 연락 (결제 완료 알림)
+
+  ④ 스트리밍   me <=== keeps flowing ===  server
+                연결을 열어 둠 (실시간 · AI 답변)
+
+  ⑤ 메시지 큐  sender --->  [ mailbox: Kafka · Pub/Sub ]  ---> receiver
+                서로 몰라도 됨 · 나중에 읽어도 됨
+
+  ⑥ 파일 전달  server drops a file (S3 · GCS · SFTP)  ---> I pick it up
+                대용량 · 하루 한 번</pre>
+<div class="table-wrap">
+<table>
+<tr><th>상황</th><th>고를 모양</th><th>이유</th></tr>
+<tr><td>어제 캠페인 성과 몇 천 줄</td><td>① 요청-응답 + 페이지네이션</td><td>작고 바로 끝남</td></tr>
+<tr><td>6개월치 키워드 × 기기 리포트</td><td>② 폴링 (작업 생성 → 상태 확인 → 파일 다운로드)</td><td>서버가 만드는 데 몇 분 걸림. 연결을 붙잡고 기다리면 끊김</td></tr>
+<tr><td>주문이 생길 때마다 알고 싶다</td><td>③ 웹훅 또는 ⑤ 메시지 큐</td><td>계속 물어보면 낭비</td></tr>
+<tr><td>GA4 원본 이벤트 수백만 건</td><td>⑥ 파일 · 테이블 내보내기</td><td>API로 한 줄씩 받기엔 너무 큼 → BigQuery로 매일 통째로</td></tr>
+</table>
+</div>
+
+<h2 id="project">우리 프로젝트에서는 — 누가 누구와 어떻게</h2>
+<pre class="diagram">  # 수집
+  Google Ads   --- gRPC (REST OK) --->  BigQuery
+  Meta         --- REST ------------->  BigQuery
+  Naver SA     --- REST + TSV file -->  BigQuery
+  GA4          --- table export ----->  BigQuery
+
+  # 정리
+  BigQuery  --->  dbt  --->  Cube
+
+  # 보기
+  Cube  --- SQL API (PostgreSQL) --->  Metabase
+  Cube  --- REST API (JSON) -------->  AI chatbot
+
+  # 운영
+  Airflow: 위 순서를 매일 실행 (Airflow 자체도 REST API 로 실행 · 조회 가능)</pre>
+<div class="table-wrap">
+<table>
+<tr><th>구간</th><th>방식</th><th>대화 모양</th><th>신분 확인</th></tr>
+<tr><td>Google Ads → 수집</td><td>gRPC (REST 가능)</td><td>① 요청 → 결과 스트림</td><td>OAuth 2.0 + 개발자 토큰</td></tr>
+<tr><td>Meta → 수집</td><td>REST</td><td>① · 큰 건 ② 폴링</td><td>OAuth 액세스 토큰</td></tr>
+<tr><td>Naver 검색광고 → 수집</td><td>REST</td><td>① · 대용량 리포트 ② 폴링 → ⑥ 파일</td><td>API 키 + 요청 서명 (HMAC)</td></tr>
+<tr><td>GA4 → BigQuery</td><td>내보내기</td><td>⑥</td><td>구글 계정 연결</td></tr>
+<tr><td>내 PC → BigQuery</td><td>REST (파이썬 라이브러리가 감춤)</td><td>① · 쿼리 작업 생성 → 결과 조회</td><td>서비스 계정 · 사용자 인증</td></tr>
+<tr><td>Metabase → Cube</td><td><b>SQL API</b> (PostgreSQL 와이어 프로토콜)</td><td>①</td><td>사용자 · 비밀번호</td></tr>
+<tr><td>AI 챗봇 → Cube</td><td><b>REST API</b></td><td>① · 오래 걸리면 "Continue wait" → 다시 요청 (②)</td><td>JWT 토큰</td></tr>
+</table>
+</div>
+<div class="box tip">
+<span class="box-title">핵심</span>
+<p>BI와 챗봇이 <b>다른 방식(SQL API · REST API)으로 묻는데도 같은 숫자</b>가 나오는 이유는, 둘 다 같은 Cube에 묻고 계산법이 Cube 한 곳에만 있기 때문입니다. 대화 방식은 손님에 맞춰 여러 개 열어 두고, 계산하는 주방은 하나로 둡니다.</p>
+</div>
+
+<h2 id="choose">무엇을 고를까 — 한 장 정리</h2>
+<div class="table-wrap">
+<table>
+<tr><th>이럴 때</th><th>고른다</th></tr>
+<tr><td>외부에 공개하는 API, 누구나 쉽게 써야 함</td><td><b>REST</b> (+ OpenAPI 설명서)</td></tr>
+<tr><td>회사 안 서버끼리, 빠르고 대량, 형식이 엄격해야 함</td><td><b>gRPC</b></td></tr>
+<tr><td>화면마다 필요한 필드가 제각각</td><td><b>GraphQL</b></td></tr>
+<tr><td>BI 도구 · 엑셀이 붙어야 함</td><td><b>SQL 인터페이스</b> (ODBC · JDBC · PostgreSQL 호환)</td></tr>
+<tr><td>일이 생기면 알려 받고 싶음</td><td><b>웹훅</b> · 메시지 큐</td></tr>
+<tr><td>매일 대용량</td><td><b>파일 · 테이블 내보내기</b></td></tr>
+<tr><td>오래된 기업 · 공공 시스템과 연동</td><td>SOAP일 가능성이 높음 (맞춰 줘야 함)</td></tr>
+</table>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+<p>아래 실습은 내 PC에 띄운 연습용 Cube(<code>http://localhost:4000</code>)를 씁니다. Docker Desktop을 켜고 <code>cube-playground</code> 폴더에서 <code>docker compose up -d</code>로 띄웁니다. 브라우저 주소창에 주소를 넣는 것 = <b>GET 요청</b>입니다.</p>
+<div class="lab">
+<div class="step" data-id="api-ready">
+<div class="step-title">1. 가장 작은 REST API — 서버 살아 있니?</div>
+<pre><code>http://localhost:4000/readyz</code></pre>
+<p><code>{"health":"HEALTH"}</code>가 보이면 됩니다. 주소(자원) + GET(가져와) + JSON(표현), REST의 세 요소가 다 들어 있습니다.</p>
+</div>
+
+<div class="step" data-id="api-meta">
+<div class="step-title">2. 메뉴판 받기 — 무엇을 물어볼 수 있나</div>
+<pre><code>http://localhost:4000/cubejs-api/v1/meta</code></pre>
+<p><code>meta_ads.spend</code>, <code>meta_ads.roas</code> 같은 지표 목록이 나옵니다. 챗봇은 이 목록 안에서만 지표를 골라야 계산법이 흔들리지 않습니다.</p>
+</div>
+
+<div class="step" data-id="api-load">
+<div class="step-title">3. 숫자 받기 — GET과 POST 둘 다로</div>
+<p>브라우저(GET): 주문서를 주소 뒤 <code>?query=</code>에 붙입니다.</p>
+<pre><code>http://localhost:4000/cubejs-api/v1/load?query={"measures":["meta_ads.spend","meta_ads.roas"],"dimensions":["meta_ads.brand"]}</code></pre>
+<p>PowerShell(POST): 같은 주문서를 바디에 담습니다.</p>
+<pre><code>$body = '{"query":{"measures":["meta_ads.spend","meta_ads.roas"],"dimensions":["meta_ads.brand"]}}'
+(Invoke-RestMethod http://localhost:4000/cubejs-api/v1/load -Method Post -ContentType 'application/json' -Body $body).data</code></pre>
+<details class="hint"><summary>왜 같은 일을 두 방법으로?</summary>
+<p>GET은 주소에 다 담겨서 브라우저로 쉽게 확인할 수 있지만, 주소 길이 한계가 있고 기록(방문 기록 · 서버 로그)에 그대로 남습니다. 긴 주문서나 민감한 조건은 POST 바디로 보냅니다. Cube는 둘 다 받아 줍니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="api-status">
+<div class="step-title">4. 상태 코드로 대화하기 — 400과 404</div>
+<pre><code>try { Invoke-WebRequest 'http://localhost:4000/cubejs-api/v1/load?query={"measures":["meta_ads.nope"]}' -UseBasicParsing }
+catch { [int]$_.Exception.Response.StatusCode }        # 400 : 주문서가 잘못됨 (없는 지표)
+try { Invoke-WebRequest http://localhost:4000/cubejs-api/v1/nothing -UseBasicParsing }
+catch { [int]$_.Exception.Response.StatusCode }        # 404 : 그런 주소(자원) 없음</code></pre>
+<p>"메시지가 스스로 설명한다"는 규칙입니다. 본문을 읽지 않아도 숫자만으로 "내 잘못(4xx)인지, 서버 잘못(5xx)인지"를 압니다.</p>
+</div>
+</div>
+
+<h2 id="summary">정리</h2>
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+컴퓨터끼리의 대화는 <b>선 잇기(소켓) → 함수 흉내(RPC) → 무거운 웹 표준(SOAP) → 웹처럼 단순하게(REST) → 목적별 특화(GraphQL · gRPC · 스트리밍)</b>로 왔습니다. REST는 기술이 아니라 설계 규칙이고, 실무의 "REST API"는 대개 <b>주소는 명사 · 행동은 HTTP 메서드 · 결과는 상태 코드와 JSON</b>을 뜻합니다.
+</div>
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>"API"와 "REST API"는 같은 말인가요? 아니라면 예를 하나 들어 차이를 설명해 보세요.</li>
+<li>RPC가 "네트워크를 함수처럼 숨긴" 것이 왜 문제였는지 말해 보세요.</li>
+<li>Metabase는 SQL API로, 챗봇은 REST API로 Cube에 묻는데 숫자가 같은 이유는?</li>
+<li>Naver 대용량 리포트를 받을 때 요청-응답 대신 폴링을 쓰는 이유는?</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+<div class="q" data-answer="2">
+<p class="q-text">REST를 가장 정확하게 설명한 것은?</p>
+<ol class="q-opts">
+<li>JSON을 주고받는 통신 프로토콜</li>
+<li>웹이 크게 커져도 버티는 원리를 정리한 설계 제약(스타일)의 묶음</li>
+<li>구글이 만든 고속 API 프레임워크</li>
+<li>HTTP의 새 버전 이름</li>
+</ol>
+<div class="q-explain">REST는 로이 필딩이 2000년 논문에서 정리한 <b>아키텍처 스타일</b>입니다. JSON도 HTTP 버전도 아니고, 구글의 프레임워크는 gRPC입니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">다음 중 가장 REST다운(RESTful) 설계는?</p>
+<ol class="q-opts">
+<li><code>GET /deleteCampaign?id=C001</code></li>
+<li><code>POST /campaignService</code> 바디 <code>{"action":"delete","id":"C001"}</code></li>
+<li><code>DELETE /campaigns/C001</code></li>
+<li><code>POST /campaigns/C001/delete-now</code></li>
+</ol>
+<div class="q-explain">주소는 자원(명사), 행동은 HTTP 메서드로 나눕니다. 1번은 주소에 동사가 있고 GET으로 지우기까지 합니다(위험). 2번은 리처드슨 0단계(SOAP 스타일)입니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">REST의 "무상태(stateless)" 제약을 지켰을 때 얻는 가장 큰 이점은?</p>
+<ol class="q-opts">
+<li>어느 서버가 요청을 받아도 처리할 수 있어 서버를 늘리기 쉽다</li>
+<li>응답이 항상 JSON이 된다</li>
+<li>토큰을 보낼 필요가 없어진다</li>
+<li>HTTPS가 필요 없어진다</li>
+</ol>
+<div class="q-explain">요청마다 필요한 정보(토큰 · 조건)를 다 담아 보내므로 서버가 "아까 그 사람"을 기억할 필요가 없습니다. 그래서 오히려 토큰은 <b>매번</b> 보내야 합니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">회사 안 서버끼리 초당 수만 건을 빠르게 주고받아야 하고, 주고받는 형식을 엄격하게 고정하고 싶다. 가장 알맞은 선택은?</p>
+<ol class="q-opts">
+<li>SOAP</li>
+<li>웹훅</li>
+<li>GraphQL</li>
+<li>gRPC</li>
+</ol>
+<div class="q-explain">gRPC는 HTTP/2 위에서 Protocol Buffers(이진 형식)로 미리 정한 함수를 호출해 빠르고 형식이 엄격합니다. GraphQL은 "필요한 필드만"이 강점이고, 웹훅은 알림 방식입니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">Metabase가 Cube를 "PostgreSQL처럼" 연결할 수 있는 이유는?</p>
+<ol class="q-opts">
+<li>Cube가 내부에 진짜 PostgreSQL을 품고 있어서</li>
+<li>Cube의 SQL API가 PostgreSQL과 같은 와이어 프로토콜로 대화해서, Metabase의 PostgreSQL 드라이버가 그대로 붙어서</li>
+<li>Metabase가 REST API를 SQL로 자동 번역해서</li>
+<li>둘 다 JSON을 써서</li>
+</ol>
+<div class="q-explain">"같은 말로 대화하면 상대가 누구인지 몰라도 된다"는 2막 ODBC · JDBC의 아이디어입니다. Cube는 PostgreSQL처럼 <b>말할 뿐</b>, 실제 계산은 자기 정의대로 해서 BigQuery(또는 DuckDB)에 보냅니다.</div>
+</div>
+</div>
+
+</main>
+</div>
+<div class="footer">개인 학습용</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>
