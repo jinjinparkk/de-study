@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8 · 막혔을 때 — 디버깅 사고법과 로드맵 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs8">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 8장</div>
+<h1>막혔을 때 — 디버깅 사고법과 앞으로의 로드맵</h1>
+<p class="lead">1~7장이 "컴퓨터가 어떻게 생겼나"였다면, 이 장은 <b>"안 될 때 어떻게 생각하나"</b>입니다. 실력 차이는 아는 양보다 <b>모를 때 범위를 좁혀 가는 순서</b>에서 크게 납니다. 마지막에는 이 사이트 전체를 어떤 순서로 공부하면 좋은지 지도를 그립니다.</p>
+<p class="meta-line">읽기 약 30분 · 손으로 해 보기 3개 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>트레이스백(에러 메시지)을 <b>아래에서부터</b> 읽고, 내 코드의 몇 번째 줄이 문제인지 찾기</li>
+<li>"어제는 됐는데"를 만나면 <b>무엇이 바뀌었나</b> 목록으로 점검하기</li>
+<li>조인 팬아웃 · NULL · 시간대 · 늦게 온 데이터 같은 <b>데이터 버그</b>를 숫자 대조로 잡기</li>
+<li>사람이나 AI 에게 <b>답이 오는 질문</b>을 쓰기</li>
+<li>앞으로 무엇을 어떤 순서로 공부할지 내 로드맵 정하기</li>
+</ul>
+</div>
+
+<h2 id="mindset">디버깅은 추리가 아니라 범위 좁히기</h2>
+
+<p>초보가 막히면 "왜 안 되지?"를 머릿속으로 오래 생각합니다. 숙련자는 생각보다 <b>실험</b>을 먼저 합니다. 디버깅은 거의 항상 같은 네 단계입니다.</p>
+
+<pre class="diagram">  ① 재현한다          ② 범위를 반으로 줄인다     ③ 가설 하나만 바꿔 본다     ④ 고치고, 다시 재현해 본다
+  ┌──────────┐       ┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+  │ 언제나 같은 │ ──▶  │ 앞 절반은 정상? │ ──▶     │ 버전만 바꾼다  │ ──▶     │ 같은 방법으로   │
+  │ 방법으로 실패 │       │ 뒤 절반은?      │         │ 데이터만 바꾼다 │         │ 이제 성공하나?  │
+  └──────────┘       └──────────────┘         └──────────────┘         └──────────────┘
+       ▲                                                                       │
+       └──────────────── 아니면 다시 ② 로 ─────────────────────────────────────┘</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>집 전등이 안 켜질 때 <b>전구 → 스위치 → 차단기 → 집 밖 전기</b> 순서로 확인하는 것과 같습니다. 전구를 다른 방에 끼워 보면(재현 · 비교) 전구 문제인지 아닌지 한 번에 절반이 줄어듭니다. 동시에 전구와 스위치를 둘 다 바꾸면, 고쳐져도 무엇 덕분인지 모릅니다(가설은 하나씩).</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>긴 프로시저의 결과가 틀렸을 때, 우리는 이미 이렇게 합니다 — 임시 테이블을 하나씩 <code>SELECT COUNT(*)</code> 해 보며 <b>어느 단계에서 숫자가 틀어졌는지</b> 찾기. CTE 가 다섯 개라면 세 번째 CTE 까지만 떼어 돌려 보기. 이게 바로 "범위를 반으로 줄이기"(이분 탐색)입니다. 코드 디버깅도 똑같습니다.</p>
+</div>
+
+<h2 id="traceback">에러 메시지는 아래에서부터 읽는다</h2>
+
+<p>파이썬 에러(트레이스백)는 무섭게 길지만, 읽는 순서만 알면 쉽습니다.</p>
+
+<pre data-file="bug.py"><code>rows = [
+    {"order_id": 1, "amount": 10000},
+    {"order_id": 2, "amt": 20000},      # 컬럼 이름이 다른 행
+]
+
+def revenue(rows):
+    total = 0
+    for r in rows:
+        total += r["amount"]
+    return total
+
+print(revenue(rows))</code></pre>
+
+<pre data-file="실행 결과 (python bug.py)"><code>Traceback (most recent call last):
+  File "C:\Users\나\study\bug.py", line 12, in &lt;module&gt;
+    print(revenue(rows))
+          ^^^^^^^^^^^^^
+  File "C:\Users\나\study\bug.py", line 9, in revenue
+    total += r["amount"]
+             ~^^^^^^^^^^
+KeyError: 'amount'</code></pre>
+
+<ol>
+<li><b>맨 아래 줄 = 무슨 일이 났나.</b> <code>KeyError: 'amount'</code> — "amount 라는 키(컬럼)가 없다".</li>
+<li><b>바로 위 = 어디서 났나.</b> <code>bug.py</code> 9번째 줄, <code>revenue</code> 함수 안. <code>~^^^^</code> 표시가 정확히 어느 부분인지 가리킵니다.</li>
+<li><b>그 위 = 누가 불렀나.</b> 12번째 줄에서 <code>revenue</code> 를 불렀다. (most recent call last = 가장 최근 호출이 맨 아래)</li>
+<li>중간에 <b>내가 안 쓴 파일</b>(<code>site-packages\...</code>, 라이브러리 내부)이 길게 나오면 건너뛰고, <b>내 파일 이름이 나오는 가장 아래 줄</b>을 찾습니다.</li>
+</ol>
+
+<div class="table-wrap">
+<table>
+<tr><th>자주 보는 에러</th><th>보통의 뜻</th><th>먼저 확인할 것</th></tr>
+<tr><td><code>ModuleNotFoundError</code></td><td>그 패키지를 못 찾음</td><td>가상환경이 켜져 있나? 그 venv 에 설치했나? (3장)</td></tr>
+<tr><td><code>KeyError</code> / <code>IndexError</code></td><td>없는 키 · 없는 위치</td><td>데이터 모양이 생각과 다른가? 한 건 출력해 보기</td></tr>
+<tr><td><code>TypeError</code></td><td>자료형이 안 맞음 (숫자 + 문자 등)</td><td>CSV 에서 읽은 값은 전부 문자열이다 (2장)</td></tr>
+<tr><td><code>UnicodeDecodeError</code></td><td>인코딩이 다름</td><td>UTF-8 인가 CP949 인가 (1장)</td></tr>
+<tr><td><code>FileNotFoundError</code></td><td>경로가 틀림</td><td>지금 위치(현재 폴더) 기준 상대 경로인가? (3장)</td></tr>
+<tr><td><code>PermissionError</code></td><td>권한 · 파일 잠김</td><td>엑셀에서 그 파일이 열려 있지 않나?</td></tr>
+<tr><td><code>ConnectionError</code> / timeout</td><td>네트워크</td><td>VPN · 프록시 · 방화벽, 주소 · 포트 (4장)</td></tr>
+<tr><td>HTTP <code>401</code> / <code>403</code></td><td>인증 실패 / 권한 없음</td><td>키 · 토큰 만료, 권한 범위 (4장)</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+에러 메시지의 <b>맨 아래 줄을 그대로 복사해서 검색</b>하는 것이 가장 빠른 첫걸음입니다. 단, 내 경로 · 계정 · 키 같은 개인 정보는 지우고 검색하세요.
+</div>
+
+<h2 id="changed">"어제는 됐는데" — 무엇이 바뀌었나 목록</h2>
+
+<p>코드를 안 바꿨는데 안 된다면, <b>코드 말고 다른 게 바뀐 것</b>입니다. 실제로 자주 일어나는 순서대로 적으면 이렇습니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>바뀐 것</th><th>실제로 흔한 모습</th><th>확인 방법</th></tr>
+<tr><td>프로그램 · 패키지 버전</td><td>브라우저가 자동 업데이트돼서 자동화용 드라이버와 버전이 안 맞음. <code>pip install</code> 하다 다른 패키지가 같이 올라감</td><td><code>pip list</code>, <code>pip freeze</code> 를 어제 것과 비교. 버전 고정(6장)</td></tr>
+<tr><td>자격 증명 · 토큰</td><td>저장해 둔 비밀번호가 지워짐, 토큰 만료, 비밀번호 변경</td><td>로그인 단계만 따로 실행해 보기</td></tr>
+<tr><td>데이터</td><td>원천에서 새 컬럼 · 새 값 · 빈 파일 · 중복이 들어옴</td><td>행 수 · 컬럼 목록 · 값 종류를 어제와 비교</td></tr>
+<tr><td>환경</td><td>다른 폴더에서 실행, 다른 가상환경, 환경 변수 누락</td><td>실행 위치 · <code>python</code> 이 어느 파이썬인지 (<code>Get-Command python</code>)</td></tr>
+<tr><td>화면 · 창 상태</td><td>입력 창이 다른 창 뒤에 숨어서 "멈춘 것처럼" 보임</td><td>Alt+Tab, 작업 표시줄 확인</td></tr>
+<tr><td>보안 정책 · 네트워크</td><td>회사 정책이 새 실행 파일 · DLL 을 막음, VPN 이 꺼짐</td><td>설치는 되는데 import 만 실패하는지, 다른 네트워크에서는 되는지</td></tr>
+<tr><td>날짜 · 시간</td><td>월초 · 연초 · 윤년, 시간대 경계에서만 틀림</td><td>입력 날짜를 고정해서 다시 돌려 보기</td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">함정 — 조용한 실패</span>
+가장 무서운 건 에러가 안 나는 실패입니다. 예외를 <code>try</code> 로 감싸 놓고 아무것도 안 하면, 프로그램은 "정상 종료"하고 아무 일도 안 일어납니다. 실패하면 <b>반드시 크게 실패하게</b>(에러 창, 로그, 0이 아닌 종료 코드) 만드세요. 스케줄러 · Airflow 는 종료 코드로만 성공 · 실패를 압니다(3장).
+</div>
+
+<h2 id="databugs">데이터 버그 — 에러 없이 숫자만 틀릴 때</h2>
+
+<p>데이터 일의 버그는 대부분 에러 메시지가 없습니다. 쿼리는 잘 돌고, <b>숫자만 틀립니다</b>. 그래서 "대조할 숫자"를 늘 갖고 있어야 합니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>증상</th><th>흔한 원인</th><th>잡는 법</th></tr>
+<tr><td>조인 후 매출이 늘어남</td><td><b>팬아웃</b> — 한 주문에 결제가 2건이면 주문 금액이 2번 더해짐</td><td>조인 전후 행 수 · 합계 비교. 조인 키의 유일성 테스트(<code>unique</code>)</td></tr>
+<tr><td>조인 후 행이 사라짐</td><td>INNER JOIN 인데 짝이 없는 행, 키 형식 차이(<code>'001'</code> vs <code>1</code>, 앞뒤 공백)</td><td>LEFT JOIN 으로 바꿔 짝 없는 행을 세어 보기</td></tr>
+<tr><td>합계 · 평균이 이상함</td><td>NULL — <code>COUNT(col)</code> 은 NULL 을 빼고, <code>NULL + 1</code> 은 NULL</td><td><code>COUNT(*)</code> vs <code>COUNT(col)</code> 비교, <code>COALESCE</code></td></tr>
+<tr><td>어제 숫자가 하루 밀림</td><td>시간대 — 원천은 UTC, 보고는 한국 시간(KST = UTC+9)</td><td>자정 근처 데이터를 골라 두 시간대로 날짜를 찍어 보기</td></tr>
+<tr><td>지난주 숫자가 다시 바뀜</td><td>늦게 도착한 데이터, 매체의 사후 보정</td><td>"며칠 전까지 다시 계산할지"를 정해 두기(재처리 기간)</td></tr>
+<tr><td>두 번 돌리면 두 배</td><td>멱등하지 않은 적재 — 지우지 않고 INSERT 만</td><td>같은 날짜로 두 번 돌려 결과가 같은지 확인 (dbt 5일차 멱등성)</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>가계부 정리와 같습니다. 통장 잔고(원천 합계)와 가계부 합계(마트 합계)가 다르면, 어디가 틀렸는지 몰라도 <b>틀렸다는 건</b> 압니다. 그다음 월별 → 주별 → 일별로 쪼개 대조하면 틀린 날이 나옵니다. 데이터 테스트는 이 대조를 매일 자동으로 하는 것입니다.</p>
+</div>
+
+<h2 id="observe">관찰하는 습관 — print, 로그, 작은 데이터</h2>
+
+<ul>
+<li><b>중간값을 찍어 본다.</b> 파이썬은 <code>print(type(x), x)</code>, SQL 은 CTE 하나만 떼어 <code>SELECT ... LIMIT 10</code>. 생각 말고 눈으로 확인합니다.</li>
+<li><b>로그를 남긴다.</b> 몇 시에 무엇을 몇 건 처리했는지. 새벽에 돈 작업은 로그가 유일한 목격자입니다(6장).</li>
+<li><b>작게 줄인다.</b> 1억 행에서 틀리면 문제 되는 10행을 뽑아 작은 예제로 만듭니다. 작게 재현되면 반은 푼 것입니다.</li>
+<li><b>한 번에 하나만 바꾼다.</b> 바꾼 것과 결과를 메모장에 적습니다. 두 시간 뒤 "아까 그건 왜 됐지?"를 막아 줍니다.</li>
+<li><b>되돌릴 수 있게 한다.</b> 고치기 전에 git 커밋, 원본 파일은 <code>.bak</code> 으로. 원본 데이터는 덮어쓰지 않습니다(7장 교훈).</li>
+</ul>
+
+<h2 id="ask">답이 오는 질문 쓰기 — 사람에게도, AI 에게도</h2>
+
+<p>"안 돼요"라는 질문에는 "뭐가요?"라는 답밖에 못 옵니다. 좋은 질문에는 다섯 가지가 들어 있습니다.</p>
+
+<pre data-file="질문 틀"><code>1. 하려던 것:   BigQuery 테이블을 dbt 로 만들려고 dbt run 을 했습니다.
+2. 환경:        Windows 11, Python 3.12, dbt-core 1.12, 가상환경 켬
+3. 실행한 것:   dbt run --select stg_orders
+4. 기대 vs 실제: 테이블이 생겨야 하는데, 아래 에러가 납니다. (에러 전문 붙임 — 키·비밀번호는 지움)
+5. 이미 해 본 것: dbt debug 는 통과, 다른 모델은 됨, 이 모델만 실패</code></pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+이 틀을 쓰다 보면 <b>질문을 다 쓰기도 전에 답을 찾는 일</b>이 자주 생깁니다. "이미 해 본 것"을 적다가 안 해 본 것이 보이기 때문입니다. AI 에게 물을 때도 똑같이 쓰면 훨씬 정확한 답이 옵니다. 단, <b>회사 데이터 · 고객 정보 · 키는 절대 붙이지 마세요.</b>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+<div class="lab">
+
+<div class="step" data-id="tb">
+<div class="step-title">1. 일부러 에러를 내고 트레이스백 읽기</div>
+<p>위의 <code>bug.py</code> 를 아무 폴더에 저장하고 <code>python bug.py</code> 로 실행해 보세요. 맨 아래 줄 · 내 파일의 줄 번호를 찾아 소리 내어 읽어 봅니다. 이어서 <code>echo $LASTEXITCODE</code> 로 종료 코드를 보세요.</p>
+<details class="hint"><summary>힌트 1</summary><p>맨 아래 줄은 <code>KeyError: 'amount'</code>, 위치는 9번째 줄 <code>revenue</code> 함수입니다.</p></details>
+<details class="hint"><summary>힌트 2</summary><p>종료 코드는 <code>1</code> 이 나옵니다. 0 이 아니니 스케줄러는 "실패"로 압니다.</p></details>
+<details class="hint"><summary>정답 보기 — 고치는 두 가지 방법</summary>
+<pre><code># ① 데이터를 고친다 (원천에서 컬럼 이름을 맞추게) — 근본 해결
+# ② 코드에서 다른 이름도 받아 준다 — 임시 방편
+total += r.get("amount", r.get("amt", 0))   # SQL 의 COALESCE(amount, amt, 0) 같은 것</code></pre>
+<p>②는 편하지만 "이상한 데이터가 들어왔다"는 신호를 숨깁니다. 실무에서는 경고 로그를 남기거나, 테스트로 막는 편이 낫습니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="fanout">
+<div class="step-title">2. 조인 팬아웃을 내 눈으로 보기 (설치 없이 sqlite3)</div>
+<p>주문 3건(합계 60,000원)인데, 2번 주문은 카드 + 포인트로 결제 2건입니다. 조인하면 매출이 어떻게 될지 먼저 예상하고 실행해 보세요.</p>
+<pre data-file="fanout.py"><code>import sqlite3                                  # 파이썬에 기본으로 들어 있는 작은 DB
+c = sqlite3.connect(":memory:")                 # 메모리 안에 임시 DB 하나 만들기
+c.executescript("""
+create table orders(order_id int, amount int);
+insert into orders values (1,10000),(2,20000),(3,30000);
+create table payments(order_id int, method text);
+insert into payments values (1,'card'),(2,'card'),(2,'point'),(3,'card');
+""")
+print(c.execute("select count(*), sum(amount) from orders").fetchone())
+print(c.execute("""select count(*), sum(o.amount)
+                   from orders o join payments p using(order_id)""").fetchone())</code></pre>
+<details class="hint"><summary>힌트</summary><p>2번 주문 행이 결제 행 수만큼 복제됩니다.</p></details>
+<details class="hint"><summary>정답 보기 — 실제 결과</summary>
+<pre><code>(3, 60000)
+(4, 80000)</code></pre>
+<p>매출이 20,000원 부풀었습니다. 에러는 하나도 없습니다. 그래서 "조인 전후 행 수 · 합계 비교"와 "조인 키 유일성 테스트"가 필요합니다. 고치려면 결제를 먼저 주문 단위로 묶고(GROUP BY order_id) 조인합니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="tz">
+<div class="step-title">3. 시간대 때문에 날짜가 하루 밀리는 것 보기</div>
+<pre><code>python -c "from datetime import datetime, timezone, timedelta; utc = datetime(2026, 11, 17, 16, 30, tzinfo=timezone.utc); kst = utc.astimezone(timezone(timedelta(hours=9))); print(utc.date(), kst.date(), kst)"</code></pre>
+<details class="hint"><summary>정답 보기 — 실제 결과</summary>
+<pre><code>2026-11-17 2026-11-18 2026-11-18 01:30:00+09:00</code></pre>
+<p>UTC 로는 17일 오후 4시 반인 주문이 한국 시간으로는 18일 새벽 1시 반입니다. 원천이 UTC 인데 한국 날짜로 보고하면서 변환을 빼먹으면, 매일 밤 9시간치 주문이 전날로 잘못 들어갑니다. BigQuery 에서는 <code>DATE(ts, 'Asia/Seoul')</code> 처럼 시간대를 꼭 적습니다.</p>
+</details>
+</div>
+
+</div>
+
+<h2 id="roadmap">앞으로의 로드맵 — 이 사이트를 어떤 순서로</h2>
+
+<pre class="diagram">  ① 컴퓨터 기초 (지금 여기)      ② dbt 7일              ③ dbt 30일                ④ 필수 정리 30일
+  1~6장: 몸·코드·OS·네트워크·     ELT·dbt·Airflow·Spark   BigQuery 위에서 dbt 하나를   모델링·표준화·거버넌스·
+        저장·습관                 큰 그림을 한 번          운영 수준까지               파이프라인·BI·리딩
+  7장: 역사   8장: 디버깅                 │                      │                         │
+        │                                 ▼                      ▼                         ▼
+        └──────────▶  막히면 언제든 1~6장으로 돌아와 "그 아래에서 무슨 일이 일어나나"를 확인</pre>
+
+<p>데이터 엔지니어 · analytics engineer 가 결국 갖춰야 할 것을 한 장에 모으면 이렇습니다. 체크할 수 있는 것부터 하나씩.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>영역</th><th>최소한 이 정도</th><th>이 사이트에서</th></tr>
+<tr><td>SQL (가장 중요)</td><td>윈도 함수, CTE, 조인 종류와 팬아웃, NULL, 실행 계획 읽기</td><td>dbt 7일 · 필수 정리</td></tr>
+<tr><td>데이터 모델링</td><td>정규화 · 스타 스키마 · 그레인 · SCD2</td><td>필수 정리 · dbt 30일 모델링</td></tr>
+<tr><td>Python</td><td>자료형 · 함수 · 파일 읽기 · API 호출 · 예외 처리 · 가상환경</td><td>2장 · 3장 · 4장</td></tr>
+<tr><td>터미널 · OS</td><td>경로, PATH, 환경 변수, 종료 코드, 스케줄 작업</td><td>3장</td></tr>
+<tr><td>git</td><td>커밋 · 브랜치 · 원격 · 충돌 해결 · .gitignore</td><td>6장</td></tr>
+<tr><td>클라우드 하나</td><td>저장소(버킷) · 웨어하우스 · 권한(IAM) · 비용 보는 법</td><td>5장 · dbt 30일</td></tr>
+<tr><td>오케스트레이션</td><td>DAG · 재시도 · 백필 · 멱등성</td><td>dbt 7일 5~6일차</td></tr>
+<tr><td>데이터 품질</td><td>테스트 · 대조 · 신선도 · 계약</td><td>dbt 3일차 · 이 장</td></tr>
+<tr><td>컨테이너</td><td>이미지 · 컨테이너 · 포트 연결</td><td>6장 · dbt 7일 5일차</td></tr>
+<tr><td>소통</td><td>지표 정의를 문서로, 좋은 질문, 결정 기록</td><td>이 장 · 필수 정리</td></tr>
+</table>
+</div>
+
+<h3>더 깊이 가고 싶을 때 (널리 읽히는 책)</h3>
+<ul>
+<li>찰스 펫졸드, 『CODE』 — 전구와 스위치에서 CPU 까지. 1~2장의 아래층을 이야기로.</li>
+<li>마틴 클레프만, 『데이터 중심 애플리케이션 설계』 (Designing Data-Intensive Applications) — 5장 · 7장의 깊은 판. 저장 · 복제 · 트랜잭션 · 스트리밍.</li>
+<li>조 라이스 · 맷 하우슬리, 『Fundamentals of Data Engineering』 — 데이터 엔지니어링 전체 지도.</li>
+<li>랄프 킴볼, 『The Data Warehouse Toolkit』 — 차원 모델링의 원전.</li>
+</ul>
+
+<h2 id="wrap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+막히면 <b>재현 → 범위 반으로 → 하나만 바꾸기 → 다시 재현</b>, 에러는 <b>아래에서부터</b>, "어제는 됐는데"는 <b>무엇이 바뀌었나</b>, 숫자 버그는 <b>대조</b>로 잡습니다.
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>트레이스백에서 라이브러리 내부 줄이 30줄 나올 때, 어느 줄부터 봐야 하는지와 그 이유를 말해 보세요.</li>
+<li>조인 후 매출이 부풀었을 때 확인할 숫자 두 개와 고치는 방법을 말해 보세요.</li>
+<li>코드를 안 바꿨는데 오늘 아침 작업이 실패했다면, 무엇부터 어떤 순서로 확인할지 말해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="3">
+<p class="q-text">파이썬 트레이스백에서 "무슨 에러인지"는 어디에 있나요?</p>
+<ol class="q-opts">
+<li>맨 위 <code>Traceback (most recent call last)</code> 줄</li>
+<li>가운데 라이브러리 파일 줄</li>
+<li>맨 아래 줄 (예: <code>KeyError: 'amount'</code>)</li>
+<li>트레이스백에는 에러 종류가 나오지 않는다</li>
+</ol>
+<div class="q-explain">most recent call last — 가장 최근 호출(실제로 터진 곳)이 맨 아래입니다. 맨 아래 줄이 에러 종류와 메시지, 그 바로 위가 위치입니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">버그를 고치려고 패키지 버전과 설정 파일을 <b>동시에</b> 바꿨더니 고쳐졌습니다. 무엇이 문제인가요?</p>
+<ol class="q-opts">
+<li>무엇 덕분에 고쳐졌는지 몰라서, 다음에 같은 일이 생기면 또 헤맨다</li>
+<li>아무 문제 없다, 고쳐졌으면 됐다</li>
+<li>버전을 바꾸면 항상 더 나빠진다</li>
+<li>설정 파일은 바꾸면 안 된다</li>
+</ol>
+<div class="q-explain">가설은 하나씩 바꿔야 원인을 압니다. 원인을 모르면 재발을 막을 수도, 다른 사람에게 설명할 수도 없습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">주문 테이블(3건, 60,000원)을 결제 테이블과 조인했더니 4건, 80,000원이 됐습니다. 원인은?</p>
+<ol class="q-opts">
+<li>NULL 값</li>
+<li>시간대 차이</li>
+<li>인코딩 문제</li>
+<li>한 주문에 결제가 여러 건이라 주문 행이 복제된 팬아웃</li>
+</ol>
+<div class="q-explain">1:N 조인에서 N 쪽 행 수만큼 1 쪽이 복제됩니다. 결제를 주문 단위로 먼저 묶고 조인하거나, 그레인을 맞춰야 합니다. 에러가 없어서 대조 숫자로만 잡힙니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">원천 시각이 UTC 인데 한국 날짜로 일별 집계할 때 시간대 변환을 빼먹으면?</p>
+<ol class="q-opts">
+<li>쿼리가 에러로 멈춘다</li>
+<li>매일 한국 시간 0시~9시 사이 데이터가 전날로 잘못 들어간다</li>
+<li>아무 차이 없다</li>
+<li>데이터가 두 배가 된다</li>
+</ol>
+<div class="q-explain">KST 는 UTC+9 입니다. 한국 시간 새벽 0~9시는 UTC 로는 아직 전날이라, 변환 없이 날짜를 자르면 그 9시간이 전날 숫자에 들어갑니다. 에러는 나지 않습니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">"코드는 그대로인데 오늘부터 안 된다"일 때 가장 먼저 의심할 것으로 알맞지 <b>않은</b> 것은?</p>
+<ol class="q-opts">
+<li>프로그램 · 패키지가 자동 업데이트됐나</li>
+<li>저장된 자격 증명이 만료 · 삭제됐나</li>
+<li>어제 성공했으니 코드에 숨은 문법 오류가 생겼다</li>
+<li>원천 데이터 모양이 바뀌었나</li>
+</ol>
+<div class="q-explain">코드가 그대로라면 문법 오류가 새로 생길 수 없습니다. 바뀐 것은 코드 밖(버전 · 자격 증명 · 데이터 · 환경 · 네트워크 · 날짜)에 있습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">예외를 <code>try</code> 로 감싸고 아무것도 하지 않으면(조용히 넘기면) 생기는 일은?</p>
+<ol class="q-opts">
+<li>실패해도 종료 코드 0 으로 끝나 스케줄러가 "성공"으로 알고, 아무도 모르게 데이터가 빈다</li>
+<li>프로그램이 더 빨라진다</li>
+<li>에러가 자동으로 고쳐진다</li>
+<li>다음 실행 때 자동 재시도된다</li>
+</ol>
+<div class="q-explain">조용한 실패가 가장 비쌉니다. 실패하면 로그를 남기고, 0 이 아닌 종료 코드로 끝내서 스케줄러 · Airflow 가 알게 해야 합니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

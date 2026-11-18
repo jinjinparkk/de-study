@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1 · 컴퓨터의 몸 — 비트·CPU·메모리·디스크 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs1">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 1장</div>
+<h1>컴퓨터의 몸 — 비트·CPU·메모리·디스크</h1>
+<p class="lead">컴퓨터는 결국 <b>0과 1을 아주 빨리 옮기고 바꾸는 기계</b>입니다. 이 장에서는 숫자·글자가 0과 1로 어떻게 바뀌는지, 그리고 CPU·메모리·디스크가 각각 무슨 일을 하는지를 봅니다. "CSV 한글이 왜 깨지지?", "금액 합계가 왜 0.0000001 틀리지?", "왜 메모리가 부족하다고 죽지?" 같은 질문이 여기서 풀립니다.</p>
+<p class="meta-line">읽기 약 50분 · 손으로 해 보기 4개 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>비트·바이트·2진수·16진수가 무엇인지, 왜 컴퓨터가 2진수를 쓰는지 설명하기</li>
+<li><code>0.1 + 0.2</code>가 <code>0.3</code>이 아닌 이유와, 금액 컬럼에 FLOAT를 쓰면 안 되는 이유 말하기</li>
+<li>UTF-8·CP949·BOM·CRLF를 알고, CSV 한글 깨짐을 스스로 고치기</li>
+<li>CPU·메모리·디스크·네트워크의 속도 차이를 대략적인 크기로 말하기</li>
+<li>데이터 작업에서 "메모리 부족(OOM)"이 왜 생기는지 설명하기</li>
+</ul>
+</div>
+
+<h2 id="map">컴퓨터를 한 장으로</h2>
+
+<p>노트북이든 클라우드 서버든 뼈대는 같습니다. 일하는 머리(CPU), 지금 펼쳐 놓은 책상(메모리, RAM), 오래 보관하는 창고(디스크), 바깥과 이어진 문(네트워크)입니다.</p>
+
+<pre class="diagram">  [ CPU ]  ◀── 아주 빠름 ──▶  [ 메모리(RAM) ]  ◀── 느림 ──▶  [ 디스크 ]
+  계산·판단                   지금 쓰는 것                 SSD·HDD
+  코어 여러 개                전원 끄면 사라짐             꺼도 남음
+     ▲
+     │ 더 느림
+     │
+  [ 네트워크 ]  ──▶  다른 컴퓨터 (DB 서버, BigQuery, API …)</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 주방</span>
+<p><b>CPU는 요리사</b>, <b>메모리는 조리대</b>, <b>디스크는 냉장고·창고</b>, <b>네트워크는 배달</b>입니다. 요리사는 조리대 위에 있는 재료만 바로 손댈 수 있습니다. 냉장고에서 꺼내오려면 몇 걸음 걸어야 하고, 배달은 그보다 훨씬 오래 걸립니다. 조리대가 작으면(메모리가 부족하면) 큰 요리를 한 번에 못 펼칩니다.</p>
+</div>
+
+<p>이 장의 나머지는 이 그림을 하나씩 확대해 보는 것입니다. 먼저 "재료" 자체, 즉 데이터가 0과 1로 어떻게 생겼는지부터 봅니다.</p>
+
+<h2 id="bits">0과 1 — 비트와 바이트</h2>
+
+<p>컴퓨터 부품은 전기가 <b>흐른다 / 안 흐른다</b>(전압이 높다 / 낮다) 두 상태를 가장 안정적으로 구분합니다. 그래서 정보의 가장 작은 단위는 0 또는 1 하나이고, 이걸 <b>비트(bit)</b>라고 부릅니다.</p>
+
+<ul>
+<li><b>1비트</b> = 0 또는 1 → 2가지를 구분 (예: 예/아니오)</li>
+<li><b>8비트 = 1바이트(byte)</b> → 2<sup>8</sup> = 256가지를 구분 (0~255)</li>
+<li>비트가 하나 늘 때마다 구분할 수 있는 경우의 수는 <b>두 배</b>가 됩니다.</li>
+</ul>
+
+<h3>2진수 — 자리마다 두 배</h3>
+<p>우리가 쓰는 10진수는 자리마다 10배(1, 10, 100…)입니다. 2진수는 자리마다 2배(1, 2, 4, 8…)입니다.</p>
+
+<pre class="diagram">  2진수 1101 을 10진수로
+
+  자리값 :   8     4     2     1
+  숫자   :   1     1     0     1
+           ─────────────────────
+           8  +  4  +  0  +  1  =  13</pre>
+
+<h3>16진수 — 2진수를 짧게 쓰는 방법</h3>
+<p>2진수는 너무 길어서 사람이 읽기 힘듭니다. 그래서 <b>4비트를 한 글자로</b> 묶어 0~9, A~F(10~15)로 쓰는 16진수를 씁니다. 1바이트(8비트)는 16진수 두 글자로 딱 떨어집니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>10진수</th><th>2진수</th><th>16진수</th><th>어디서 보나</th></tr>
+<tr><td>13</td><td>1101</td><td>D</td><td>—</td></tr>
+<tr><td>255</td><td>1111 1111</td><td>FF</td><td>1바이트의 최댓값. 색상 코드 <code>#FFFFFF</code>(흰색)</td></tr>
+<tr><td>—</td><td>—</td><td><code>ed 95 9c</code></td><td>'한'의 UTF-8 바이트 (아래 인코딩 절)</td></tr>
+<tr><td>—</td><td>—</td><td><code>0x7FFFFFFFFFFFFFFF</code></td><td>64비트 정수(BIGINT·INT64)의 최댓값</td></tr>
+</table>
+</div>
+<p>코드에서 <code>0x</code>로 시작하면 16진수, <code>0b</code>로 시작하면 2진수라는 표시입니다. 에러 메시지에 <code>\xed\x95\x9c</code> 같은 게 보이면 "바이트 세 개를 16진수로 보여 준 것"이라고 읽으면 됩니다.</p>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+컴퓨터 안의 모든 것(숫자·글자·사진·코드)은 결국 <b>바이트의 나열</b>입니다. 그 바이트를 <b>어떤 규칙으로 읽느냐</b>에 따라 숫자도 되고 글자도 됩니다.
+</div>
+
+<h2 id="numbers">숫자는 어떻게 저장되나 — 정수와 실수</h2>
+
+<h3>정수: 칸 수가 정해져 있다</h3>
+<p>정수는 2진수 그대로 저장하되, 몇 바이트를 쓸지 미리 정합니다. 칸 수가 정해져 있으니 <b>넣을 수 있는 최댓값</b>도 정해집니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>크기</th><th>SQL에서 흔한 이름</th><th>범위 (부호 있음)</th></tr>
+<tr><td>2바이트(16비트)</td><td>SMALLINT</td><td>−32,768 ~ 32,767</td></tr>
+<tr><td>4바이트(32비트)</td><td>INT, INTEGER</td><td>약 −21억 ~ 21억 (2,147,483,647)</td></tr>
+<tr><td>8바이트(64비트)</td><td>BIGINT, BigQuery INT64</td><td>약 ±922경 (9,223,372,036,854,775,807)</td></tr>
+</table>
+</div>
+
+<p>칸을 넘치면 <b>오버플로(overflow)</b>가 납니다. DB는 보통 에러를 내지만, 어떤 언어·도구는 조용히 음수로 뒤집히기도 합니다. 클릭 수·노출 수를 오래 누적하거나, 원 단위 금액을 큰 기간으로 합치면 INT(21억)는 생각보다 금방 넘습니다.</p>
+<p>참고로 Python의 <code>int</code>는 칸이 정해져 있지 않아서 <code>2**100</code>도 그대로 계산합니다(필요하면 칸을 늘림). 그래서 Python에서는 멀쩡했는데 DB에 넣을 때 넘치는 일이 생깁니다.</p>
+
+<h3>실수: 2진 분수로 근사한다 — 0.1 + 0.2 문제</h3>
+<p>소수점이 있는 숫자는 보통 <b>부동소수점(floating point)</b>, 표준 이름으로 IEEE 754 방식으로 저장합니다. 8바이트짜리가 흔히 말하는 <code>double</code>, SQL의 <code>FLOAT</code>·<code>DOUBLE</code>, BigQuery의 <code>FLOAT64</code>입니다.</p>
+<p>문제는 2진수로는 <b>0.1을 정확히 표현할 수 없다</b>는 점입니다. 10진수로 1/3을 0.3333…으로 끝없이 써야 하는 것처럼, 2진수에서는 0.1이 끝없이 이어집니다. 그래서 칸이 꽉 찬 곳에서 잘라 <b>가장 가까운 값</b>을 저장합니다.</p>
+
+<pre data-file="Python"><code>&gt;&gt;&gt; 0.1 + 0.2
+0.30000000000000004
+&gt;&gt;&gt; 0.1 + 0.2 == 0.3
+False
+&gt;&gt;&gt; from decimal import Decimal
+&gt;&gt;&gt; Decimal("0.1") + Decimal("0.2")     # 10진수 그대로 계산하는 타입
+Decimal('0.3')</code></pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 눈금이 정해진 자</span>
+<p>부동소수점은 <b>눈금이 촘촘하지만 정해져 있는 자</b>입니다. 0.1이 마침 눈금 사이에 있으면 가장 가까운 눈금에 맞춰 적습니다. 한 번은 티가 안 나지만, 수백만 번 더하면 그 작은 차이가 쌓입니다. 반면 <code>NUMERIC</code>·<code>DECIMAL</code>은 <b>10진수 숫자를 자릿수 그대로 적어 두는 장부</b>라서 0.1은 정확히 0.1입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<ul>
+<li><b>금액·환율·단가·비율로 정산하는 값</b> → <code>NUMERIC</code>/<code>DECIMAL</code>(BigQuery는 <code>NUMERIC</code>·<code>BIGNUMERIC</code>). 원 단위 금액이면 아예 <code>INT64</code>로 저장하는 것도 좋은 방법입니다.</li>
+<li><b>측정값·통계·과학 계산</b>(평균 체류 시간, 모델 점수 등) → <code>FLOAT64</code>가 빠르고 충분합니다.</li>
+<li><code>WHERE ratio = 0.3</code>처럼 <b>FLOAT를 =로 비교하지 마세요.</b> <code>ABS(ratio - 0.3) &lt; 0.000001</code>처럼 허용 오차로 비교하거나, 반올림(<code>ROUND</code>) 후 비교합니다.</li>
+<li>FLOAT 컬럼의 <code>SUM</code>은 행 처리 순서에 따라 끝자리가 달라질 수 있습니다. 분산 DB는 매번 순서가 다를 수 있어서 "어제랑 마지막 자리가 다르다"가 생깁니다.</li>
+</ul>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+"매체 리포트 합계와 우리 마트 합계가 0.01원 다르다" 같은 문의는 꽤 자주 옵니다. 원인은 대개 <b>중간에 FLOAT를 거쳤거나, 반올림 시점이 달랐기</b> 때문입니다. CSV → Python → DB로 옮기는 동안 어느 단계에서 숫자가 실수(float)로 바뀌었는지 확인하는 습관이 필요합니다.
+</div>
+
+<h2 id="text">글자는 어떻게 저장되나 — 인코딩</h2>
+
+<p>글자도 결국 숫자입니다. "이 숫자는 이 글자"라는 <b>번호표</b>와, 그 번호를 <b>바이트로 적는 방법</b>이 필요합니다. 이걸 통틀어 <b>문자 인코딩(encoding)</b>이라고 합니다. 바이트 → 글자로 되돌리는 것은 디코딩(decoding)입니다.</p>
+
+<h3>ASCII → 나라별 인코딩 → 유니코드</h3>
+<div class="table-wrap">
+<table>
+<tr><th>이름</th><th>무엇</th><th>한글</th></tr>
+<tr><td><b>ASCII</b></td><td>영문·숫자·기호 128자. 1글자 = 1바이트(7비트). 'A' = 65</td><td>없음</td></tr>
+<tr><td><b>EUC-KR / CP949</b></td><td>한국에서 만든 인코딩. CP949는 마이크로소프트가 EUC-KR을 넓힌 것(윈도 한국어판 기본, "ANSI"라고 표시되기도 함)</td><td>한글 1자 = 2바이트</td></tr>
+<tr><td><b>유니코드(Unicode)</b></td><td>전 세계 글자에 번호를 하나씩 붙인 <b>번호표</b>. '한' = U+D55C</td><td>번호만 정함</td></tr>
+<tr><td><b>UTF-8</b></td><td>유니코드 번호를 바이트로 적는 <b>방법</b>. 영문은 1바이트(ASCII와 같음), 한글은 3바이트. 지금 웹·리눅스·클라우드의 사실상 표준</td><td>한글 1자 = 3바이트</td></tr>
+</table>
+</div>
+
+<pre data-file="Python — 같은 글자, 다른 바이트"><code>&gt;&gt;&gt; "한글".encode("utf-8")
+b'\xed\x95\x9c\xea\xb8\x80'      # 6바이트 (글자당 3)
+&gt;&gt;&gt; "한글".encode("cp949")
+b'\xc7\xd1\xb1\xdb'              # 4바이트 (글자당 2)
+&gt;&gt;&gt; len("한글"), len("한글".encode("utf-8"))
+(2, 6)                           # 글자 수와 바이트 수는 다르다</code></pre>
+
+<h3>깨진 글자(모지바케)는 왜 생기나</h3>
+<p>파일에는 바이트만 들어 있고 "나는 UTF-8이야"라는 표시가 보통 없습니다. 그래서 <b>쓴 쪽과 읽는 쪽이 다른 규칙을 쓰면</b> 글자가 깨집니다.</p>
+
+<pre class="diagram">  UTF-8로 저장한 "한글"  ──▶  CP949로 읽으면  ──▶  "�븳湲�"
+  CP949로 저장한 "한글"  ──▶  UTF-8로 읽으면  ──▶  "�ѱ�"  (또는 UnicodeDecodeError)
+
+  ※ 깨진 글자를 다시 저장하면 원래 바이트가 사라져 되돌릴 수 없는 경우가 많다</pre>
+
+<div class="box warn">
+<span class="box-title">⚠ 자주 만나는 함정</span>
+<ul>
+<li><b>엑셀 ↔ CSV</b>: 한국어 윈도의 엑셀은 BOM 없는 UTF-8 CSV를 CP949로 열어서 한글이 깨집니다. 엑셀에서 저장할 때도 "CSV (쉼표로 분리)"는 CP949, "CSV UTF-8"은 UTF-8(BOM 포함)입니다.</li>
+<li><b>BOM(Byte Order Mark)</b>: 파일 맨 앞에 붙는 보이지 않는 3바이트 <code>EF BB BF</code>. "이 파일은 UTF-8"이라는 표시인데, 모르는 프로그램은 이걸 첫 글자로 읽어서 <b>첫 컬럼 이름이 <code>﻿id</code></b>가 됩니다. "분명 id 컬럼이 있는데 없다고 나와요"의 단골 원인입니다. Python은 <code>encoding="utf-8-sig"</code>로 읽으면 BOM을 떼어 줍니다.</li>
+<li><b>윈도 콘솔</b>: 한국어 윈도 터미널은 기본이 CP949라서 UTF-8 글자를 출력하다 <code>UnicodeEncodeError</code>가 나기도 합니다. Python은 환경 변수 <code>PYTHONIOENCODING=utf-8</code>이나 <code>python -X utf8</code>로 바꿀 수 있습니다.</li>
+</ul>
+</div>
+
+<h3>줄바꿈도 글자다 — CRLF와 LF</h3>
+<p>"다음 줄"도 보이지 않는 글자입니다. 윈도는 <b>CR LF</b> 두 글자(<code>\r\n</code>, 16진수 <code>0D 0A</code>), 리눅스·맥은 <b>LF</b> 한 글자(<code>\n</code>)를 씁니다. 타자기의 "줄 맨 앞으로(Carriage Return)"와 "한 줄 아래로(Line Feed)"에서 온 이름입니다.</p>
+<ul>
+<li>윈도에서 만든 CSV를 리눅스 도구로 읽으면 마지막 컬럼 값 끝에 <code>\r</code>이 붙어 <code>'completed\r' != 'completed'</code>가 되는 일이 있습니다.</li>
+<li>윈도에서 만든 셸 스크립트(.sh)를 리눅스 컨테이너에서 돌리면 <code>/bin/bash^M: bad interpreter</code> 같은 에러가 납니다. <code>^M</code>이 바로 CR입니다.</li>
+<li>git이 "파일 전체가 바뀌었다"고 표시하는데 내용은 같다면 줄바꿈이 바뀐 경우가 많습니다.</li>
+</ul>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+원천 파일을 받으면 <b>인코딩·BOM·줄바꿈·구분자</b> 네 가지를 먼저 확인하는 습관을 들이세요. 수집 단계에서 전부 <b>UTF-8 · BOM 없음 · LF</b>로 맞춰 두면 그 뒤 단계는 신경 쓸 일이 거의 없습니다. BigQuery 적재도 기본 인코딩이 UTF-8입니다.
+</div>
+
+<h2 id="cpu">CPU — 아주 단순한 일을 아주 빨리</h2>
+
+<p>CPU가 할 줄 아는 일은 놀랄 만큼 단순합니다. "메모리 몇 번지 값을 가져와라", "두 수를 더해라", "결과가 0이면 저기로 건너뛰어라" 같은 <b>명령어(instruction)</b> 수백 종류뿐입니다. 복잡한 프로그램도 결국 이런 명령어 수십억 개로 쪼개져 실행됩니다.</p>
+
+<pre class="diagram">  CPU가 끝없이 반복하는 일 (명령어 사이클)
+
+  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+  │ ① 가져오기 │──▶│ ② 해석     │──▶│ ③ 실행     │──▶│ ④ 결과 저장 │──┐
+  │ (Fetch)   │    │ (Decode)  │    │ (Execute) │    │ (Write)   │  │
+  └──────────┘    └──────────┘    └──────────┘    └──────────┘  │
+        ▲                                                       │
+        └──────────────────── 다음 명령어 ◀──────────────────────┘</pre>
+
+<ul>
+<li><b>클럭(clock)</b>: CPU의 심장 박동. 3 GHz면 1초에 30억 번 박동합니다. 한 박동에 명령어 몇 개를 처리하는지는 CPU 설계마다 다릅니다.</li>
+<li><b>코어(core)</b>: CPU 안의 독립된 작업자. 8코어면 8가지 일을 동시에 할 수 있습니다. 윈도 작업 관리자에 보이는 "논리 프로세서"는 코어 하나가 두 줄을 번갈아 처리하는 기술(하이퍼스레딩) 때문에 코어 수의 2배로 보이기도 합니다.</li>
+<li><b>레지스터·캐시</b>: CPU 안에 있는 아주 작고 아주 빠른 저장 공간. 메모리(RAM)가 CPU에 비하면 너무 느려서, 자주 쓰는 값은 CPU 바로 옆에 복사해 둡니다.</li>
+</ul>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 계산원</span>
+<p>코어 하나는 <b>엄청 빠르지만 덧셈·비교만 할 줄 아는 계산원</b>입니다. "이 엑셀 매출을 월별로 합쳐 줘"라는 일은 계산원이 알아들을 수 있게 "첫 행 읽기 → 월 확인 → 해당 칸에 더하기 → 다음 행"으로 잘게 나눠야 합니다. 그 나누는 일을 컴파일러와 인터프리터가 해 줍니다(2장). 코어가 8개면 계산원이 8명인 셈이라, 일을 여덟 덩이로 나눌 수 있을 때만 8배 빨라집니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+BigQuery 실행 상세에 나오는 "슬롯(slot)"은 대략 <b>구글이 빌려주는 작업자(CPU 몫) 하나</b>라고 생각하면 됩니다. 쿼리를 단계(stage)로 나누고, 단계마다 데이터를 여러 슬롯에 쪼개 동시에 처리합니다. 데이터를 잘게 쪼갤 수 있는 일(필터·집계)은 슬롯이 많을수록 빨라지고, 마지막에 한 곳으로 모아야 하는 일(전체 <code>ORDER BY</code> 등)은 그만큼 덜 빨라집니다.
+</div>
+
+<h2 id="memory">메모리와 디스크 — 속도의 계층</h2>
+
+<p>데이터를 둘 수 있는 곳은 여러 층이고, <b>빠를수록 비싸고 작고, 전원을 끄면 사라집니다.</b></p>
+
+<div class="table-wrap">
+<table>
+<tr><th>어디</th><th>한 번 읽는 데 걸리는 시간 (대략)</th><th>1 ns를 1초로 늘리면</th><th>크기 (보통 PC 기준)</th><th>전원 끄면</th></tr>
+<tr><td>CPU 레지스터·L1 캐시</td><td>약 1 ns (10억분의 1초)</td><td>1초</td><td>수십 KB</td><td>사라짐</td></tr>
+<tr><td>L2·L3 캐시</td><td>수 ~ 수십 ns</td><td>수 초 ~ 수십 초</td><td>수 MB ~ 수십 MB</td><td>사라짐</td></tr>
+<tr><td>메모리(RAM)</td><td>약 100 ns</td><td>약 1분 40초</td><td>8 ~ 64 GB</td><td>사라짐</td></tr>
+<tr><td>SSD</td><td>수십 ~ 100 µs (백만분의 1초 단위)</td><td>반나절 ~ 하루</td><td>수백 GB ~ 수 TB</td><td>남음</td></tr>
+<tr><td>HDD(회전 디스크)</td><td>수 ~ 10 ms (천분의 1초 단위)</td><td>몇 달</td><td>수 TB</td><td>남음</td></tr>
+<tr><td>같은 지역 데이터센터 안 왕복</td><td>약 0.5 ms</td><td>약 6일</td><td>—</td><td>—</td></tr>
+<tr><td>대륙 간 네트워크 왕복</td><td>약 150 ms</td><td>약 5년</td><td>—</td><td>—</td></tr>
+</table>
+</div>
+<p style="font-size:14px;color:var(--muted)">숫자는 장비마다 크게 다르므로 "자릿수" 감각으로만 보세요. 중요한 것은 층마다 <b>수십~수천 배씩</b> 차이 난다는 점입니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 책상, 책장, 도서관</span>
+<p>캐시는 <b>손에 든 메모지</b>, 메모리는 <b>책상 위</b>, SSD는 <b>방 안 책장</b>, 네트워크 너머 DB는 <b>다른 도시 도서관</b>입니다. 책상 위 책은 바로 펼치지만, 도서관 책은 하루 한 권 받아 보기도 어렵습니다. 그래서 좋은 프로그램은 <b>한 번 갈 때 많이 가져오고(배치), 가져온 건 책상에 두고 여러 번 씁니다(캐시)</b>.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<ul>
+<li><b>한 행씩 INSERT를 10만 번</b> 보내는 것이 <b>10만 행을 한 번에</b> 보내는 것보다 훨씬 느린 이유: 매번 네트워크 왕복(수 ms)이 붙기 때문입니다. 계산은 금방인데 오가는 시간이 대부분입니다.</li>
+<li>커서(CURSOR)로 한 행씩 도는 프로시저가 집합(SET) 기반 SQL보다 느린 것도 같은 이치입니다.</li>
+<li>BigQuery가 같은 쿼리를 두 번째로 돌리면 즉시 끝나고 비용이 0인 것은 결과를 <b>캐시</b>해 두었기 때문입니다.</li>
+</ul>
+</div>
+
+<h2 id="oom">32비트·64비트, 그리고 메모리 부족(OOM)</h2>
+
+<h3>32비트 · 64비트는 "주소 칸 수"</h3>
+<p>메모리의 각 바이트에는 번지(주소)가 붙어 있습니다. 32비트 프로그램은 주소를 32비트로 적으므로 2<sup>32</sup> = <b>약 4 GiB</b>까지만 가리킬 수 있습니다. 64비트는 사실상 한계가 없을 만큼 넓습니다. 지금 PC·서버는 거의 다 64비트이지만, 오래된 32비트 프로그램(예전 ODBC 드라이버, 32비트 엑셀 등)은 메모리를 아무리 꽂아도 4 GB 안팎에서 막힙니다.</p>
+
+<h3>OOM(Out Of Memory)은 왜 데이터 작업에서 자주 나나</h3>
+<p>프로그램이 데이터를 처리하려면 그 데이터를 먼저 <b>메모리(조리대)에 올려야</b> 합니다. 메모리보다 큰 데이터를 한꺼번에 올리려 하면 운영체제가 프로그램을 강제로 끝내거나, 디스크를 메모리처럼 쓰기 시작해서(스왑) 엄청나게 느려집니다.</p>
+
+<ul>
+<li><b>파일 크기 ≠ 메모리 크기.</b> 1 GB CSV를 Python으로 읽으면 메모리는 몇 배가 필요합니다. 파일의 <code>"12345"</code>(5바이트)가 Python 정수 객체가 되면 그 하나에만 28바이트 정도가 듭니다(64비트 Python 기준). 문자열·리스트·딕셔너리는 저마다 포장지 같은 부가 정보를 갖고 있습니다.</li>
+<li><b>조인·정렬·그룹은 중간 결과를 만듭니다.</b> 원본 2개 + 조인 결과 1개가 동시에 메모리에 있을 수 있습니다.</li>
+<li><b>클라우드 컨테이너는 메모리 한도가 작습니다.</b> 내 PC에서는 되던 작업이 메모리 512 MB짜리 클라우드 작업에서 "exit code 137"이나 "memory limit exceeded"로 죽는 일이 흔합니다.</li>
+</ul>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는 — OOM을 피하는 기본기</span>
+<ol>
+<li><b>필요한 컬럼·행만 읽기</b> (SQL의 <code>SELECT *</code> 금지와 같은 이유)</li>
+<li><b>나눠서(청크·스트리밍) 처리하기</b>: 한 번에 10만 행씩 읽고 쓰고 버리기</li>
+<li><b>무거운 계산은 DB로 보내기</b>: 웨어하우스는 디스크와 여러 대의 메모리를 같이 쓰도록 만들어져 있습니다. "Python으로 끌어와서 집계"보다 "SQL로 집계한 결과만 가져오기"가 대부분 낫습니다.</li>
+<li><b>열 기반 파일(Parquet)</b> 쓰기: 필요한 열만 읽을 수 있고 압축도 잘 됩니다(5장).</li>
+</ol>
+</div>
+
+<h2 id="units">파일 크기 단위 — KB와 KiB</h2>
+
+<p>"1 KB는 1000바이트일까 1024바이트일까?"는 실제로 둘 다 쓰여서 헷갈립니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>10진 단위 (SI)</th><th>값</th><th>2진 단위 (IEC)</th><th>값</th></tr>
+<tr><td>KB (킬로바이트)</td><td>1,000 B</td><td>KiB (키비바이트)</td><td>1,024 B</td></tr>
+<tr><td>MB</td><td>1,000<sup>2</sup> B</td><td>MiB</td><td>1,024<sup>2</sup> B = 1,048,576 B</td></tr>
+<tr><td>GB</td><td>1,000<sup>3</sup> B</td><td>GiB</td><td>1,024<sup>3</sup> B</td></tr>
+<tr><td>TB</td><td>1,000<sup>4</sup> B</td><td>TiB</td><td>1,024<sup>4</sup> B</td></tr>
+</table>
+</div>
+
+<ul>
+<li>디스크 제조사는 10진(1 TB = 10<sup>12</sup> B)으로 팔고, 윈도 탐색기는 2진으로 계산하면서 단위는 "GB"라고 씁니다. 그래서 <b>1 TB SSD가 윈도에서는 약 931 GB</b>로 보입니다. 용량이 사라진 게 아닙니다.</li>
+<li>클라우드 요금은 서비스마다 다릅니다. 예를 들어 BigQuery 요금표는 TiB(2<sup>40</sup> B) 기준입니다. 비용을 계산할 땐 어느 단위인지 확인하세요.</li>
+<li>네트워크 속도는 보통 <b>비트</b> 단위입니다. 100 Mbps는 초당 100 메가<b>비트</b> = 초당 약 12.5 MB(메가<b>바이트</b>)입니다. 소문자 b는 비트, 대문자 B는 바이트입니다.</li>
+</ul>
+
+<h2 id="lab">손으로 해 보기</h2>
+<div class="lab">
+
+<div class="step" data-id="pc-spec">
+<div class="step-title">1. 내 PC의 몸 확인하기 (CPU·메모리·64비트)</div>
+<p>PowerShell을 열고 아래를 실행합니다.</p>
+<pre><code>Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
+[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+[Environment]::Is64BitOperatingSystem</code></pre>
+<p>결과 예시 (PC마다 다릅니다):</p>
+<pre><code>NumberOfCores NumberOfLogicalProcessors MaxClockSpeed
+------------- ------------------------- -------------
+            8                        16          2000
+23.6
+True</code></pre>
+<p>코어 8개, 논리 프로세서 16개(하이퍼스레딩), 기본 클럭 2,000 MHz(2 GHz), 메모리 약 23.6 GiB, 64비트 윈도라는 뜻입니다. PowerShell의 <code>1GB</code>는 2<sup>30</sup>바이트(GiB)입니다. 작업 관리자(Ctrl+Shift+Esc) → 성능 탭에서도 같은 정보를 볼 수 있습니다.</p>
+</div>
+
+<div class="step" data-id="binary">
+<div class="step-title">2. 2진수·16진수 바꿔 보기</div>
+<p>Python을 켜고(<code>python</code> 입력 후 Enter) 한 줄씩 입력합니다.</p>
+<pre><code>bin(13)          # 10진수 → 2진수
+hex(255)         # 10진수 → 16진수
+int("1101", 2)   # 2진수 문자열 → 10진수
+0xff             # 16진수로 적은 숫자</code></pre>
+<p>결과:</p>
+<pre><code>'0b1101'
+'0xff'
+13
+255</code></pre>
+<p>스스로 해 보세요: 2진수 <code>11111111</code>은 10진수로 몇일까요? 계산해 본 뒤 <code>int("11111111", 2)</code>로 확인합니다.</p>
+</div>
+
+<div class="step" data-id="float">
+<div class="step-title">3. 0.1 + 0.2 직접 확인하기</div>
+<pre><code>0.1 + 0.2
+0.1 + 0.2 == 0.3
+from decimal import Decimal
+Decimal("0.1") + Decimal("0.2")
+round(2.675, 2)</code></pre>
+<p>결과:</p>
+<pre><code>0.30000000000000004
+False
+Decimal('0.3')
+2.67</code></pre>
+<p>마지막 줄이 2.68이 아니라 2.67인 것도 같은 이유입니다. 2.675는 2진수로 정확히 저장되지 않아 실제로는 2.67499999…에 가깝게 저장되기 때문입니다. 금액 반올림을 float로 하면 안 되는 이유입니다.</p>
+</div>
+
+<div class="step" data-id="encoding">
+<div class="step-title">4. 같은 글자, 다른 바이트 — BOM까지</div>
+<p>Python에서:</p>
+<pre><code>"한글".encode("utf-8")
+"한글".encode("cp949")
+open("bom.csv", "w", encoding="utf-8-sig").write("id,name\n1,홍\n")
+open("bom.csv", "rb").read()[:6]
+open("bom.csv", encoding="utf-8").read().split(",")[0].encode()
+open("bom.csv", encoding="utf-8-sig").read().split(",")[0]</code></pre>
+<p>결과:</p>
+<pre><code>b'\xed\x95\x9c\xea\xb8\x80'
+b'\xc7\xd1\xb1\xdb'
+12
+b'\xef\xbb\xbfid,'
+b'\xef\xbb\xbfid'
+'id'</code></pre>
+<p>세 번째 줄의 <code>12</code>는 쓴 글자 수입니다(줄바꿈 포함, BOM은 세지 않음). <code>utf-8</code>로 읽으면 첫 컬럼 이름 앞에 BOM(<code>\xef\xbb\xbf</code>)이 붙어 있고, <code>utf-8-sig</code>로 읽으면 깔끔한 <code>id</code>가 나옵니다. 마지막으로 <code>bom.csv</code>를 메모장으로 열어 오른쪽 아래 상태 표시줄에 인코딩이 "UTF-8(BOM)"으로 보이는지 확인해 보세요.</p>
+</div>
+
+</div>
+
+<h2 id="wrap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+컴퓨터는 <b>바이트를 정해진 규칙으로 읽고</b>(정수·부동소수점·UTF-8), <b>빠르고 작은 곳(CPU·메모리)과 느리고 큰 곳(디스크·네트워크) 사이에서 데이터를 옮기며</b> 일합니다. 대부분의 데이터 사고는 "규칙이 달랐다"(인코딩·FLOAT)거나 "옮기는 비용을 몰랐다"(한 행씩 왕복·메모리 초과)에서 나옵니다.
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>동료가 "금액 컬럼을 FLOAT64로 만들었는데 합계가 1원씩 안 맞아요"라고 합니다. 원인과 고치는 방법을 비유를 섞어 설명해 보세요.</li>
+<li>"CSV를 열었더니 첫 컬럼 이름이 이상하고 한글이 깨져요"라는 문의에서 의심해야 할 것 두 가지와 확인 방법을 말해 보세요.</li>
+<li>10만 행을 한 행씩 INSERT하는 코드가 느린 이유를 속도 계층 표를 근거로 설명해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="2">
+<p class="q-text">1바이트로 구분할 수 있는 값의 개수는?</p>
+<ol class="q-opts">
+<li>8가지</li>
+<li>256가지</li>
+<li>1,000가지</li>
+<li>1,024가지</li>
+</ol>
+<div class="q-explain">1바이트는 8비트이고, 비트 하나마다 경우의 수가 두 배가 되므로 2<sup>8</sup> = 256가지(0~255)입니다. 8은 비트 수, 1,024는 2<sup>10</sup>(KiB의 크기)입니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">정산용 금액 컬럼의 타입으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>FLOAT64 — 소수점을 쓸 수 있으니까</li>
+<li>STRING — 형식이 안 바뀌니까</li>
+<li>FLOAT64로 저장하고 조회할 때 ROUND</li>
+<li>NUMERIC(DECIMAL), 또는 원 단위라면 INT64</li>
+</ol>
+<div class="q-explain">FLOAT는 0.1 같은 10진 소수를 정확히 저장하지 못해 합계에서 오차가 쌓입니다. 조회 때 ROUND해도 저장·합산 단계의 오차는 남습니다. STRING은 계산할 때마다 변환이 필요하고 정렬·합계가 틀어집니다. 10진수를 그대로 저장하는 NUMERIC이나, 소수점이 필요 없는 원 단위 정수(INT64)가 맞습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">UTF-8로 저장된 CSV를 읽었더니 첫 컬럼 이름이 <code>﻿id</code>로 나옵니다. 원인은?</p>
+<ol class="q-opts">
+<li>파일 맨 앞의 BOM을 데이터로 읽었다</li>
+<li>CP949로 저장된 파일이다</li>
+<li>줄바꿈이 CRLF다</li>
+<li>쉼표 대신 탭으로 구분된 파일이다</li>
+</ol>
+<div class="q-explain"><code>﻿</code>가 바로 BOM입니다. UTF-8 BOM(EF BB BF)이 붙은 파일을 BOM을 모르는 방식으로 읽으면 첫 글자로 들어갑니다. Python은 <code>utf-8-sig</code>로 읽으면 됩니다. CP949였다면 한글이 깨지고, CRLF라면 마지막 컬럼 끝에 <code>\r</code>이 붙습니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">다음 중 한 번 읽는 데 가장 오래 걸리는 것은?</p>
+<ol class="q-opts">
+<li>메모리(RAM)</li>
+<li>CPU 캐시</li>
+<li>다른 대륙에 있는 서버에 한 번 다녀오기</li>
+<li>내 PC의 SSD</li>
+</ol>
+<div class="q-explain">대략 캐시 1 ns &lt; 메모리 100 ns &lt; SSD 수십~100 µs &lt; 대륙 간 왕복 150 ms 순입니다. 대륙 간 왕복은 메모리보다 백만 배 이상 느립니다. 그래서 먼 곳과는 자주 오가지 않고 한 번에 많이 주고받도록 설계합니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">1 GB짜리 CSV를 Python으로 통째로 읽다가 메모리 부족으로 죽었습니다. 가장 알맞은 설명은?</p>
+<ol class="q-opts">
+<li>PC가 32비트라서 1 GB를 넘는 파일은 못 읽는다</li>
+<li>파일의 글자들이 Python 객체가 되면서 파일 크기보다 몇 배 많은 메모리가 필요했다</li>
+<li>SSD 용량이 부족했다</li>
+<li>CSV는 원래 1 GB까지만 지원한다</li>
+</ol>
+<div class="q-explain">파일 속 "12345" 같은 값은 몇 바이트지만, Python 객체가 되면 값마다 부가 정보가 붙어 수십 바이트가 됩니다. 그래서 메모리가 파일 크기의 몇 배 필요합니다. 64비트 PC라면 주소 한계는 문제가 아니고, 디스크 용량은 메모리 부족과 다른 문제입니다. CSV에는 크기 제한이 없습니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">1 TB SSD를 샀는데 윈도에서 약 931 GB로 보입니다. 이유는?</p>
+<ol class="q-opts">
+<li>윈도가 70 GB를 미리 차지한다</li>
+<li>불량품이다</li>
+<li>제조사는 1 TB = 10<sup>12</sup>바이트로, 윈도는 1,024 단위(2<sup>30</sup>)로 계산하기 때문이다</li>
+<li>SSD는 시간이 지나면 용량이 줄어든다</li>
+</ol>
+<div class="q-explain">10<sup>12</sup> ÷ 2<sup>30</sup> ≈ 931입니다. 같은 바이트 수를 다른 단위로 나눈 것뿐입니다. 정확히는 윈도가 보여 주는 값이 931 GiB이고, 단위만 "GB"라고 적혀 있습니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

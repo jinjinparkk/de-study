@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4 · 네트워크·웹·API · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs4">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 4장</div>
+<h1>네트워크·웹·API</h1>
+<p class="lead">데이터 엔지니어링의 E(추출)는 대부분 <b>네트워크 너머 다른 컴퓨터에게 데이터를 달라고 부탁하는 일</b>입니다. 광고 매체 API, 클라우드 웨어하우스, Airflow 웹 화면까지 전부 같은 원리로 움직입니다. 이 장은 "주소 → 문 → 대화 규칙 → 신분 확인" 순서로 그 원리를 봅니다.</p>
+<p class="meta-line">읽기 약 55분 · 손으로 해 보기 4개 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>IP · 포트 · localhost · DNS를 한 문장씩 설명하고, "포트가 이미 사용 중" 에러를 해결하기</li>
+<li>HTTP 요청과 응답을 메서드 · 상태 코드 · 헤더 · 바디로 나눠 읽기</li>
+<li>401과 403, 429와 500의 차이를 알고 수집 코드가 각각 어떻게 대응해야 하는지 말하기</li>
+<li>API 키 · 토큰 · OAuth가 무엇을 증명하는지, 비밀값을 어디에 두는지 설명하기</li>
+<li>페이지네이션 · 재시도(지수 백오프) · 멱등성으로 "안 깨지는 수집 코드"의 조건 말하기</li>
+</ul>
+</div>
+
+<h2 id="ip">주소와 문 — IP · 포트 · localhost</h2>
+<p>네트워크에 붙은 컴퓨터는 각자 <b>IP 주소</b>를 가집니다(<code>172.66.147.243</code> 같은 숫자 4개 = IPv4, 더 긴 IPv6도 있음). 그런데 한 컴퓨터 안에는 웹 서버, DB, Airflow가 동시에 돌 수 있죠. 그래서 IP 뒤에 <b>포트 번호</b>(0~65535)를 붙여 "그 컴퓨터의 몇 번 문"인지까지 지정합니다.</p>
+
+<pre class="diagram">  주소 = IP : 포트
+
+  ┌──────────────── 컴퓨터 한 대 (IP 10.0.0.5) ────────────────┐
+  │  :5432 PostgreSQL   :8080 Airflow 웹   :443 HTTPS 웹 서버    │
+  │  :3306 MySQL        :8888 Jupyter      :22  SSH              │
+  └─────────────────────────────────────────────────────────────┘
+   10.0.0.5:5432 로 오면 PostgreSQL 이, :8080 으로 오면 Airflow 가 받는다</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>말</th><th>뜻</th></tr>
+<tr><td><code>localhost</code> = <code>127.0.0.1</code></td><td>"<b>나 자신</b>". 밖으로 나가지 않고 내 컴퓨터 안에서만 오가는 주소. <code>localhost:8080</code> = 내 PC에서 8080번 문을 연 프로그램</td></tr>
+<tr><td><code>0.0.0.0</code>으로 열기</td><td>서버가 "내 모든 네트워크 카드로 오는 요청을 받겠다"는 뜻. Docker 컨테이너 안 서버는 이렇게 열어야 밖(내 PC)에서 들어올 수 있음</td></tr>
+<tr><td>사설 IP</td><td><code>10.x</code>, <code>172.16~31.x</code>, <code>192.168.x</code> — 회사·집 안쪽에서만 통하는 주소</td></tr>
+<tr><td>잘 알려진 포트</td><td>80 HTTP, 443 HTTPS, 22 SSH, 5432 PostgreSQL, 3306 MySQL</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>IP는 <b>건물 주소</b>, 포트는 그 건물의 <b>호실 번호</b>입니다. 택배(요청)는 "서울시 ○○로 12, 5432호"처럼 둘 다 있어야 도착합니다. localhost는 "<b>우리 건물</b>" — 밖에 나갔다 오지 않고 복도로 다른 호실에 가는 것입니다. 한 호실에는 한 회사만 입주할 수 있어서, 이미 누가 쓰는 호실에 들어가려 하면 쫓겨납니다.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">"Address already in use" — 포트 충돌</span>
+<p>두 프로그램이 같은 포트를 열 수는 없습니다. 이미 8080을 쓰는 프로그램이 있는데 Airflow를 8080으로 띄우면 이런 에러가 납니다.</p>
+<pre class="diagram">  OSError: [WinError 10048] 각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다
+  (Linux·macOS: OSError: [Errno 98] Address already in use)</pre>
+<p>해결은 둘 중 하나입니다. ① 누가 쓰는지 찾아 끄기, ② 내 프로그램을 <b>다른 포트</b>로 띄우기(Docker라면 <code>-p 8083:8080</code> = "내 PC 8083번 → 컨테이너 8080번").</p>
+<pre><code>Get-NetTCPConnection -State Listen -LocalPort 8080 | Select-Object LocalAddress, LocalPort, OwningProcess
+Get-Process -Id &lt;위에서 나온 OwningProcess 번호&gt;</code></pre>
+</div>
+
+<h2 id="dns">DNS — 이름을 주소로 바꾸는 전화번호부</h2>
+<p>사람은 <code>example.com</code>을 기억하고, 컴퓨터는 IP로 찾아갑니다. 그 사이를 <b>DNS</b>가 이어 줍니다.</p>
+<pre class="diagram">  브라우저: "example.com 어디예요?"
+      │
+      ├─▶ ① 내 PC 캐시에 있나?          있으면 바로 사용
+      ├─▶ ② 회사/통신사 DNS 서버에 질문
+      │        └─▶ (모르면) 루트 → .com 담당 → example.com 담당 서버에 차례로
+      ◀── "172.66.147.243 입니다"  (몇 분~몇 시간 기억해 둠 = TTL)
+      │
+      └─▶ 172.66.147.243:443 으로 접속</pre>
+<pre><code>Resolve-DnsName example.com -Type A</code></pre>
+<pre class="diagram">  Name        IPAddress
+  ----        ---------
+  example.com 172.66.147.243     ← 값은 시간·위치에 따라 달라질 수 있음
+  example.com 104.20.23.154      ← 한 이름에 주소 여러 개 = 부하 분산</pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<p>"Name or service not known", "getaddrinfo failed", "호스트를 찾을 수 없습니다"는 <b>DNS 단계에서 실패</b>했다는 뜻입니다. 오타, VPN이 꺼져서 회사 내부 이름을 못 찾는 경우, Docker 컨테이너 안에서 <code>localhost</code>를 썼는데 그게 내 PC가 아니라 <b>컨테이너 자신</b>을 가리키는 경우가 대부분입니다(컨테이너에서 내 PC를 부를 땐 Docker Desktop 기준 <code>host.docker.internal</code>).</p>
+</div>
+
+<h2 id="tcp">TCP와 UDP, 그리고 계층 감각</h2>
+<p>주소로 찾아간 다음 데이터를 어떻게 보낼지에는 두 방식이 있습니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th></th><th>TCP</th><th>UDP</th></tr>
+<tr><td>성격</td><td>먼저 연결(악수)하고, 순서대로, 빠짐없이 도착하는지 확인</td><td>확인 없이 그냥 던짐. 빠르지만 일부가 사라질 수 있음</td></tr>
+<tr><td>비유</td><td>등기 우편 — 받았다는 확인을 받는다</td><td>전단지 뿌리기</td></tr>
+<tr><td>쓰는 곳</td><td>웹(HTTP), DB 접속, 파일 전송, 거의 모든 데이터 작업</td><td>DNS 질의, 영상 통화, 게임</td></tr>
+</table>
+</div>
+<pre class="diagram">  편지 한 통이 가는 길 (위에서 아래로 포장, 받는 쪽은 아래에서 위로 풀기)
+
+  ┌ 응용   HTTP · SQL 프로토콜 · SSH   "무슨 말을 주고받나"      ← 우리가 주로 다루는 곳
+  ├ 보안   TLS                         "봉투를 잠근다" (HTTPS)
+  ├ 전송   TCP / UDP · 포트            "몇 호실로, 확인하며 보낼까"
+  ├ 네트워크 IP                        "어느 건물로"
+  └ 링크   와이파이 · 랜선              "실제로 전기·전파로"</pre>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>DBeaver나 BigQuery 콘솔에서 쿼리를 실행할 때도 이 계층 전부를 탑니다. "Connection refused"(그 포트에 받는 프로그램이 없음), "Connection timed out"(방화벽이 막아서 대답이 아예 없음), "SSL error"(봉투 잠금 단계 실패)는 SQL이 틀린 게 아니라 <b>쿼리가 DB까지 가지도 못한 것</b>입니다. 에러가 어느 계층에서 났는지 먼저 보세요.</p>
+</div>
+
+<h2 id="http">HTTP — 요청과 응답의 규칙</h2>
+<p>웹과 거의 모든 API는 <b>HTTP</b>라는 대화 규칙을 씁니다. 클라이언트(내 코드·브라우저)가 <b>요청</b>을 보내고, 서버가 <b>응답</b>을 돌려주는 한 번의 왕복이 기본 단위입니다. 서버는 기본적으로 이전 요청을 기억하지 않습니다(그래서 매 요청마다 인증 정보를 다시 보냄).</p>
+
+<pre class="diagram">  요청 ─────────────────────────────────────────────
+  GET /v1/campaigns?date=2026-11-01&amp;page=2 HTTP/1.1    ← 메서드 · 경로 · 쿼리 문자열
+  Host: api.example.com                                ← 헤더: 부가 정보
+  Authorization: Bearer eyJhbGciOi...                  ←   신분증
+  Accept: application/json                             ←   "JSON으로 주세요"
+                                                       ← (GET 은 보통 바디 없음)
+
+  응답 ─────────────────────────────────────────────
+  HTTP/1.1 200 OK                                      ← 상태 코드
+  Content-Type: application/json                       ← 헤더
+  X-RateLimit-Remaining: 42                            ←   "남은 호출 횟수"
+                                                       ← 빈 줄
+  {"data": [{"id": 1, "clicks": 10}], "next": "p3"}    ← 바디: 실제 데이터</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>메서드</th><th>뜻</th><th>SQL로 치면</th><th>여러 번 보내도 결과가 같나(멱등)</th></tr>
+<tr><td><code>GET</code></td><td>조회</td><td>SELECT</td><td>예</td></tr>
+<tr><td><code>POST</code></td><td>새로 만들기, 작업 실행</td><td>INSERT</td><td><b>아니오</b> — 두 번 보내면 두 개 생길 수 있음</td></tr>
+<tr><td><code>PUT</code></td><td>통째로 덮어쓰기</td><td>MERGE(전체 교체)</td><td>예</td></tr>
+<tr><td><code>PATCH</code></td><td>일부만 수정</td><td>UPDATE ... SET 일부</td><td>보통 예(내용에 따라)</td></tr>
+<tr><td><code>DELETE</code></td><td>삭제</td><td>DELETE</td><td>예</td></tr>
+</table>
+</div>
+
+<h3>상태 코드 — 첫 자리만 봐도 누구 잘못인지 안다</h3>
+<div class="table-wrap">
+<table>
+<tr><th>코드</th><th>뜻</th><th>수집 코드는 어떻게?</th></tr>
+<tr><td><b>2xx</b> 200 OK, 201 Created, 204 No Content</td><td>성공</td><td>바디 처리</td></tr>
+<tr><td><b>3xx</b> 301 / 302</td><td>다른 주소로 가세요(이사)</td><td>대부분 라이브러리가 자동으로 따라감. 주소를 새 것으로 고쳐 두기</td></tr>
+<tr><td><b>400</b> Bad Request</td><td>요청 모양이 틀림(파라미터 오타, 날짜 형식)</td><td><b>재시도 무의미</b>. 요청을 고친다</td></tr>
+<tr><td><b>401</b> Unauthorized</td><td>"<b>누구세요?</b>" — 신분증 없음·만료</td><td>토큰 재발급 후 다시. 계속이면 키 확인</td></tr>
+<tr><td><b>403</b> Forbidden</td><td>"누군지는 아는데 <b>권한이 없어요</b>"</td><td>재시도 무의미. 권한(계정·범위) 신청</td></tr>
+<tr><td><b>404</b> Not Found</td><td>그런 주소·리소스 없음</td><td>경로·ID 확인. API 버전이 바뀌었는지 확인</td></tr>
+<tr><td><b>429</b> Too Many Requests</td><td>너무 자주 부름(호출 한도 초과)</td><td><b>기다렸다 재시도</b>. <code>Retry-After</code> 헤더가 있으면 그만큼</td></tr>
+<tr><td><b>5xx</b> 500, 502, 503, 504</td><td>서버 쪽 문제·일시 장애</td><td><b>잠시 후 재시도</b>(지수 백오프)</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>HTTP는 <b>민원 창구</b>입니다. 신청서(요청)에 "무엇을 원하는지(메서드·경로)", "부가 정보(헤더)", "첨부 서류(바디)"를 적어 내면 창구가 결과 도장(상태 코드)과 서류(응답 바디)를 돌려줍니다. 4xx는 "<b>신청서를 잘못 쓰셨어요</b>" — 다시 내도 똑같이 반려되니 고쳐서 내야 하고, 5xx는 "<b>지금 전산이 먹통이에요</b>" — 조금 있다 같은 신청서를 다시 내면 됩니다.</p>
+</div>
+
+<h2 id="https">HTTPS · TLS · 인증서 — 봉투를 잠그고 상대를 확인한다</h2>
+<p>HTTP만 쓰면 요청과 응답이 <b>엽서처럼</b> 중간 경로에서 다 보입니다. HTTPS는 HTTP를 <b>TLS</b>로 감싸서 두 가지를 해 줍니다.</p>
+<ol>
+<li><b>암호화</b>: 중간에서 엿봐도 내용(비밀번호·토큰·데이터)을 읽을 수 없게</li>
+<li><b>상대 확인</b>: 접속한 서버가 진짜 <code>example.com</code>인지, 믿을 만한 기관(인증 기관, CA)이 서명한 <b>인증서</b>로 확인</li>
+</ol>
+
+<div class="box warn">
+<span class="box-title">회사 네트워크의 "SSL: CERTIFICATE_VERIFY_FAILED"</span>
+<p>회사는 보안 장비가 HTTPS 통신을 중간에서 풀어 검사한 뒤 <b>회사 자체 인증서</b>로 다시 잠그는 경우가 많습니다. 브라우저는 회사가 미리 심어 둔 인증서를 믿어서 문제없지만, 파이썬(requests)·pip·Docker는 자기만의 인증서 목록을 써서 "검증 실패"를 냅니다. <code>verify=False</code>로 검증을 꺼 버리면 위 2번(상대 확인)을 포기하는 것이라 위험합니다. 정석은 IT 부서에서 회사 루트 인증서를 받아 해당 도구에 등록하는 것입니다(예: 환경 변수 <code>REQUESTS_CA_BUNDLE</code>, pip의 <code>cert</code> 설정).</p>
+</div>
+
+<h2 id="api">REST API와 JSON — 프로그램끼리의 메뉴판</h2>
+<p><b>API</b>(Application Programming Interface)는 "우리 시스템에 이런 요청을 이런 모양으로 보내면 이런 답을 준다"는 <b>약속 목록</b>입니다. 그중 HTTP 주소(경로)를 <b>자원(명사)</b>으로, 메서드를 <b>행동(동사)</b>으로 쓰는 스타일을 <b>REST</b>라고 부릅니다.</p>
+<pre class="diagram">  GET    /campaigns              캠페인 목록
+  GET    /campaigns/123          123번 캠페인 하나
+  GET    /campaigns/123/reports?start=2026-11-01&amp;end=2026-11-07   그 캠페인의 기간 리포트
+  POST   /reports/jobs           큰 리포트 생성 "작업" 요청 → 작업 ID 받음
+  GET    /reports/jobs/987       작업 다 됐나? → 다 되면 결과 파일 주소</pre>
+
+<p>응답 바디는 대부분 <b>JSON</b>입니다. 중괄호 <code>{}</code>는 이름:값 묶음(한 행), 대괄호 <code>[]</code>는 목록(여러 행)입니다. 표와 달리 <b>안에 또 묶음이 들어갈 수 있다(중첩)</b>는 게 핵심 차이입니다.</p>
+<pre data-file="응답 예 (JSON)"><code>{
+  "data": [
+    {"id": 1, "name": "겨울 세일", "metrics": {"clicks": 10, "cost": 5300}},
+    {"id": 2, "name": "신규 가입", "metrics": {"clicks": 7,  "cost": 2100}}
+  ],
+  "paging": {"next_cursor": "abc123"}
+}</code></pre>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<ul>
+<li><code>data</code> 배열 하나 = 결과 집합, 배열의 원소 하나 = 한 행</li>
+<li><code>metrics.clicks</code> 처럼 중첩된 값을 열로 꺼내는 일 = BigQuery의 <code>JSON_VALUE(payload, '$.metrics.clicks')</code>, 배열을 행으로 펴는 일 = <code>UNNEST</code></li>
+<li>그래서 수집 단계에서 원본 JSON을 <b>그대로 한 컬럼에 적재</b>해 두고(L), dbt staging에서 펴는 방식(T)이 흔합니다. 응답 모양이 바뀌어도 원본이 남아 있어 다시 펼 수 있습니다.</li>
+</ul>
+</div>
+
+<h2 id="auth">인증 — "누구인지"와 "무엇을 해도 되는지"</h2>
+<div class="table-wrap">
+<table>
+<tr><th>방식</th><th>모양</th><th>특징</th></tr>
+<tr><td><b>API 키</b></td><td>헤더 <code>X-API-Key: sk_...</code> 또는 주소 뒤 <code>?key=...</code></td><td>제일 단순. 유출되면 그 키로 뭐든 가능 → 주기적으로 교체</td></tr>
+<tr><td><b>토큰(Bearer)</b></td><td>헤더 <code>Authorization: Bearer eyJ...</code></td><td>로그인·발급 후 받는 <b>유효기간 있는</b> 출입증. 만료되면 401</td></tr>
+<tr><td><b>OAuth 2.0</b></td><td>사용자가 "이 앱이 내 광고 계정을 읽어도 됨" 동의 → 앱이 액세스 토큰 + 리프레시 토큰 받음</td><td>비밀번호를 앱에 주지 않고 <b>권한 범위(scope)</b>만 위임. 액세스 토큰은 짧게(보통 1시간 안팎), 리프레시 토큰으로 새로 받음</td></tr>
+<tr><td><b>서비스 계정</b></td><td>사람이 아닌 프로그램용 계정 + 키 파일 또는 클라우드가 주는 자격</td><td>스케줄로 도는 파이프라인에 적합. 필요한 권한만 주기</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>API 키 = <b>만능 열쇠</b>(잃어버리면 큰일), 토큰 = <b>오늘만 유효한 방문증</b>, OAuth = 집주인이 관리실에 "택배 기사에게 <b>현관만</b> 열어 줘요"라고 맡겨 두는 것. 기사는 집 비밀번호를 모르고, 허락받은 현관만 열 수 있고, 집주인이 언제든 취소할 수 있습니다.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">비밀값은 코드 밖에 둔다</span>
+<ul>
+<li>키·토큰·비밀번호를 <code>.py</code>나 SQL 파일에 적으면 git에 올라가는 순간 <b>지워도 기록(히스토리)에 남습니다.</b> 공개 저장소면 몇 분 안에 자동 수집기가 가져갑니다.</li>
+<li>대신 <b>환경 변수</b>, <code>.env</code> 파일(반드시 <code>.gitignore</code>에 추가), OS 자격 증명 저장소(Windows 자격 증명 관리자 — 파이썬 <code>keyring</code>), 클라우드 <b>Secret Manager</b>에 둡니다. dbt의 <code>profiles.yml</code>을 프로젝트 밖에 두고 <code>env_var()</code>로 읽는 것도 같은 이유입니다.</li>
+<li>실수로 올렸다면 커밋을 지우는 것보다 <b>키를 즉시 폐기·재발급</b>하는 게 먼저입니다.</li>
+</ul>
+</div>
+
+<h2 id="ingest">안 깨지는 수집 코드 — 페이지네이션 · 한도 · 재시도 · 멱등성</h2>
+<p>API에서 데이터를 가져오는 코드는 <b>"한 번에 다 오지 않는다", "가끔 실패한다", "다시 돌릴 수 있어야 한다"</b>를 전제로 짭니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>주제</th><th>무엇</th><th>코드에서는</th></tr>
+<tr><td><b>페이지네이션</b></td><td>1만 행을 한 번에 안 주고 100개씩 나눠 줌. <code>page=2</code>, <code>offset=200</code>, 또는 <code>next_cursor</code> 방식</td><td>"다음 페이지 표시가 없을 때까지" 반복. 커서 방식이 중간에 데이터가 바뀌어도 덜 꼬임</td></tr>
+<tr><td><b>호출 한도(rate limit)</b></td><td>"분당 60회", "하루 1만 회" 등</td><td>응답 헤더의 남은 횟수 확인, 429면 기다리기. 병렬로 막 부르지 않기</td></tr>
+<tr><td><b>재시도 + 지수 백오프</b></td><td>429·5xx·타임아웃은 잠깐 뒤엔 될 수 있음</td><td>1초 → 2초 → 4초 → 8초처럼 <b>기다림을 두 배씩</b> 늘리며 몇 번만 재시도, 약간의 무작위(jitter) 추가. 4xx(429 제외)는 재시도하지 않음</td></tr>
+<tr><td><b>타임아웃</b></td><td>대답이 영원히 안 오는 경우</td><td>요청마다 제한 시간 지정(예: 30초). 지정 안 하면 <b>무한 대기</b>로 파이프라인이 멈춤</td></tr>
+<tr><td><b>멱등성</b></td><td>같은 날짜를 두 번 돌려도 결과가 같게</td><td>"11-01 데이터 추가"가 아니라 "11-01 데이터로 <b>교체</b>" — 날짜 파티션 덮어쓰기, MERGE</td></tr>
+</table>
+</div>
+
+<pre data-file="수집 루프의 뼈대 (Python, requests 라이브러리)"><code>import os, time, random
+import requests                                        # HTTP 요청 도구 (pip install requests)
+
+URL = "https://api.example.com/v1/reports"             # 가상의 API 주소
+HEADERS = {"Authorization": f"Bearer {os.environ['API_TOKEN']}"}  # 토큰은 환경 변수에서 (코드에 적지 않음)
+
+def get_with_retry(params, tries=5):
+    for n in range(tries):                             # 최대 5번 시도
+        r = requests.get(URL, headers=HEADERS, params=params, timeout=30)  # 30초 넘으면 포기
+        if r.status_code == 200:
+            return r.json()                            # 성공 → JSON 을 파이썬 dict 로
+        if r.status_code == 429 or r.status_code &gt;= 500:   # 한도 초과·서버 장애 → 기다렸다 다시
+            wait = int(r.headers.get("Retry-After", 2 ** n)) + random.random()  # Retry-After 가 초 숫자로 온다고 가정
+            time.sleep(wait)                           # 1, 2, 4, 8 ... 초 (지수 백오프)
+            continue
+        r.raise_for_status()                           # 400·401·403·404 → 재시도 없이 바로 실패(예외)
+    raise RuntimeError("재시도 횟수 초과")              # 끝까지 안 되면 실패로 끝냄 → 종료 코드 1
+
+rows, cursor = [], None
+while True:                                            # 페이지가 끝날 때까지 반복
+    page = get_with_retry({"date": "2026-11-01", "cursor": cursor})
+    rows.extend(page["data"])                          # 이번 페이지 행을 모음 (UNION ALL 처럼)
+    cursor = page["paging"].get("next_cursor")
+    if not cursor:                                     # 다음 페이지 없음 → 끝
+        break
+# 이후: 2026-11-01 파티션을 rows 로 "교체" 적재 → 두 번 돌려도 같은 결과(멱등)</code></pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는 — 웹훅과 비동기 리포트</span>
+<ul>
+<li><b>웹훅(webhook)</b>은 방향이 반대입니다. 내가 계속 "새 거 있어요?" 하고 묻는(폴링) 대신, 상대 시스템이 일이 생기면 <b>내 서버 주소로 POST를 보내 줍니다</b>. 그래서 내 쪽에 항상 켜져 있는 공개 주소(서버)가 필요하고, 같은 알림이 두 번 올 수 있어 멱등하게 처리해야 합니다.</li>
+<li>광고 매체처럼 큰 리포트는 <b>"작업 요청(POST) → 작업 상태 조회(GET) 반복 → 결과 파일 다운로드"</b>의 비동기 방식이 흔합니다. Airflow의 센서(sensor)·지연 실행이 이런 기다림을 위해 있습니다.</li>
+</ul>
+</div>
+
+<h2 id="corp">회사 네트워크 — 방화벽 · 프록시 · VPN</h2>
+<div class="table-wrap">
+<table>
+<tr><th>장치</th><th>하는 일</th><th>내가 겪는 증상</th></tr>
+<tr><td><b>방화벽</b></td><td>허용한 주소·포트로만 통신을 허락</td><td>"Connection timed out" — 거절도 아니고 대답이 아예 없음. 클라우드 DB에 내 IP를 허용 목록에 넣어야 하는 경우도</td></tr>
+<tr><td><b>프록시</b></td><td>회사 밖으로 나가는 요청을 대신 내보내며 검사·기록</td><td>브라우저는 되는데 pip·git·python은 안 됨 → 도구별 프록시 설정(<code>HTTPS_PROXY</code> 환경 변수 등) 필요. 인증서 검증 실패도 여기서</td></tr>
+<tr><td><b>VPN</b></td><td>집에서도 회사 내부망 안에 있는 것처럼 터널 연결</td><td>VPN 끄면 내부 서버 이름(DNS)부터 못 찾음. 켜면 반대로 외부 사이트가 느려지거나 막히기도</td></tr>
+</table>
+</div>
+<div class="box warn">
+<span class="box-title">"어제는 됐는데 오늘 접속이 안 돼요" 점검 순서</span>
+<ol>
+<li><b>이름</b>: <code>Resolve-DnsName 호스트</code> — IP가 나오나? (안 나오면 DNS·VPN)</li>
+<li><b>문</b>: <code>Test-NetConnection 호스트 -Port 443</code> — <code>TcpTestSucceeded : True</code>인가? (False면 방화벽·서버 다운·포트 오타)</li>
+<li><b>대화</b>: 요청을 보내 상태 코드 확인 — 401/403이면 인증·권한, 5xx면 상대 서버, 인증서 에러면 프록시</li>
+</ol>
+<p>이 순서대로 아래 계층부터 확인하면 "코드가 틀렸나?"를 한참 고민하는 시간을 줄일 수 있습니다.</p>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+<div class="lab">
+<div class="step" data-id="cs4-dns">
+<div class="step-title">1. 이름을 주소로 바꾸고, 그 주소의 443번 문 두드리기</div>
+<pre><code>Resolve-DnsName example.com -Type A
+Test-NetConnection example.com -Port 443</code></pre>
+<p>첫 줄에서 IP가, 둘째 줄에서 <code>TcpTestSucceeded : True</code>가 보이면 "주소 찾기 → 문 열기"까지 성공입니다. 회사망에서 False가 나오면 방화벽이 막은 것입니다.</p>
+</div>
+
+<div class="step" data-id="cs4-http">
+<div class="step-title">2. HTTP 응답을 상태 코드 · 헤더 · 바디로 나눠 보기</div>
+<pre><code>$r = Invoke-WebRequest https://example.com -UseBasicParsing
+$r.StatusCode                    # 200
+$r.Headers['Content-Type']       # text/html; charset=utf-8
+$r.Content.Substring(0, 80)      # 바디 앞부분 (HTML)</code></pre>
+<p>브라우저가 매번 하는 일을 손으로 한 것입니다. <code>curl.exe -i https://example.com</code> 으로도 상태 줄과 헤더를 그대로 볼 수 있습니다(PowerShell 5.1에서 <code>curl</code>만 치면 Invoke-WebRequest의 별명이라 <code>curl.exe</code>로 씁니다).</p>
+</div>
+
+<div class="step" data-id="cs4-local">
+<div class="step-title">3. 내 PC에 서버를 띄우고 localhost · 포트 · 404 · 포트 충돌 체험</div>
+<p>PowerShell 창 A에서 서버를 띄웁니다(현재 폴더 파일을 보여 주는 파이썬 내장 웹 서버).</p>
+<pre><code>python -m http.server 8765 --bind 127.0.0.1</code></pre>
+<p>창 B에서 요청을 보내 봅니다.</p>
+<pre><code>(Invoke-WebRequest http://127.0.0.1:8765 -UseBasicParsing).StatusCode       # 200
+try { Invoke-WebRequest http://127.0.0.1:8765/nope.txt -UseBasicParsing }
+catch { [int]$_.Exception.Response.StatusCode }                              # 404
+python -m http.server 8765 --bind 127.0.0.1                                  # 같은 포트로 하나 더?</code></pre>
+<details class="hint"><summary>예상 결과 보기</summary>
+<p>200 → 404 → 마지막 줄은 <code>OSError: [WinError 10048] 각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다</code>. 창 A에는 들어온 요청이 한 줄씩 로그로 찍혀 있습니다(서버 쪽에서 본 같은 대화). 끝나면 창 A에서 <code>Ctrl + C</code>로 서버를 끕니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="cs4-json">
+<div class="step-title">4. JSON 응답을 표로 펴 보기</div>
+<pre><code>$json = '{"data":[{"id":1,"metrics":{"clicks":10}},{"id":2,"metrics":{"clicks":7}}],"paging":{"next_cursor":null}}'
+$obj = $json | ConvertFrom-Json
+$obj.data | Select-Object id, @{n='clicks'; e={$_.metrics.clicks}}
+$obj.paging.next_cursor -eq $null      # True → 마지막 페이지</code></pre>
+<p>중첩된 <code>metrics.clicks</code>를 열로 꺼낸 것이 SQL의 <code>JSON_VALUE</code>, <code>data</code> 배열을 행으로 편 것이 <code>UNNEST</code>입니다. <code>next_cursor</code>가 비어 있으면 수집 루프를 멈춥니다.</p>
+</div>
+</div>
+
+<h2 id="summary">정리</h2>
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+네트워크 요청은 <b>이름(DNS) → 주소와 문(IP:포트) → 잠근 봉투(TLS) → 대화 규칙(HTTP) → 신분증(인증)</b> 순서로 진행되고, 수집 코드는 <b>나눠 받고(페이지네이션), 쉬어 가며 다시 하고(백오프), 두 번 돌려도 같게(멱등)</b> 짭니다.
+</div>
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>401과 403의 차이, 그리고 수집 코드가 각각에서 재시도하면 안 되는 이유를 말해 보세요.</li>
+<li>Docker 컨테이너 안의 Airflow가 <code>localhost:5432</code>로 내 PC의 PostgreSQL에 접속하지 못하는 이유를 설명해 보세요.</li>
+<li>같은 날짜 수집을 두 번 돌렸을 때 데이터가 두 배가 되지 않게 하는 방법 두 가지를 말해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+<div class="q" data-answer="3">
+<p class="q-text">Airflow를 8080 포트로 띄우려는데 "Address already in use"가 납니다. 알맞은 해결은?</p>
+<ol class="q-opts">
+<li>DNS 캐시를 지운다</li>
+<li>HTTPS 인증서를 새로 받는다</li>
+<li>8080을 쓰는 프로그램을 찾아 끄거나, 다른 포트(예: <code>-p 8083:8080</code>)로 띄운다</li>
+<li>관리자 권한으로 같은 포트에 한 번 더 띄운다</li>
+</ol>
+<div class="q-explain">한 포트는 한 프로그램만 열 수 있습니다. 관리자 권한이어도 이미 열린 포트는 못 엽니다. DNS·인증서는 이름 찾기·암호화 단계라 이 에러와 관계없습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">API가 <b>403</b>을 돌려줍니다. 가장 알맞은 해석은?</p>
+<ol class="q-opts">
+<li>누군지는 확인됐지만 이 리소스에 대한 권한이 없다 → 권한 신청이 필요하고 재시도는 소용없다</li>
+<li>서버 일시 장애 → 지수 백오프로 재시도</li>
+<li>호출 한도 초과 → Retry-After만큼 기다린다</li>
+<li>주소가 이사했다 → 새 주소로 자동 이동</li>
+</ol>
+<div class="q-explain">403 Forbidden은 "권한 없음"입니다. 신분증 자체가 없거나 만료된 건 401, 한도 초과는 429, 서버 장애는 5xx, 이사는 3xx입니다. 4xx는 429를 빼면 다시 보내도 같은 답이 옵니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">수집 코드에 꼭 넣어야 하는 재시도 방식으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>모든 에러를 성공할 때까지 0.1초 간격으로 무한 재시도</li>
+<li>재시도 없이 실패하면 바로 다음 날짜로 넘어가기</li>
+<li>400·401·403도 포함해 똑같이 5번 재시도</li>
+<li>429·5xx·타임아웃만 골라, 기다림을 두 배씩 늘리며 정해진 횟수까지 재시도하고 그래도 안 되면 실패로 끝내기</li>
+</ol>
+<div class="q-explain">일시적인 문제(429·5xx·타임아웃)만 재시도 가치가 있고, 짧은 간격의 무한 재시도는 상대 서버를 더 괴롭히고 한도를 더 빨리 소진합니다. 끝내 안 되면 실패(종료 코드 ≠ 0)로 끝내야 알림·재실행이 동작합니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">"getaddrinfo failed" 또는 "호스트를 찾을 수 없습니다" 에러는 어느 단계의 실패일까요?</p>
+<ol class="q-opts">
+<li>HTTP 인증 단계</li>
+<li>DNS — 이름을 IP 주소로 바꾸는 단계</li>
+<li>JSON 파싱 단계</li>
+<li>SQL 문법 검사 단계</li>
+</ol>
+<div class="q-explain">이름을 주소로 못 바꿔서 아예 출발도 못 한 것입니다. 호스트 이름 오타, VPN 꺼짐(회사 내부 이름), 컨테이너 안 네트워크 설정을 먼저 확인합니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">API 토큰을 다루는 방법으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>편하게 쓰도록 <code>load.py</code> 맨 위에 상수로 적고 git에 커밋한다</li>
+<li>커밋한 뒤 다음 커밋에서 지우면 안전하다</li>
+<li>환경 변수·자격 증명 저장소·Secret Manager에 두고 코드는 이름으로만 읽는다. 유출되면 즉시 폐기·재발급한다</li>
+<li>HTTPS를 쓰면 코드에 적어도 안전하다</li>
+</ol>
+<div class="q-explain">git은 지운 내용도 히스토리에 남기므로 한 번 커밋된 비밀은 유출된 것으로 봅니다. HTTPS는 전송 중 엿보기를 막을 뿐, 코드 파일에 적힌 비밀을 지켜 주지 않습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">"2026-11-01 리포트 수집" 작업을 실수로 두 번 돌렸습니다. 데이터가 두 배가 되지 않으려면?</p>
+<ol class="q-opts">
+<li>그날 파티션을 <b>교체(덮어쓰기)</b>하거나 키 기준 MERGE로 적재해 멱등하게 만든다</li>
+<li>INSERT로 계속 추가하고 나중에 사람이 지운다</li>
+<li>POST로 요청하면 자동으로 중복이 제거된다</li>
+<li>페이지 크기를 늘리면 중복이 사라진다</li>
+</ol>
+<div class="q-explain">멱등성은 "몇 번 실행해도 결과가 같음"입니다. 날짜 파티션 교체나 키 기준 MERGE가 대표적입니다. POST는 오히려 멱등하지 않은 메서드이고, 페이지 크기는 중복과 관계없습니다.</div>
+</div>
+</div>
+
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3 · 운영체제와 터미널 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs3">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 3장</div>
+<h1>운영체제와 터미널</h1>
+<p class="lead">코드는 혼자 돌지 않습니다. <b>운영체제(OS)</b>가 메모리를 내주고, 파일을 찾아 주고, 다른 프로그램과 싸우지 않게 순서를 정해 줍니다. 이 장은 "명령을 쳤는데 왜 안 되지?"의 대부분을 설명하는 장입니다.</p>
+<p class="meta-line">읽기 약 50분 · 손으로 해 보기 4개 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>프로그램 · 프로세스 · 스레드를 구분하고 작업 관리자에서 찾아보기</li>
+<li>절대 경로와 상대 경로, "지금 어느 폴더에 있나"가 왜 중요한지 설명하기</li>
+<li><code>python</code>이라고 치면 컴퓨터가 <b>어떤 python.exe</b>를 실행하는지 PATH로 설명하기</li>
+<li>stdout · stderr · 종료 코드가 스케줄러와 Airflow의 성공/실패 판단과 어떻게 이어지는지 말하기</li>
+<li>가상환경(venv)을 "켠다"는 게 실제로 무엇을 바꾸는지 설명하기</li>
+</ul>
+</div>
+
+<h2 id="os">운영체제가 하는 일</h2>
+<p>운영체제(Windows, macOS, Linux)는 <b>하드웨어와 프로그램 사이의 관리인</b>입니다. 내 파이썬 코드가 "파일 열어 줘", "메모리 1GB 줘"라고 하면 직접 디스크나 메모리를 만지지 않고 OS에 부탁합니다. 이 부탁을 <b>시스템 콜</b>이라고 부릅니다.</p>
+
+<pre class="diagram">  ┌───────────────────────────────────────────────┐
+  │  내 프로그램들   python.exe  chrome.exe  dbt ... │   ← 사용자 영역
+  ├───────────────────────────────────────────────┤
+  │  운영체제(커널)                                 │
+  │   · 프로세스 관리   누가 언제 CPU를 쓸지          │
+  │   · 메모리 관리     각자 자기 방만 쓰게           │
+  │   · 파일 시스템     C:\... 이름 ↔ 디스크 위치     │
+  │   · 장치 드라이버   디스크·네트워크카드·화면      │
+  │   · 보안·권한       누가 무엇을 할 수 있나        │
+  ├───────────────────────────────────────────────┤
+  │  하드웨어   CPU · 메모리 · 디스크 · 네트워크       │
+  └───────────────────────────────────────────────┘</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>OS는 <b>공유 주방의 주방장</b>입니다. 요리사(프로그램)가 여러 명이어도 화구(CPU)는 몇 개뿐이라, 주방장이 아주 짧게 번갈아 쓰게 해서 동시에 요리하는 것처럼 보이게 합니다. 냉장고 칸(메모리)도 요리사마다 나눠 주고, 남의 칸을 열면 막습니다. 식재료 창고(디스크)에서 물건을 꺼낼 때도 요리사는 "양파 주세요"라고만 하고, 어느 선반 몇 번째 칸인지는 주방장이 압니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>데이터베이스도 작은 OS처럼 일합니다. 여러 세션이 동시에 쿼리를 보내면 DB가 CPU·메모리·잠금(lock)을 나눠 주고, 권한(GRANT)으로 누가 어떤 테이블을 읽을지 막습니다. OS는 이걸 <b>컴퓨터 전체</b>에 대해 하는 관리인입니다.</p>
+</div>
+
+<h2 id="process">프로그램 · 프로세스 · 스레드</h2>
+<div class="table-wrap">
+<table>
+<tr><th>말</th><th>무엇</th><th>예</th></tr>
+<tr><td><b>프로그램</b></td><td>디스크에 가만히 있는 실행 파일</td><td><code>python.exe</code> 파일 자체</td></tr>
+<tr><td><b>프로세스</b></td><td>프로그램을 실행해서 <b>메모리에 올라와 돌고 있는 것</b>. 자기만의 메모리 공간과 번호(PID)를 가짐</td><td>파이썬 창을 두 개 열면 python.exe 프로세스가 2개</td></tr>
+<tr><td><b>스레드</b></td><td>프로세스 안에서 실제로 일을 하는 실행 줄기. 한 프로세스 안의 스레드들은 메모리를 <b>공유</b></td><td>브라우저 하나가 탭 그리기·다운로드·소리를 각각 다른 스레드로</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>프로그램 = <b>요리책</b>, 프로세스 = 그 요리책을 펴 놓고 <b>지금 요리 중인 주방 한 칸</b>, 스레드 = 그 칸에서 일하는 <b>요리사들</b>. 같은 칸의 요리사들은 도마와 냉장고를 같이 써서 빠르지만, 서로 같은 재료를 동시에 집으면 사고가 납니다(스레드 동시성 버그). 다른 칸(다른 프로세스)끼리는 냉장고가 분리돼 있어 안전하지만, 재료를 주고받으려면 창구(파일·네트워크·파이프)를 거쳐야 합니다.</p>
+</div>
+
+<p>작업 관리자(<code>Ctrl + Shift + Esc</code>) → <b>세부 정보</b> 탭에서 PID와 메모리, 스레드 수(열 추가)를 볼 수 있습니다. PowerShell로는 이렇게 봅니다.</p>
+<pre><code>Get-Process -Name explorer | Select-Object Id, ProcessName, @{n='Threads';e={$_.Threads.Count}}</code></pre>
+<pre class="diagram">     Id ProcessName Threads
+     -- ----------- -------
+  13628 explorer        186      ← 탐색기 하나에 스레드가 186개</pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<ul>
+<li>Airflow의 스케줄러·워커, Spark의 드라이버·익스큐터는 전부 <b>프로세스</b>입니다. "워커가 죽었다" = 그 프로세스가 끝났다는 뜻입니다.</li>
+<li>파이썬은 한 프로세스 안에서 스레드 여러 개가 <b>동시에 계산</b>하기 어렵습니다(GIL이라는 잠금). 그래서 무거운 계산은 프로세스를 여러 개 띄우고, 기다리는 일(API 호출·파일 다운로드)은 스레드로 나눕니다.</li>
+<li>"메모리 부족(Out of Memory)"은 프로세스 하나가 받은 메모리를 넘었을 때 납니다. pandas로 큰 CSV를 통째로 읽다 자주 만납니다.</li>
+</ul>
+</div>
+
+<h2 id="path">파일 시스템과 경로</h2>
+<p>디스크에는 0과 1만 있습니다. "C:\Users\me\data\orders.csv" 같은 <b>이름과 폴더 구조</b>는 파일 시스템(Windows는 주로 NTFS)이 만들어 주는 장부입니다.</p>
+
+<pre class="diagram">  C:\                              ← 드라이브의 뿌리(root)
+  └─ Users\
+     └─ me\                        ← $HOME (집 폴더)
+        ├─ dbt-practice\
+        │  └─ shop\
+        │     ├─ models\
+        │     └─ data\orders.csv
+        └─ Documents\</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>예</th><th>뜻</th></tr>
+<tr><td>절대 경로</td><td><code>C:\Users\me\dbt-practice\shop\data\orders.csv</code></td><td>뿌리부터 전체 주소. 어디서 실행해도 같은 파일</td></tr>
+<tr><td>상대 경로</td><td><code>data\orders.csv</code>, <code>..\shop</code></td><td><b>지금 있는 폴더(현재 작업 폴더)</b> 기준. <code>.</code> = 여기, <code>..</code> = 한 칸 위</td></tr>
+<tr><td>집 폴더</td><td><code>~</code>, <code>$HOME</code>, <code>%USERPROFILE%</code></td><td>사용자마다 다른 <code>C:\Users\이름</code></td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">자주 터지는 경로 함정 4가지</span>
+<ol>
+<li><b>상대 경로는 "어디서 실행했나"에 따라 바뀝니다.</b> <code>shop</code> 폴더에서 <code>dbt run</code>은 되는데 한 칸 위에서는 "dbt_project.yml을 찾을 수 없음"이 나는 이유입니다. 스케줄러로 돌리면 시작 폴더가 엉뚱한 곳(<code>C:\Windows\System32</code> 등)인 경우가 많아, 스크립트 안에서는 절대 경로나 "스크립트 파일 기준" 경로를 씁니다.</li>
+<li><b>공백이 있는 경로는 따옴표로 감쌉니다.</b> <code>cd C:\Program Files</code> 는 <code>C:\Program</code> 과 <code>Files</code> 두 조각으로 읽힐 수 있습니다 → <code>cd "C:\Program Files"</code>.</li>
+<li><b>\ 와 /</b>: Windows는 <code>\</code>, Linux·macOS·URL은 <code>/</code>. 파이썬 문자열에서 <code>"C:\new"</code>의 <code>\n</code>은 줄바꿈으로 읽힙니다 → <code>r"C:\new"</code> 나 <code>"C:/new"</code>(Windows도 대부분 <code>/</code>를 받아 줌), 가장 좋은 건 <code>pathlib.Path</code>.</li>
+<li><b>대소문자</b>: Windows는 <code>Orders.csv</code>와 <code>orders.csv</code>를 같은 파일로 보지만 Linux(대부분의 서버·Docker 컨테이너)는 다른 파일로 봅니다. 내 PC에서 되던 게 서버에서 "파일 없음"이 되는 단골 원인입니다.</li>
+</ol>
+</div>
+
+<pre data-file="경로를 안전하게 다루는 파이썬"><code>from pathlib import Path                      # 경로 전용 도구 (문자열 덧셈 대신)
+
+HERE = Path(__file__).resolve().parent         # 이 .py 파일이 있는 폴더 — 어디서 실행해도 같음
+data = HERE / "data" / "orders.csv"            # / 로 이어 붙이면 OS에 맞는 구분자로 만들어 줌
+print(data.exists())                           # 파일이 있으면 True (SQL의 IF EXISTS 같은 확인)</code></pre>
+
+<h2 id="shell">셸 · 터미널 · 콘솔 — 검은 창의 정체</h2>
+<p>세 단어를 섞어 쓰지만 원래 다른 것입니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>말</th><th>하는 일</th><th>예</th></tr>
+<tr><td><b>터미널(콘솔) 창</b></td><td>글자를 보여 주고 키보드 입력을 받는 <b>창</b></td><td>Windows 터미널, VS Code 아래쪽 터미널 패널</td></tr>
+<tr><td><b>셸</b></td><td>입력한 글자를 <b>해석해서 명령을 실행하는 프로그램</b></td><td>PowerShell, cmd, bash(Git Bash·Linux·macOS의 zsh)</td></tr>
+<tr><td><b>명령(프로그램)</b></td><td>셸이 실행시키는 실제 프로그램</td><td><code>python</code>, <code>git</code>, <code>dbt</code>, <code>docker</code></td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>터미널은 <b>전화기</b>, 셸은 전화를 받는 <b>비서</b>, 명령은 비서가 일을 맡기는 <b>각 부서</b>입니다. 같은 전화기(Windows 터미널)로 영어 쓰는 비서(bash)와도, 한국어 쓰는 비서(PowerShell)와도 통화할 수 있습니다. 비서마다 알아듣는 말(문법)이 달라서, bash용 명령을 PowerShell 비서에게 말하면 못 알아듣습니다.</p>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>하고 싶은 일</th><th>PowerShell</th><th>cmd</th><th>bash</th></tr>
+<tr><td>현재 폴더</td><td><code>pwd</code> / <code>Get-Location</code></td><td><code>cd</code></td><td><code>pwd</code></td></tr>
+<tr><td>파일 목록</td><td><code>ls</code> / <code>Get-ChildItem</code></td><td><code>dir</code></td><td><code>ls -la</code></td></tr>
+<tr><td>환경 변수 읽기</td><td><code>$env:PATH</code></td><td><code>%PATH%</code></td><td><code>$PATH</code></td></tr>
+<tr><td>잠깐 환경 변수 바꾸고 실행</td><td><code>$env:X='1'; cmd</code></td><td><code>set X=1 &amp;&amp; cmd</code></td><td><code>X=1 cmd</code></td></tr>
+<tr><td>줄 이어 쓰기</td><td><code>`</code> (백틱)</td><td><code>^</code></td><td><code>\</code></td></tr>
+<tr><td>앞 명령 성공하면 다음</td><td><code>A; if ($?) { B }</code> (5.1) / <code>A &amp;&amp; B</code> (7+)</td><td><code>A &amp;&amp; B</code></td><td><code>A &amp;&amp; B</code></td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">인터넷에서 복사한 명령이 안 될 때</span>
+<p>블로그·공식 문서의 명령은 대부분 <b>bash(Linux·macOS) 기준</b>입니다. 줄 끝 <code>\</code>, <code>export X=1</code>, <code>source .venv/bin/activate</code> 같은 게 보이면 bash용입니다. PowerShell에서는 <code>`</code>, <code>$env:X='1'</code>, <code>.\.venv\Scripts\Activate.ps1</code> 로 바꿔야 합니다. Docker 컨테이너 안은 거의 항상 Linux + bash 입니다.</p>
+</div>
+
+<h2 id="env">환경 변수와 PATH — 컴퓨터는 명령을 어떻게 찾나</h2>
+<p><b>환경 변수</b>는 프로세스가 태어날 때 물려받는 <b>이름=값 쪽지 묶음</b>입니다. 부모 프로세스(셸)의 쪽지를 자식 프로세스(python)가 복사해서 받습니다. 접속 정보·설정·비밀 키를 코드 밖에 두는 데 많이 씁니다(<code>DBT_PROFILES_DIR</code>, <code>GOOGLE_APPLICATION_CREDENTIALS</code> 등).</p>
+<p>그중 제일 중요한 게 <b>PATH</b>입니다. <code>python</code>이라고만 쳤을 때 셸은 PATH에 적힌 폴더를 <b>앞에서부터 차례로</b> 뒤져서 처음 찾은 <code>python.exe</code>를 실행합니다.</p>
+
+<pre class="diagram">  > python
+     │
+     ▼  PATH = C:\proj\.venv\Scripts ; C:\...\Python312 ; C:\...\WindowsApps ; ...
+     │
+     ├─ ① C:\proj\.venv\Scripts\python.exe   있다! → 이걸 실행 (뒤는 안 봄)
+     ├─ ② C:\...\Python312\python.exe         (확인 안 함)
+     └─ ③ C:\...\WindowsApps\python.exe       (스토어 설치 유도용 가짜 바로가기)
+
+  어디에도 없으면 → "'python' 용어가 cmdlet, 함수 ... 이름으로 인식되지 않습니다"</pre>
+
+<pre><code>Get-Command python            # 실제로 실행될 하나 (PowerShell)
+where.exe python              # PATH 순서대로 후보 전부
+$env:PATH -split ';'          # PATH 폴더 목록 한 줄씩</code></pre>
+<pre class="diagram">  where.exe python 결과 예
+  C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe   ← 이게 이김
+  C:\Users\me\AppData\Local\Microsoft\WindowsApps\python.exe</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>PATH는 <b>"이 이름의 사람을 찾을 때 들러 볼 사무실 순서표"</b>입니다. "김대리 불러 줘" 하면 비서가 순서표 첫 사무실부터 들르고, 처음 만난 김대리를 데려옵니다. 김대리가 두 명이면 <b>순서표 앞쪽 사무실의 김대리</b>가 옵니다. "설치했는데 옛날 버전이 실행돼요"는 대부분 이 문제입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>PATH는 데이터베이스의 <b>search_path</b>(PostgreSQL)나 기본 데이터셋 설정과 똑같습니다. <code>SELECT * FROM orders</code> 처럼 스키마 없이 쓰면 search_path 순서대로 찾아서 첫 번째 <code>orders</code>를 씁니다. <code>dev.orders</code>와 <code>prod.orders</code>가 둘 다 있을 때 엉뚱한 쪽을 읽는 사고 = PATH에 python이 두 개일 때 엉뚱한 쪽이 실행되는 사고.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">환경 변수를 바꿨는데 반영이 안 될 때</span>
+<p>환경 변수는 프로세스가 <b>시작할 때 한 번 복사</b>됩니다. 시스템 설정에서 PATH를 고쳐도 이미 열려 있는 터미널·VS Code는 옛 값을 들고 있습니다. <b>창을 새로 열면</b> 해결됩니다. 반대로 <code>$env:X='1'</code>로 바꾼 값은 그 창(과 거기서 띄운 자식)에서만 살고, 창을 닫으면 사라집니다.</p>
+</div>
+
+<h2 id="io">표준 입출력 · 파이프 · 종료 코드</h2>
+<p>모든 프로세스는 태어날 때 통로 세 개를 받습니다.</p>
+<pre class="diagram">                 ┌──────────────┐
+   stdin  (0) ──▶│              │──▶ stdout (1)  정상 출력: print() 결과, 쿼리 결과
+   키보드·파이프 │   프로세스    │
+                 │              │──▶ stderr (2)  에러·경고·로그 (화면엔 같이 보이지만 다른 통로)
+                 └──────┬───────┘
+                        └──▶ 종료 코드  끝날 때 남기는 숫자 하나. 0 = 성공, 그 외 = 실패</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>기호</th><th>뜻</th><th>예</th></tr>
+<tr><td><code>|</code> 파이프</td><td>앞 명령의 출력을 뒤 명령의 입력으로</td><td><code>Get-Process | Sort-Object CPU -Descending | Select-Object -First 5</code></td></tr>
+<tr><td><code>&gt;</code></td><td>stdout을 파일로 (덮어쓰기)</td><td><code>dbt ls &gt; models.txt</code></td></tr>
+<tr><td><code>&gt;&gt;</code></td><td>stdout을 파일 끝에 덧붙이기</td><td><code>... &gt;&gt; run.log</code></td></tr>
+<tr><td><code>2&gt;</code></td><td>stderr만 따로</td><td><code>python job.py 2&gt; err.log</code></td></tr>
+</table>
+</div>
+
+<p><b>종료 코드</b>는 아주 작지만 자동화의 핵심입니다. 사람은 화면의 빨간 글씨로 실패를 알지만, <b>스케줄러·Airflow·CI는 종료 코드 숫자 하나만 봅니다.</b></p>
+<pre><code>python -c "import sys; sys.exit(2)"   # 파이썬이 종료 코드 2로 끝남
+$LASTEXITCODE                         # PowerShell에서 방금 끝난 프로그램의 종료 코드 → 2</code></pre>
+
+<div class="box warn">
+<span class="box-title">"에러 메시지는 나왔는데 성공으로 처리됐어요"</span>
+<p>스크립트가 에러를 <code>try/except</code>로 잡아 <code>print</code>만 하고 정상 종료하면 종료 코드는 <b>0</b>입니다. Airflow의 BashOperator, Windows 작업 스케줄러는 이걸 <b>성공</b>으로 기록합니다. 실패는 숨기지 말고 <code>raise</code> 하거나 <code>sys.exit(1)</code>로 끝내야 재시도·알림이 동작합니다. bat 파일도 마지막 명령의 종료 코드가 bat 전체의 결과가 되니, 중간 실패를 <code>if errorlevel 1 exit /b 1</code> 로 넘겨줘야 합니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>stdout = 쿼리 <b>결과 집합</b>, stderr = <b>메시지 탭</b>(경고·에러), 종료 코드 = 프로시저가 <b>RAISE 하고 끝났는지</b>. 프로시저 안에서 예외를 잡고 아무것도 안 하면 호출한 쪽은 성공한 줄 아는 것과 똑같습니다.</p>
+</div>
+
+<h2 id="perm">권한 · 관리자 · 회사 PC 보안 정책</h2>
+<p>OS는 <b>누가 실행했나(사용자 계정)</b>에 따라 할 수 있는 일을 나눕니다. Windows는 관리자 계정이라도 평소엔 일반 권한으로 돌다가, 시스템을 바꿀 때만 "이 앱이 디바이스를 변경하도록 허용하시겠어요?" 창(<b>UAC</b>)으로 권한을 올립니다.</p>
+<ul>
+<li><b>관리자 권한이 필요한 일</b>: <code>C:\Program Files</code>에 쓰기, 시스템 전체 환경 변수 변경, 서비스 설치, 다른 사용자 프로세스 종료</li>
+<li><b>필요 없는 일</b>: 내 집 폴더(<code>C:\Users\나</code>) 안의 모든 작업, 사용자 환경 변수, venv에 패키지 설치. 그래서 파이썬·dbt 작업은 집 폴더 안에서 하는 게 편합니다.</li>
+<li>관리자 권한으로 띄운 창은 일반 권한 프로그램이 <b>건드릴 수 없습니다</b>(창 이동·키 입력 자동화가 막힘). 자동화 스크립트가 어떤 창만 조작 못 하면 이걸 의심하세요.</li>
+</ul>
+
+<div class="box warn">
+<span class="box-title">회사 PC: "설치는 됐는데 실행이 안 돼요"</span>
+<p>회사 PC에는 보통 <b>앱 제어(애플리케이션 허용 목록) · 백신(EDR)</b> 정책이 걸려 있습니다. 이 정책은 <b>서명되지 않았거나 처음 보는 실행 파일(.exe)·라이브러리(.dll, 파이썬의 .pyd)</b>를 실행 순간에 막습니다. 그래서 이런 일이 생깁니다.</p>
+<ul>
+<li><code>pip install</code>은 성공(파일 복사일 뿐)했는데 <code>import</code>에서 "DLL load failed" 류의 에러</li>
+<li>어떤 패키지는 최신 버전만 막히고 한두 단계 낮은 버전은 됨 → 버전을 고정해서 씀</li>
+<li>직접 만든 exe(PyInstaller 등)는 서명이 없어 막힘 → 스크립트를 파이썬으로 직접 실행하는 bat로 대신</li>
+</ul>
+<p>정책을 우회하려 하지 말고, 막히는 이름과 버전을 기록해 두고 보안 담당자에게 허용을 요청하는 것이 정석입니다.</p>
+</div>
+
+<h2 id="schedule">서비스와 예약 작업 — 내가 없어도 도는 프로그램</h2>
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>Windows</th><th>Linux</th><th>뜻</th></tr>
+<tr><td>계속 떠 있는 프로그램</td><td>서비스(<code>services.msc</code>)</td><td>데몬(systemd)</td><td>로그인 안 해도 뒤에서 계속 도는 프로세스. DB 서버, Docker 엔진 등</td></tr>
+<tr><td>정해진 시각에 실행</td><td>작업 스케줄러(<code>taskschd.msc</code>)</td><td>cron</td><td>"매일 6시에 이 명령" 예약</td></tr>
+</table>
+</div>
+<pre class="diagram">  cron 표기 (Airflow schedule 에도 그대로 씀)
+
+   ┌──── 분 (0-59)
+   │ ┌── 시 (0-23)
+   │ │ ┌ 일 (1-31)
+   │ │ │ ┌ 월 (1-12)
+   │ │ │ │ ┌ 요일 (0-6, 0=일)
+   0 6 * * 1-5     → 평일 매일 06:00
+   0 6 1 * *       → 매월 1일 06:00</pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<p>작업 스케줄러·cron은 "시각이 되면 명령 실행 + 종료 코드 기록"까지만 합니다. 앞 작업이 끝나야 뒤 작업을 돌리기, 실패 시 재시도, 지난 날짜 다시 돌리기(백필), 알림 — 이게 필요해지는 순간이 <b>Airflow 같은 오케스트레이터</b>로 넘어갈 때입니다. 또 예약 작업은 <b>내 로그인 창과 다른 환경</b>에서 돌기 때문에, 시작 폴더·PATH·환경 변수가 달라서 "손으로 하면 되는데 예약하면 실패"가 흔합니다. 예약 작업에서는 절대 경로를 쓰고, 출력을 로그 파일로 남기세요.</p>
+</div>
+
+<h2 id="venv">가상환경(venv)은 실제로 무엇을 하나</h2>
+<p><code>python -m venv .venv</code>는 대단한 마법이 아니라 <b>폴더 하나</b>를 만듭니다. 그 안에 python 실행 파일(또는 바로가기)과 빈 <code>Lib\site-packages</code>(패키지 설치 장소)가 들어 있습니다. <code>Activate.ps1</code>로 "켠다"는 것은 사실상 딱 두 가지입니다.</p>
+<ol>
+<li><b>PATH 맨 앞에</b> <code>.venv\Scripts</code>를 끼워 넣는다 → 이제 <code>python</code>, <code>pip</code>, <code>dbt</code>가 이 폴더 것부터 찾아짐</li>
+<li>프롬프트 앞에 <code>(.venv)</code>를 붙여 켜져 있다고 보여 준다</li>
+</ol>
+<pre class="diagram">  켜기 전  PATH = C:\...\Python312 ; ...            python → 전역 파이썬
+  켠 후    PATH = C:\proj\.venv\Scripts ; C:\...\Python312 ; ...
+                  ^^^^^^^^^^^^^^^^^^^^^ 맨 앞에 추가    python → 이 프로젝트 파이썬
+  deactivate     PATH 원래대로</pre>
+<p>그래서 켜지 않고도 <code>.venv\Scripts\python.exe job.py</code> 처럼 <b>전체 경로로 실행하면 똑같이 동작</b>합니다. 예약 작업·bat 파일에서는 activate 대신 이렇게 쓰는 게 안전합니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>venv는 프로젝트마다 둔 <b>개인 공구함</b>이고, activate는 "공구 찾을 때 <b>내 공구함부터 열어 봐</b>"라고 순서표(PATH) 맨 위에 적는 일입니다. 공구함을 안 열어도, 공구함 안 드라이버를 직접 집어 들면(전체 경로 실행) 그 드라이버를 쓰게 됩니다.</p>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+<div class="lab">
+<div class="step" data-id="cs3-proc">
+<div class="step-title">1. 지금 메모리를 가장 많이 쓰는 프로세스 5개 보기</div>
+<pre><code>Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 Id, ProcessName, @{n='MemMB';e={[int]($_.WorkingSet64/1MB)}}</code></pre>
+<p>파이프(<code>|</code>)로 "전부 가져오기 → 정렬 → 위 5개 → 열 고르기"를 이었습니다. SQL로 치면 <code>SELECT ... ORDER BY mem DESC LIMIT 5</code> 입니다. 작업 관리자 세부 정보 탭의 PID와 같은지 비교해 보세요.</p>
+</div>
+
+<div class="step" data-id="cs3-path">
+<div class="step-title">2. 내 python 은 어디에 있나</div>
+<pre><code>Get-Command python | Select-Object Source
+where.exe python
+($env:PATH -split ';').Count</code></pre>
+<p>후보가 여러 개면 맨 위가 실행됩니다. 이어서 아무 프로젝트의 venv를 켠 뒤(<code>.\.venv\Scripts\Activate.ps1</code>) 같은 명령을 다시 쳐서 <b>맨 위가 바뀌는 것</b>을 확인하세요. <code>deactivate</code> 후 다시 원래대로 돌아오는지도 봅니다.</p>
+</div>
+
+<div class="step" data-id="cs3-stream">
+<div class="step-title">3. stdout 과 stderr 가 다른 통로인지 확인</div>
+<pre><code>python -c "import sys; print('정상 출력'); print('에러 출력', file=sys.stderr)" 2&gt; err.txt
+Get-Content err.txt</code></pre>
+<p>화면에는 "정상 출력"만 보이고, "에러 출력"은 <code>err.txt</code>로 갔습니다. 두 줄이 같은 화면에 섞여 보이던 이유는 "둘 다 화면으로 보내는 게 기본값"이었기 때문입니다.</p>
+</div>
+
+<div class="step" data-id="cs3-exit">
+<div class="step-title">4. 종료 코드로 성공/실패 갈라 보기</div>
+<p>아래를 실행해 각 줄 뒤에 찍히는 숫자를 확인하세요.</p>
+<pre><code>python -c "print('ok')"; "종료 코드: $LASTEXITCODE"
+python -c "raise ValueError('일부러 실패')"; "종료 코드: $LASTEXITCODE"
+python -c "import sys; sys.exit(3)"; "종료 코드: $LASTEXITCODE"</code></pre>
+<details class="hint"><summary>예상 결과 보기</summary>
+<p>0 → 1 → 3. 처리되지 않은 예외로 파이썬이 끝나면 종료 코드는 <b>1</b>입니다. 스케줄러·Airflow는 0이 아니면 실패로 봅니다.</p>
+</details>
+</div>
+</div>
+
+<h2 id="summary">정리</h2>
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+"명령이 안 돼요"의 대부분은 <b>어느 폴더에서(현재 경로), 어떤 프로그램이(PATH), 어떤 권한·환경 변수로</b> 실행됐는지의 문제이고, 자동화는 <b>종료 코드</b> 하나로 성공과 실패를 판단합니다.
+</div>
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>venv를 activate 하지 않고도 그 venv의 dbt를 실행하는 방법과, 그게 왜 되는지를 PATH로 설명해 보세요.</li>
+<li>손으로 돌리면 되는 스크립트가 작업 스케줄러에서만 실패할 때 의심할 것 세 가지를 말해 보세요.</li>
+<li>에러를 잡아서 로그만 찍는 스크립트가 Airflow에서 "성공"으로 나오는 이유를 종료 코드로 설명해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+<div class="q" data-answer="2">
+<p class="q-text">파이썬 창을 두 개 띄웠을 때 맞는 설명은?</p>
+<ol class="q-opts">
+<li>프로그램 2개, 프로세스 1개</li>
+<li>프로그램(python.exe 파일) 1개, 프로세스 2개</li>
+<li>프로세스 1개 안에 스레드 2개</li>
+<li>프로그램 2개, 프로세스 2개</li>
+</ol>
+<div class="q-explain">디스크의 python.exe 파일(프로그램)은 하나지만, 실행할 때마다 각자 메모리 공간과 PID를 가진 프로세스가 새로 생깁니다. 두 창은 메모리를 공유하지 않으므로 같은 프로세스 안의 스레드가 아닙니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text"><code>pip install</code>로 새 버전을 깔았는데 <code>python -c "import x; print(x.__version__)"</code>가 옛 버전을 보여 줍니다. 가장 먼저 의심할 것은?</p>
+<ol class="q-opts">
+<li>디스크가 가득 찼다</li>
+<li>인터넷이 끊겨서 설치가 안 됐다</li>
+<li>파이썬 버전이 너무 높다</li>
+<li><code>pip</code>과 <code>python</code>이 서로 다른 파이썬(예: venv와 전역)을 가리킨다</li>
+</ol>
+<div class="q-explain">PATH 순서 때문에 pip은 A 파이썬에, python은 B 파이썬에 연결되는 일이 흔합니다. <code>where.exe python</code>, <code>where.exe pip</code>로 확인하고, <code>python -m pip install</code> 처럼 "이 python의 pip"으로 설치하면 섞이지 않습니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">스크립트가 예외를 <code>except</code>로 잡고 <code>print</code>만 한 뒤 끝났습니다. Airflow BashOperator는 이 태스크를 어떻게 기록할까요?</p>
+<ol class="q-opts">
+<li>성공 — 종료 코드가 0이라서</li>
+<li>실패 — 화면에 에러 글자가 찍혀서</li>
+<li>실패 — stderr에 무언가 출력돼서</li>
+<li>보류 — 사람이 판단할 때까지</li>
+</ol>
+<div class="q-explain">자동화 도구는 출력 내용이 아니라 종료 코드를 봅니다. 예외를 삼키고 정상 종료하면 0이므로 성공입니다. 실패로 남기려면 다시 <code>raise</code> 하거나 0이 아닌 코드로 <code>sys.exit</code> 해야 합니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text"><code>shop</code> 폴더에서는 되던 <code>python load.py</code>가 다른 폴더에서 실행하면 "data\orders.csv 없음" 에러를 냅니다. 원인과 해결로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>파일 이름 대소문자 문제 → 이름을 대문자로 바꾼다</li>
+<li>권한 문제 → 관리자 권한으로 실행한다</li>
+<li>상대 경로가 현재 작업 폴더 기준이라서 → 스크립트 파일 위치 기준 경로(<code>Path(__file__).parent</code>)를 쓴다</li>
+<li>PATH 문제 → PATH에 data 폴더를 추가한다</li>
+</ol>
+<div class="q-explain">상대 경로 <code>data\orders.csv</code>는 "지금 있는 폴더" 기준이라 실행 위치가 바뀌면 다른 곳을 찾습니다. PATH는 실행 파일을 찾을 때 쓰는 목록이지 데이터 파일 위치와는 관계없습니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">venv를 activate 하면 실제로 일어나는 핵심 변화는?</p>
+<ol class="q-opts">
+<li>파이썬이 새로 설치된다</li>
+<li>PATH 맨 앞에 <code>.venv\Scripts</code>가 추가된다</li>
+<li>다른 프로젝트의 패키지가 삭제된다</li>
+<li>관리자 권한으로 바뀐다</li>
+</ol>
+<div class="q-explain">activate는 PATH 앞에 venv 폴더를 끼워서 python·pip·dbt가 그쪽부터 찾아지게 할 뿐입니다. 그래서 activate 없이 <code>.venv\Scripts\python.exe</code>로 직접 실행해도 같은 결과가 납니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">회사 PC에서 <code>pip install</code>은 성공했는데 <code>import</code> 순간 DLL을 불러오지 못한다는 에러가 납니다. 가장 그럴듯한 설명은?</p>
+<ol class="q-opts">
+<li>pip이 패키지를 반만 내려받았다</li>
+<li>import 문법이 틀렸다</li>
+<li>PATH가 너무 길다</li>
+<li>보안 정책(앱 제어)이 처음 보는 DLL·pyd의 <b>실행(불러오기)</b>을 막았다</li>
+</ol>
+<div class="q-explain">설치는 파일 복사라 통과하지만, 앱 제어 정책은 그 파일을 실제로 불러오는 순간 막습니다. 막히는 버전을 기록해 두고 허용 요청을 하거나, 허용된 낮은 버전으로 고정해 씁니다.</div>
+</div>
+</div>
+
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

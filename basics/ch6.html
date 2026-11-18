@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6 · 소프트웨어를 만드는 습관 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs6">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 6장</div>
+<h1>소프트웨어를 만드는 습관</h1>
+<p class="lead">코드는 한 번 쓰고 끝나지 않습니다. 고치고, 남이 읽고, 다른 컴퓨터에서 돌리고, 몇 달 뒤 내가 다시 봅니다. 이 장은 개발자들이 수십 년간 다치면서 만든 <b>습관과 도구</b>를 모았습니다. dbt가 "SQL에 소프트웨어 습관을 붙인 도구"라고 할 때의 그 습관이 바로 이것들입니다.</p>
+<p class="meta-line">읽기 약 60분 · 손으로 해 보기 약 30분 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>git의 커밋·브랜치·원격·머지를 그림으로 설명하고, 충돌을 직접 풀어 보기</li>
+<li>버전 번호(SemVer)를 읽고, 왜 버전을 고정해야 하는지 말하기</li>
+<li>테스트·로그·설정과 비밀을 어떻게 다루는지 말하기</li>
+<li>Docker 이미지와 컨테이너, 클라우드의 IaaS·PaaS·서버리스를 구분하기</li>
+<li>CI/CD와 코드 리뷰가 무엇을 막아 주는지 말하기</li>
+</ul>
+</div>
+
+<h2 id="git">버전 관리 — git</h2>
+
+<p><b>git</b>은 "파일의 변경 이력을 사진처럼 찍어 두는 도구"입니다. 찍은 사진 한 장을 <b>커밋(commit)</b>이라고 합니다. 커밋에는 "누가, 언제, 무엇을, 왜 바꿨는지"가 남고, 언제든 그 시점으로 돌아갈 수 있습니다.</p>
+
+<pre class="diagram">  git의 세 칸                                       원격 저장소 (GitHub 등)
+
+  ┌──────────┐  git add   ┌──────────┐  git commit  ┌──────────┐  git push   ┌──────────┐
+  │ 작업 폴더 │ ─────────▶ │ 스테이징  │ ───────────▶ │ 로컬 저장소│ ──────────▶ │  원격     │
+  │ (내 파일) │            │ (올릴 것) │              │ (커밋 이력)│ ◀────────── │ (공유본)  │
+  └──────────┘            └──────────┘              └──────────┘  git pull   └──────────┘</pre>
+
+<ul>
+<li><b>스테이징</b>: "이번 사진에 넣을 변경만 골라 담는 바구니". 파일 10개를 고쳤어도 관련 있는 3개만 한 커밋으로 묶을 수 있습니다.</li>
+<li><b>브랜치(branch)</b>: 이력의 <b>갈래</b>. 본선(main)은 그대로 두고 옆 갈래에서 실험한 뒤, 괜찮으면 합칩니다.</li>
+<li><b>머지(merge)</b>: 두 갈래를 합치기. 서로 다른 줄을 고쳤다면 git이 알아서 합칩니다.</li>
+<li><b>충돌(conflict)</b>: 두 갈래가 <b>같은 줄을 다르게</b> 고쳤을 때. git은 누가 맞는지 모르니 사람에게 고르라고 표시해 줍니다.</li>
+<li><b>원격(remote)</b>: GitHub·GitLab 같은 서버에 둔 공유본. <code>push</code>로 올리고 <code>pull</code>로 받습니다.</li>
+</ul>
+
+<pre class="diagram">  브랜치와 머지
+
+  main  ●───●───────────●─── (합친 커밋)
+             \         /
+  fix         ●───●───      ← 옆 갈래에서 고치고 시험한 뒤 합침</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>git은 <b>게임의 세이브 포인트</b>입니다. 보스 앞에서 저장(커밋)해 두면, 지더라도 그 지점으로 돌아갑니다. 브랜치는 <b>세이브 파일을 복사해 "다른 길로 가 보기"</b>입니다. 그 길이 좋았으면 본 세이브에 합치고, 아니면 버리면 됩니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>DB 안에 저장된 프로시저는 <code>CREATE OR REPLACE</code> 하는 순간 예전 버전이 사라집니다. 그래서 <code>sp_build_v2_final_진짜최종</code> 같은 이름이 생기죠. dbt 모델은 전부 파일이라 git으로 관리되고, "3주 전 그 로직"을 <code>git log</code>로 찾아 그대로 되살릴 수 있습니다.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">⚠️ 비밀은 절대 커밋하지 않는다</span>
+<ul>
+<li>API 키, 비밀번호, 서비스 계정 키 파일(<code>*.json</code>), <code>.env</code> 파일은 <b>한 번이라도 커밋하면 이력에 영원히 남습니다</b>. 다음 커밋에서 지워도 과거 커밋을 열면 보입니다. 공개 저장소라면 자동으로 키를 긁어 가는 봇도 있습니다.</li>
+<li>실수로 올렸다면 지우는 것보다 <b>먼저 그 키를 폐기(재발급)</b>하세요.</li>
+<li><code>.gitignore</code> 파일에 "git이 무시할 파일 목록"을 적어 둡니다. 예: <code>.env</code>, <code>__pycache__/</code>, <code>.venv/</code>, <code>target/</code>(dbt 결과물), <code>*.duckdb</code>.</li>
+</ul>
+</div>
+
+<h2 id="packages">패키지·의존성·버전 번호</h2>
+
+<p>요즘 프로그램은 거의 다 남이 만든 코드(<b>패키지, 라이브러리</b>) 위에 서 있습니다. dbt 하나를 설치해도 그 아래로 수십 개 패키지가 딸려 옵니다. 내가 직접 쓰는 패키지가 기대는 패키지까지 포함한 전체를 <b>의존성(dependency)</b>이라고 합니다.</p>
+
+<pre class="diagram">  내 프로젝트
+   └─ dbt-duckdb 1.11.1
+       ├─ dbt-core 1.12.x
+       │   ├─ Jinja2      ← SQL 안의 {{ }} 를 풀어 줌
+       │   ├─ PyYAML      ← yml 설정 읽기
+       │   └─ ... 수십 개
+       └─ duckdb</pre>
+
+<p>버전 번호는 보통 <b>SemVer(유의적 버전)</b> 규칙을 따릅니다. <code>주.부.수</code> 세 숫자입니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>자리</th><th>예: 2.4.1 → ?</th><th>뜻</th><th>내 코드에 미치는 영향</th></tr>
+<tr><td>주(MAJOR)</td><td>3.0.0</td><td>예전 방식과 <b>호환이 깨지는</b> 변경</td><td>고쳐야 할 수 있음. 바로 올리지 말 것</td></tr>
+<tr><td>부(MINOR)</td><td>2.5.0</td><td>기능 추가, 예전 방식은 유지</td><td>대개 안전</td></tr>
+<tr><td>수(PATCH)</td><td>2.4.2</td><td>버그 수정</td><td>대개 안전</td></tr>
+</table>
+</div>
+
+<p>"대개"라고 쓴 데는 이유가 있습니다. 모든 프로젝트가 규칙을 철저히 지키는 건 아니고, 회사 보안 정책처럼 <b>코드 바깥 사정</b>으로 새 버전이 안 돌기도 합니다. 그래서 운영 코드는 <b>버전을 고정(pin)</b>합니다.</p>
+
+<pre data-file="requirements.txt"><code># == 는 정확히 이 버전, &lt; 는 이 버전 미만
+dbt-core==1.12.6
+dbt-duckdb==1.11.1
+pandas&lt;3.0          # 3.x 가 이 환경에서 안 돌아서 묶어 둠 — 이유를 주석으로 남긴다</code></pre>
+
+<pre><code>pip install -r requirements.txt   # 적힌 그대로 설치
+pip freeze &gt; requirements.txt     # 지금 가상환경에 깔린 버전을 전부 기록</code></pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>요리 레시피에 "간장 조금"이라고 쓰면 사람마다 맛이 달라집니다. "○○ 진간장 15ml"라고 쓰면 누가 해도 같은 맛이 나죠. 버전 고정은 <b>재료를 상표와 양까지 적는 것</b>입니다. 그리고 간장 회사가 맛을 바꾸면(주 버전 변경) 레시피도 다시 맞춰 봐야 합니다.</p>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는 — 가상환경 다시 보기</span>
+<p>1일차에 만든 <code>.venv</code>가 바로 이 문제를 푸는 장치입니다. 프로젝트마다 자기 패키지 방을 따로 두니, A 프로젝트가 pandas 2를, B 프로젝트가 pandas 3을 써도 부딪히지 않습니다. 규칙은 세 가지: <b>프로젝트마다 가상환경 하나</b>, <b>작업 전에 Activate</b>, <b>설치한 것은 requirements.txt에 기록</b>. <code>.venv</code> 폴더 자체는 커밋하지 않습니다(requirements.txt만 있으면 다시 만들 수 있으니까요).</p>
+</div>
+
+<h2 id="tests">테스트 — "맞다"를 자동으로 확인하기</h2>
+
+<p>테스트는 "이 코드가 이렇게 동작해야 한다"를 <b>코드로 적어 둔 것</b>입니다. 사람이 매번 눈으로 확인하는 대신, 명령 하나로 수백 개를 몇 초 만에 확인합니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>종류</th><th>무엇을</th><th>예</th></tr>
+<tr><td>단위 테스트(unit)</td><td>함수 하나를 따로 떼어</td><td><code>clean_status(" Shipped") == "shipped"</code></td></tr>
+<tr><td>통합 테스트(integration)</td><td>여러 부분이 같이 맞물려 도는지</td><td>파일 읽기 → 가공 → DB 적재까지 실제로 돌려 보기</td></tr>
+<tr><td>데이터 테스트</td><td>코드가 아니라 <b>결과 데이터</b>가 규칙을 지키는지</td><td>dbt의 <code>unique</code>, <code>not_null</code>, <code>relationships</code></td></tr>
+</table>
+</div>
+
+<p>코드 테스트와 데이터 테스트는 다른 것을 지킵니다. 코드가 완벽해도 원천 데이터가 어느 날 중복으로 들어오면 결과가 틀립니다. 그래서 데이터 엔지니어는 <b>둘 다</b> 씁니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>단위 테스트는 <b>부품 검사</b>(나사 하나하나 규격 확인), 통합 테스트는 <b>조립 후 시운전</b>, 데이터 테스트는 <b>매일 들어오는 재료 검수</b>입니다. 공장이 완벽해도 상한 재료가 들어오면 불량품이 나옵니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>프로시저 끝에 <code>IF (SELECT COUNT(*) ... ) &gt; 0 THEN RAISE ...</code>를 넣어 중복을 잡던 경험이 있다면, 그게 바로 데이터 테스트입니다. dbt는 이걸 YAML 한 줄(<code>- unique</code>)로 쓰게 하고, 매번 빌드할 때 자동으로 돌립니다.</p>
+</div>
+
+<h2 id="logs">로그와 로그 레벨</h2>
+
+<p><b>로그</b>는 프로그램이 돌면서 남기는 일기입니다. 새벽 3시에 실패한 작업을 아침에 고치려면 "무엇을 하다가, 어떤 값에서, 왜 멈췄는지"가 적혀 있어야 합니다. <code>print</code>로도 되지만, 실무에서는 <b>로그 레벨</b>을 붙이는 logging을 씁니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>레벨</th><th>언제</th><th>예</th></tr>
+<tr><td>DEBUG</td><td>개발 중 자세한 내부 상태</td><td>"쿼리 문자열: SELECT ..."</td></tr>
+<tr><td>INFO</td><td>정상 진행 상황</td><td>"주문 30건 적재 시작"</td></tr>
+<tr><td>WARNING</td><td>이상하지만 계속 진행</td><td>"금액 0인 주문 2건"</td></tr>
+<tr><td>ERROR</td><td>이 작업은 실패</td><td>"결제 파일이 없습니다"</td></tr>
+<tr><td>CRITICAL</td><td>프로그램 전체가 위험</td><td>"DB 접속 불가"</td></tr>
+</table>
+</div>
+
+<p>레벨을 INFO로 정하면 DEBUG는 숨고 INFO 이상만 보입니다. 운영에서는 INFO, 문제를 쫓을 때만 DEBUG로 낮추는 식으로 씁니다.</p>
+
+<div class="box warn">
+<span class="box-title">⚠️ 로그에 남기면 안 되는 것</span>
+<p>비밀번호, 토큰, 주민번호·전화번호 같은 개인정보. 로그는 여러 사람이 보고 오래 보관되며, 클라우드 로그 서비스로 그대로 올라갑니다.</p>
+</div>
+
+<h2 id="config">설정과 비밀 — 코드에서 떼어 내기</h2>
+
+<p>"어느 DB에 붙을지", "어떤 계정으로", "API 키는 무엇인지"는 <b>코드에 직접 쓰지 않고 밖에서 넣어 줍니다</b>. 같은 코드를 내 PC(개발)와 서버(운영)에서 다른 설정으로 돌릴 수 있고, 비밀이 코드 저장소에 들어가지 않습니다.</p>
+
+<pre class="diagram">  같은 코드, 다른 설정
+
+          ┌─────────────┐
+          │ 코드 (git)   │   ← 비밀 없음, 누구나 봐도 됨
+          └──────┬──────┘
+        ┌────────┴────────┐
+        ▼                 ▼
+  ┌───────────┐     ┌────────────┐
+  │ 내 PC      │     │ 운영 서버    │
+  │ DB=dev     │     │ DB=prod     │   ← 환경 변수 · 설정 파일 · 시크릿 매니저
+  │ KEY=개발용  │     │ KEY=운영용   │
+  └───────────┘     └────────────┘</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>방법</th><th>어떻게</th><th>쓰임</th></tr>
+<tr><td>환경 변수</td><td>운영체제가 프로그램에 넘겨주는 "이름=값" 쌍. PowerShell <code>$env:SHOP_DB = 'shop.duckdb'</code>, 파이썬 <code>os.environ.get("SHOP_DB")</code></td><td>가장 기본. dbt의 <code>env_var()</code>도 이걸 읽음</td></tr>
+<tr><td>설정 파일</td><td><code>.env</code>, <code>profiles.yml</code> 등을 저장소 <b>밖</b> 또는 .gitignore 처리</td><td>개발 PC</td></tr>
+<tr><td>OS 자격 증명 저장소</td><td>윈도우 자격 증명 관리자, macOS 키체인. 파이썬 <code>keyring</code> 패키지로 읽고 씀</td><td>내 PC에서 돌리는 자동화 스크립트의 비밀번호</td></tr>
+<tr><td>시크릿 매니저</td><td>클라우드의 비밀 보관 서비스(Google Secret Manager, AWS Secrets Manager 등). 권한 있는 프로그램만 읽고, 누가 읽었는지 기록이 남음</td><td>운영 서버·클라우드 작업</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>코드는 <b>집 설계도</b>, 비밀은 <b>현관 열쇠</b>입니다. 설계도는 여러 사람과 나눠 봐도 되지만, 열쇠를 설계도에 테이프로 붙여 나눠 주면 안 되죠. 열쇠는 금고(시크릿 매니저)에 두고, 들어갈 자격이 있는 사람만 꺼내게 합니다.</p>
+</div>
+
+<h2 id="docker">컨테이너와 Docker — "내 PC에서는 됐는데"를 없애기</h2>
+
+<p>같은 코드가 내 PC에서는 되고 서버에서는 안 되는 이유는 대부분 <b>환경이 달라서</b>입니다. 파이썬 버전, 패키지 버전, 운영체제, 설치된 프로그램, 환경 변수... <b>컨테이너</b>는 코드와 그 환경을 통째로 상자에 담아 어디서나 똑같이 돌게 합니다.</p>
+
+<ul>
+<li><b>이미지(image)</b>: 상자의 <b>설계도이자 틀</b>. "파이썬 3.12 + dbt 1.12.6 + 내 코드"를 굳혀 둔 것. 바뀌지 않습니다.</li>
+<li><b>컨테이너(container)</b>: 이미지로 찍어 낸 <b>실제로 돌아가는 상자</b>. 하나의 이미지로 컨테이너를 여러 개 띄울 수 있고, 지우면 그 안에서 바뀐 내용은 사라집니다.</li>
+<li><b>Dockerfile</b>: 이미지를 만드는 순서를 적은 파일.</li>
+</ul>
+
+<pre data-file="Dockerfile (예)"><code>FROM python:3.12-slim                 # 1) 파이썬 3.12가 깔린 리눅스에서 시작
+WORKDIR /app                          # 2) 작업 폴더
+COPY requirements.txt .               # 3) 패키지 목록 복사
+RUN pip install -r requirements.txt   # 4) 고정된 버전 그대로 설치
+COPY . .                              # 5) 내 코드 복사
+CMD ["dbt", "build"]                  # 6) 컨테이너가 켜지면 실행할 명령</code></pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>이미지는 <b>붕어빵 틀</b>, 컨테이너는 <b>찍어 낸 붕어빵</b>입니다. 틀이 같으면 어느 가게에서 구워도 같은 모양이 나옵니다. 또는 <b>이삿짐 컨테이너</b>를 떠올리세요. 안에 뭐가 들었든 규격이 같으니 배든 트럭이든 똑같이 실립니다.</p>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<p>가상 머신(VM)은 컴퓨터 전체(운영체제까지)를 흉내 내서 무겁고, 컨테이너는 운영체제의 핵심(커널)은 함께 쓰고 그 위만 나눠서 가볍고 빨리 뜹니다. Airflow를 Docker로 띄우던 5일차, 클라우드에서 작업을 돌리는 Cloud Run·ECS 같은 서비스가 모두 이 컨테이너 위에서 돌아갑니다.</p>
+</div>
+
+<h2 id="cloud">클라우드 — 남의 컴퓨터를 빌려 쓰는 방법들</h2>
+
+<p>클라우드는 "필요한 만큼 빌려 쓰고 쓴 만큼 내는 남의 데이터센터"입니다. 얼마나 많이 맡기느냐에 따라 나눕니다.</p>
+
+<pre class="diagram">                   내가 관리하는 것 ◀──────────────▶ 클라우드가 관리하는 것
+
+  내 서버(온프레미스)  [건물·전기][서버][OS][런타임][내 앱]   ← 전부 내가
+  IaaS (VM 빌리기)              [OS][런타임][내 앱]         ← 서버는 빌림, OS부터 내가
+  PaaS                                 [내 앱]             ← 앱만 올리면 됨
+  서버리스                             [함수·컨테이너 하나]  ← 요청 올 때만 뜨고, 쓴 만큼만 과금
+  SaaS                                 (설정만)            ← 완성된 서비스를 씀 (예: 이메일, BI 도구)</pre>
+
+<div class="table-wrap">
+<table>
+<tr><th>구분</th><th>예 (Google Cloud / AWS)</th><th>데이터 일에서의 쓰임</th></tr>
+<tr><td>IaaS</td><td>Compute Engine / EC2</td><td>직접 서버를 깔고 관리(점점 줄어드는 추세)</td></tr>
+<tr><td>PaaS·관리형 서비스</td><td>Cloud SQL / RDS, 관리형 Airflow(Cloud Composer / MWAA)</td><td>DB·오케스트레이터를 설치 없이</td></tr>
+<tr><td>서버리스</td><td>Cloud Run·Cloud Functions / Lambda, BigQuery</td><td>"매일 6시에 컨테이너 하나 돌리고 끝" 같은 작업. BigQuery도 서버를 신경 쓰지 않는 서버리스 웨어하우스</td></tr>
+<tr><td>스케줄러</td><td>Cloud Scheduler / EventBridge</td><td>cron 식(<code>0 6 1 * *</code> = 매월 1일 6시)으로 작업을 깨움</td></tr>
+</table>
+</div>
+
+<div class="box warn">
+<span class="box-title">⚠️ 클라우드 요금의 함정</span>
+<p>"켜 두면 돈이 나간다." 테스트로 띄운 VM·DB를 잊고 두면 매달 요금이 나옵니다. 처음엔 <b>예산 알림</b>을 꼭 걸어 두세요. BigQuery처럼 쿼리마다 과금되는 서비스는 큰 테이블을 <code>SELECT *</code> 하는 습관이 바로 요금이 됩니다(5장).</p>
+</div>
+
+<h2 id="cicd">CI/CD·코드 리뷰·문서, 그리고 기술 부채</h2>
+
+<p><b>CI(지속적 통합)</b>는 코드를 올릴 때마다 <b>자동으로</b> 테스트·검사를 돌리는 것, <b>CD(지속적 배포)</b>는 통과한 코드를 자동으로 운영에 내보내는 것입니다. GitHub Actions 같은 도구가 이 일을 합니다.</p>
+
+<pre class="diagram">  개발자 ─push─▶ 브랜치 ─PR─▶ [CI: 린트 · 테스트 · dbt build(변경된 모델만)] ─통과─▶ 리뷰 승인 ─머지─▶ main
+                                         │ 실패                                            │
+                                         ▼                                                 ▼
+                                    고쳐서 다시                              [CD: 운영에 자동 배포]</pre>
+
+<ul>
+<li><b>PR(풀 리퀘스트)·코드 리뷰</b>: "이 브랜치를 main에 합쳐도 될까요?"라고 요청하고, 동료가 읽고 의견을 다는 과정. 버그를 잡는 것만큼이나 <b>지식을 나누는</b> 역할이 큽니다. 리뷰하기 좋게 PR은 작게 나눕니다.</li>
+<li><b>README·문서</b>: "이게 뭐고, 어떻게 설치하고, 어떻게 돌리는지"를 저장소 첫 화면에. 6개월 뒤의 나도 남입니다.</li>
+<li><b>기술 부채</b>: 급해서 대충 만든 부분이 쌓여, 나중에 고칠 때마다 이자처럼 시간이 더 드는 것. 복사·붙여 넣은 로직, 테스트 없는 코드, 이유 없는 하드코딩이 대표적입니다. 부채 자체가 나쁜 건 아니지만, <b>어디에 빚졌는지 적어 두고</b> 갚을 시간을 따로 잡아야 합니다.</li>
+</ul>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>CI는 <b>공항 보안 검색대</b>입니다. 사람(코드)은 누구나 비행기(운영)를 타고 싶지만, 검색대를 통과해야만 탑승구로 갑니다. 검색대가 자동이니 매번 사람이 짐을 뒤질 필요가 없죠. 기술 부채는 <b>방 정리를 미루는 것</b>입니다. 하루 이틀은 괜찮지만, 쌓이면 물건 하나 찾는 데 한참 걸립니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>운영 DB에 직접 접속해 프로시저를 고치고 바로 돌리는 것은 "검색대 없이 활주로로 걸어 들어가는 것"입니다. dbt + git + CI 조합에서는 브랜치에서 고치고 → PR에서 동료가 SQL을 보고 → CI가 <code>dbt build</code>로 바뀐 모델과 그 아래 모델을 테스트한 뒤 → 머지되어야 운영에 반영됩니다(6일차의 <code>state:modified</code>가 여기서 쓰입니다).</p>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+
+<p>PowerShell에서 진행합니다. git이 설치돼 있어야 합니다(<code>git --version</code>으로 확인).</p>
+
+<div class="lab">
+
+<div class="step" data-id="git-basic">
+<div class="step-title">1. 저장소 만들고 .gitignore로 비밀 지키기</div>
+<pre><code>mkdir $HOME\cs-git
+cd $HOME\cs-git
+git init -b main
+# 처음 git을 쓰는 PC라면 이름·이메일을 한 번 정해 둡니다
+# git config --global user.name "내 이름"
+# git config --global user.email "me@example.com"
+
+Set-Content model.sql 'SELECT 1 AS a' -Encoding ascii
+Set-Content .env 'API_KEY=abc123' -Encoding ascii
+Set-Content .gitignore '.env' -Encoding ascii
+git status --short</code></pre>
+<p>결과:</p>
+<pre><code>?? .gitignore
+?? model.sql</code></pre>
+<p><code>.env</code>가 목록에 <b>없습니다</b>. git이 무시하고 있다는 뜻입니다. 이제 커밋합니다.</p>
+<pre><code>git add .
+git commit -m "첫 모델"
+git log --oneline</code></pre>
+<details class="hint"><summary>왜 Set-Content에 -Encoding ascii 를 붙이나요?</summary>
+<p>Windows PowerShell 5.1에서 <code>echo 'x' &gt; 파일</code>은 UTF-16으로, <code>-Encoding utf8</code>은 BOM(파일 맨 앞 보이지 않는 표시)을 붙인 UTF-8로 씁니다. 이런 파일은 git·다른 도구에서 깨져 보이기도 합니다. 영어만 쓰는 예제라 ascii로 깔끔하게 씁니다(1장 인코딩 참고).</p>
+</details>
+</div>
+
+<div class="step" data-id="git-conflict">
+<div class="step-title">2. 브랜치를 만들고 일부러 충돌 내 보기</div>
+<pre><code>git switch -c fix                               # fix 갈래를 만들고 이동
+Set-Content model.sql 'SELECT 2 AS a' -Encoding ascii
+git commit -am "fix에서 2로"
+
+git switch main                                 # 본선으로 돌아와서
+Set-Content model.sql 'SELECT 3 AS a' -Encoding ascii
+git commit -am "main에서 3으로"
+
+git merge fix                                   # 같은 줄을 다르게 고쳤으니 충돌!
+Get-Content model.sql</code></pre>
+<p>결과:</p>
+<pre><code>CONFLICT (content): Merge conflict in model.sql
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
+SELECT 3 AS a
+=======
+SELECT 2 AS a
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; fix</code></pre>
+<p><code>HEAD</code>(지금 있는 main)와 <code>fix</code>의 내용이 나란히 표시됩니다. 직접 골라 파일을 고친 뒤 커밋하면 충돌이 풀립니다.</p>
+<details class="hint"><summary>힌트 1</summary><p>표시(<code>&lt;&lt;&lt;</code>, <code>===</code>, <code>&gt;&gt;&gt;</code>) 줄을 모두 지우고 남길 내용만 둡니다.</p></details>
+<details class="hint"><summary>정답 보기</summary>
+<pre><code>Set-Content model.sql 'SELECT 2 AS a' -Encoding ascii   # fix 쪽을 고르기로 함
+git add model.sql
+git commit -m "fix 쪽 값으로 충돌 해결"
+git log --oneline --graph</code></pre>
+<pre><code>*   2a8de1c fix 쪽 값으로 충돌 해결
+|\
+| * 66a48c9 fix에서 2로
+* | 6d13cfd main에서 3으로
+|/
+* 0bb5dc4 첫 모델</code></pre>
+<p>해시(앞의 7자리)는 PC마다 다릅니다. 두 갈래가 합쳐진 모양이 보이면 성공입니다.</p>
+</details>
+</div>
+
+<div class="step" data-id="env">
+<div class="step-title">3. 환경 변수로 설정 넘기기</div>
+<pre><code>$env:SHOP_DB = 'shop.duckdb'
+python -c "import os; print(os.environ.get('SHOP_DB'), os.environ.get('NOPE', '기본값'))"</code></pre>
+<p>결과:</p>
+<pre><code>shop.duckdb 기본값</code></pre>
+<p>코드는 그대로인데 밖에서 넣은 값이 들어갔습니다. 없는 이름(<code>NOPE</code>)은 기본값으로 대신합니다. PowerShell 창을 닫으면 <code>$env:</code>로 넣은 값은 사라집니다(그 창에서만 유효).</p>
+</div>
+
+<div class="step" data-id="test-log">
+<div class="step-title">4. 작은 테스트와 로그 레벨</div>
+<pre data-file="clean.py"><code>import logging
+
+# 로그 설정: INFO 이상만 보이게, 시각·레벨을 같이 찍기
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("load")
+
+def clean_status(s):
+    # SQL의 LOWER(TRIM(status)) 와 같은 일
+    return s.strip().lower()
+
+def test_clean_status():
+    # assert = "이게 참이 아니면 멈춰라" — 테스트의 기본
+    assert clean_status(" Shipped") == "shipped"
+    assert clean_status("COMPLETED") == "completed"
+
+if __name__ == "__main__":
+    test_clean_status()
+    log.debug("이 줄은 레벨이 낮아 안 보입니다")
+    log.info("테스트 통과, 적재 시작")
+    log.warning("금액이 0인 주문 2건")
+    log.error("결제 파일이 없습니다")</code></pre>
+<pre><code>python clean.py</code></pre>
+<p>결과 예시:</p>
+<pre><code>2026-11-18 11:29:25,756 INFO 테스트 통과, 적재 시작
+2026-11-18 11:29:25,756 WARNING 금액이 0인 주문 2건
+2026-11-18 11:29:25,756 ERROR 결제 파일이 없습니다</code></pre>
+<p>이제 <code>clean_status</code>에서 <code>.lower()</code>를 지우고 다시 돌려 보세요. <code>AssertionError</code>가 나며 멈춥니다. 테스트가 "망가진 코드"를 잡아낸 것입니다. 그다음 <code>level=logging.INFO</code>를 <code>logging.DEBUG</code>로 바꾸면 숨었던 줄도 보입니다.</p>
+</div>
+
+</div>
+
+<h2 id="wrap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+좋은 습관은 모두 <b>"사람의 기억과 손 대신 기록과 자동화에 맡기기"</b>입니다. git은 이력을, 버전 고정과 컨테이너는 환경을, 테스트와 CI는 확인을, 로그는 사건을, 시크릿 매니저는 비밀을 맡습니다.
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>API 키를 실수로 커밋했다가 다음 커밋에서 지웠습니다. 왜 아직 안전하지 않은지, 무엇부터 해야 하는지 말해 보세요.</li>
+<li>"내 PC에서는 되는데 서버에서는 안 돼요"를 막는 방법 세 가지(가상환경·버전 고정·컨테이너)가 각각 무엇을 고정하는지 말해 보세요.</li>
+<li>dbt의 데이터 테스트와 파이썬 단위 테스트가 각각 무엇을 지키는지, 둘 다 필요한 이유를 말해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="3">
+<p class="q-text">사용 중인 라이브러리가 2.4.1에서 3.0.0으로 올라갔습니다. SemVer 규칙대로라면 무엇을 예상해야 하나요?</p>
+<ol class="q-opts">
+<li>버그 수정만 있으니 바로 올려도 된다</li>
+<li>기능만 추가됐고 예전 코드는 그대로 돈다</li>
+<li>예전 방식과 호환이 깨지는 변경이 있을 수 있어, 변경 내역을 읽고 시험해 본 뒤 올린다</li>
+<li>버전 번호는 의미가 없다</li>
+</ol>
+<div class="q-explain">주(MAJOR) 번호가 바뀌면 호환이 깨질 수 있다는 신호입니다. 버그 수정은 수(PATCH), 호환되는 기능 추가는 부(MINOR) 번호가 올라갑니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">git에서 "충돌(conflict)"이 생기는 상황은?</p>
+<ol class="q-opts">
+<li>두 브랜치가 같은 파일의 같은 줄을 서로 다르게 고친 뒤 합칠 때</li>
+<li>서로 다른 파일을 고친 두 브랜치를 합칠 때</li>
+<li><code>git status</code>를 실행할 때</li>
+<li>.gitignore에 적힌 파일이 있을 때</li>
+</ol>
+<div class="q-explain">git은 다른 파일, 같은 파일이라도 다른 줄의 변경은 자동으로 합칩니다. 같은 줄이 양쪽에서 다르게 바뀌면 어느 쪽이 맞는지 모르니 사람에게 고르라고 표시합니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">Docker의 이미지와 컨테이너의 관계로 맞는 것은?</p>
+<ol class="q-opts">
+<li>컨테이너로 이미지를 만든다. 컨테이너가 설계도다</li>
+<li>둘은 같은 말이다</li>
+<li>이미지는 실행 중인 프로그램, 컨테이너는 디스크에 저장된 파일이다</li>
+<li>이미지는 바뀌지 않는 틀이고, 컨테이너는 그 틀로 띄운 실행 중인 상자다. 이미지 하나로 컨테이너 여럿을 띄울 수 있다</li>
+</ol>
+<div class="q-explain">이미지 = 붕어빵 틀(고정), 컨테이너 = 찍어 낸 붕어빵(실행). 컨테이너 안에서 바꾼 내용은 컨테이너를 지우면 사라지고 이미지는 그대로입니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">운영 서버에서 돌리는 수집 작업의 API 키를 두는 곳으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>파이썬 코드 맨 위의 변수에 직접 적고 git에 올린다</li>
+<li>클라우드의 시크릿 매니저에 두고, 권한 있는 작업만 읽게 한다</li>
+<li>README에 적어 팀원과 공유한다</li>
+<li>로그에 한 번 찍어 두면 나중에 찾기 쉽다</li>
+</ol>
+<div class="q-explain">비밀은 코드·문서·로그 어디에도 남기지 않고, 접근 권한과 열람 기록이 있는 시크릿 매니저(내 PC라면 OS 자격 증명 저장소)에 둡니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">매일 아침 6시에 컨테이너 하나를 10분 돌리고 끝나는 작업입니다. 가장 알맞은 방식은?</p>
+<ol class="q-opts">
+<li>VM을 하나 빌려 24시간 켜 두고 그 안에서 cron을 돌린다</li>
+<li>내 노트북을 켜 두고 작업 스케줄러로 돌린다</li>
+<li>스케줄러가 서버리스 컨테이너 작업을 깨워 돌리고, 쓴 시간만큼만 낸다</li>
+<li>매일 아침 사람이 직접 실행한다</li>
+</ol>
+<div class="q-explain">하루 10분 도는 작업에 서버를 24시간 켜 두면 23시간 50분은 낭비입니다. 서버리스(예: 스케줄러 + 컨테이너 작업)는 돌 때만 과금되고 서버 관리도 필요 없습니다. 노트북·사람 의존은 끄거나 잊으면 멈춥니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">CI(지속적 통합)가 막아 주는 일로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>테스트를 통과하지 못한 변경이 main에 합쳐지는 것</li>
+<li>클라우드 요금이 나오는 것</li>
+<li>원천 데이터가 늦게 도착하는 것</li>
+<li>개발자가 커밋 메시지를 쓰는 것</li>
+</ol>
+<div class="q-explain">CI는 PR·푸시마다 자동으로 테스트·검사를 돌려, 깨진 코드가 본선에 들어가기 전에 멈춥니다. 원천 지연은 freshness 검사·모니터링의 몫이고, 요금과는 관계가 없습니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

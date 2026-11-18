@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5 · 데이터는 어떻게 저장되나 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs5">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 5장</div>
+<h1>데이터는 어떻게 저장되나</h1>
+<p class="lead">SELECT 한 줄을 날리면 그 뒤에서 무슨 일이 일어날까요? 이 장에서는 데이터가 <b>디스크 위에 어떤 모양으로 놓이는지</b>를 봅니다. 이걸 알면 "왜 이 쿼리는 느리지?", "왜 BigQuery 요금이 이렇게 나왔지?", "왜 Parquet을 쓰라고 하지?"에 스스로 답할 수 있습니다.</p>
+<p class="meta-line">읽기 약 60분 · 손으로 해 보기 약 25분 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>CSV·JSON·Parquet이 어떻게 다르고 언제 무엇을 쓰는지 말하기</li>
+<li>웨어하우스가 <b>열 저장</b>을 쓰는 이유와, 그게 요금·속도에 어떻게 이어지는지 설명하기</li>
+<li>인덱스·파티션·클러스터링이 "덜 읽기 위한 장치"라는 걸 설명하기</li>
+<li>트랜잭션(ACID)과 OLTP·OLAP의 차이, 배치와 스트리밍의 차이 말하기</li>
+<li>데이터 레이크·레이크하우스·테이블 포맷(Iceberg·Delta)이 무엇을 해결하려고 나왔는지 말하기</li>
+</ul>
+</div>
+
+<h2 id="file-vs-db">파일과 데이터베이스</h2>
+
+<p>데이터를 담는 방법은 크게 두 가지입니다.</p>
+<ul>
+<li><b>파일</b>: 디스크에 바이트를 늘어놓은 것. CSV, JSON, 엑셀, Parquet 모두 파일입니다. 파일 자체는 아무 일도 하지 않습니다. 읽는 프로그램이 알아서 해석해야 합니다.</li>
+<li><b>데이터베이스</b>: 파일들 <b>위에서 돌아가는 프로그램</b>입니다. 결국 데이터베이스도 디스크에 파일로 저장하지만, 그 위에 "누가 동시에 써도 안 깨지게", "원하는 행을 빨리 찾게", "SQL로 물어보면 답하게" 같은 기능을 얹습니다.</li>
+</ul>
+
+<pre class="diagram">  파일만 있을 때                       데이터베이스가 있을 때
+
+  내 프로그램 ──읽기/쓰기──▶ orders.csv   내 프로그램 ──SQL──▶ ┌─────────────────────┐
+  다른 프로그램 ──쓰기────▶ (동시에 쓰면   다른 프로그램 ─SQL─▶ │ DB 엔진               │
+                           깨질 수 있음)                       │ · 동시 접근 순서 정리 │
+                                                               │ · 인덱스로 빨리 찾기  │
+                                                               │ · 실패하면 되돌리기   │
+                                                               │ · 권한 확인           │
+                                                               └──────────┬──────────┘
+                                                                          ▼
+                                                               디스크의 데이터 파일들</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>파일은 <b>창고에 쌓아 둔 상자</b>입니다. 필요하면 내가 직접 들어가서 뒤져야 합니다. 두 사람이 동시에 같은 상자를 고치면 엉망이 됩니다.</p>
+<p>데이터베이스는 <b>창고 관리인이 있는 창고</b>입니다. "3번 고객 주문 줘"라고 말하면 관리인이 색인 장부를 보고 바로 가져옵니다. 두 사람이 동시에 고치려 하면 관리인이 순서를 정합니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>DuckDB의 <code>read_csv('data/raw_orders.csv')</code>나 BigQuery의 외부 테이블은 "파일을 데이터베이스처럼 SQL로 읽게 해 주는 다리"입니다. 다만 파일에는 관리인이 없으니, 인덱스·트랜잭션 같은 기능은 기대하면 안 됩니다.</p>
+</div>
+
+<h2 id="formats">텍스트 포맷과 바이너리 포맷</h2>
+
+<p>파일 포맷은 "바이트를 어떤 규칙으로 늘어놓느냐"입니다. 사람이 메모장으로 열어 읽을 수 있으면 <b>텍스트 포맷</b>, 프로그램만 읽을 수 있으면 <b>바이너리 포맷</b>이라고 합니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>포맷</th><th>모양</th><th>좋은 점</th><th>아쉬운 점</th><th>주로 쓰는 곳</th></tr>
+<tr><td>CSV</td><td>쉼표로 나눈 줄</td><td>어디서나 열림, 엑셀로 확인 가능</td><td>타입 정보 없음(숫자인지 글자인지 모름), 쉼표·줄바꿈이 값 안에 있으면 골치, 인코딩 문제</td><td>사람끼리 주고받기, 작은 원천 데이터</td></tr>
+<tr><td>JSON</td><td><code>{"키": 값}</code> 중첩 구조</td><td>중첩·배열 표현 가능, API 응답의 기본</td><td>키 이름이 행마다 반복돼 크다</td><td>API, 설정 파일</td></tr>
+<tr><td>JSONL (NDJSON)</td><td>한 줄에 JSON 하나</td><td>줄 단위로 이어 쓰고 나눠 읽기 쉬움</td><td>JSON처럼 크다</td><td>로그, 수집 데이터 적재(BigQuery 적재 포맷으로도 흔함)</td></tr>
+<tr><td>Parquet</td><td>바이너리, <b>열 단위</b>로 묶음</td><td>작고 빠름, 타입 정보 포함, 필요한 컬럼만 읽음</td><td>메모장으로 못 봄, 한 행씩 고치기 어려움</td><td>데이터 레이크, 분석용 저장</td></tr>
+<tr><td>ORC</td><td>바이너리, 열 단위</td><td>Parquet과 비슷</td><td>Hive 생태계 밖에서는 덜 쓰임</td><td>Hadoop·Hive 계열</td></tr>
+<tr><td>Avro</td><td>바이너리, <b>행 단위</b> + 스키마</td><td>스키마가 파일에 같이 들어감, 한 건씩 쓰기 좋음, 스키마 변경 규칙이 명확</td><td>분석 쿼리에는 열 포맷보다 느림</td><td>Kafka 같은 스트리밍 메시지</td></tr>
+</table>
+</div>
+
+<p>같은 주문 10만 건을 CSV와 JSONL로 저장하면 크기가 이렇게 다릅니다(아래 "손으로 해 보기"에서 직접 재 봅니다).</p>
+
+<pre><code>orders.csv    2062 KB     order_id,status,amount  ← 컬럼 이름은 맨 위에 한 번
+orders.jsonl  5773 KB     {"order_id": 0, "status": "shipped", "amount": 5816}  ← 줄마다 키 이름 반복</code></pre>
+
+<div class="box warn">
+<span class="box-title">⚠️ CSV의 함정 세 가지</span>
+<ul>
+<li><b>타입이 없다</b>: <code>00123</code>은 우편번호일까 숫자 123일까? 읽는 쪽이 추측하다 앞자리 0을 날려 먹습니다.</li>
+<li><b>인코딩</b>: 한국 윈도우 엑셀은 CSV를 CP949로 저장하는 경우가 많고, 대부분의 도구는 UTF-8을 기대합니다. 한글이 깨지면 먼저 인코딩을 의심하세요(1장 참고).</li>
+<li><b>구분자가 값 안에</b>: 주소에 쉼표가 들어가면 큰따옴표로 감싸야 합니다. 직접 <code>split(",")</code> 하지 말고 csv 라이브러리를 쓰세요.</li>
+</ul>
+</div>
+
+<h2 id="row-col">행 저장 vs 열 저장 — 웨어하우스가 빠른 진짜 이유</h2>
+
+<p>표를 디스크에 쓸 때, <b>한 행씩</b> 이어 쓸 수도 있고 <b>한 열씩</b> 이어 쓸 수도 있습니다.</p>
+
+<pre class="diagram">  표                         행 저장 (MySQL·PostgreSQL 기본)         열 저장 (BigQuery·Snowflake·Parquet)
+  ┌────┬─────────┬───────┐
+  │ id │ status  │ amount│    [1,shipped,5816][2,placed,86459]...   [1,2,3,4,...]
+  ├────┼─────────┼───────┤                                           [shipped,placed,shipped,...]
+  │ 1  │ shipped │ 5816  │    한 행이 디스크에 붙어 있다              [5816,86459,...]
+  │ 2  │ placed  │ 86459 │    → "주문 1번 전부 줘" 에 빠름           한 열이 디스크에 붙어 있다
+  │ 3  │ shipped │ 1200  │                                           → "amount 합계" 에 빠름
+  └────┴─────────┴───────┘</pre>
+
+<p>분석 쿼리는 대부분 <b>컬럼 몇 개만, 행은 아주 많이</b> 읽습니다. <code>SELECT status, SUM(amount) FROM orders GROUP BY status</code>는 컬럼이 50개인 테이블에서도 딱 2개만 필요합니다. 열 저장이면 그 2개 열만 디스크에서 읽고 나머지 48개는 건드리지도 않습니다.</p>
+
+<p>게다가 같은 열에는 <b>비슷한 값</b>이 모여 있어서 압축이 잘 됩니다. <code>status</code> 열은 <code>shipped, shipped, placed, shipped...</code>처럼 몇 가지 값의 반복이라, "shipped가 3번" 식으로 줄여 쓸 수 있습니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>반 학생 30명의 성적표가 있습니다. <b>행 저장</b>은 학생마다 한 장씩, 국어·영어·수학이 다 적힌 종이 30장입니다. "철수 성적 보여 줘"에는 한 장만 꺼내면 돼서 빠릅니다.</p>
+<p><b>열 저장</b>은 과목마다 한 장, "수학 점수 30개"가 적힌 종이입니다. "수학 평균"을 구할 때 수학 종이 한 장만 보면 됩니다. 행 저장이면 30장을 다 넘기며 수학 칸만 골라 봐야 하죠.</p>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<ul>
+<li><b>BigQuery가 "읽은 바이트"로 요금을 매기는 이유</b>가 바로 이것입니다. 열 저장이라 쿼리에 쓴 컬럼만 읽으니, 쓴 컬럼 크기만큼만 받는 거죠. 그래서 <code>SELECT *</code>는 비싸고, <code>LIMIT 10</code>을 붙여도 요금은 거의 줄지 않습니다(LIMIT은 읽은 뒤에 자르는 것이라서).</li>
+<li>반대로 운영 시스템(주문 접수, 회원 가입)은 "한 건 넣고 한 건 고치기"가 대부분이라 행 저장 DB를 씁니다.</li>
+</ul>
+</div>
+
+<h2 id="index">인덱스 — 책 뒤의 색인</h2>
+
+<p>인덱스가 없으면 DB는 <code>WHERE customer_id = 42</code>를 찾으려고 <b>모든 행을 처음부터 끝까지</b> 봅니다. 이걸 <b>풀 스캔(full scan)</b>이라고 합니다. 인덱스는 "42번 고객의 행은 어디어디에 있다"를 정렬해서 따로 적어 둔 장부입니다.</p>
+
+<pre class="diagram">  B-tree 인덱스 (customer_id) — 정렬된 나무
+
+                     [ 5000 ]
+                    /        \
+           [ 2500 ]            [ 7500 ]
+           /      \            /      \
+     [1~2499]  [2500~4999] [5000~7499] [7500~10000]
+        │
+        └─ 42 → 행 위치: 3번 페이지, 812번 페이지 ...
+
+  50만 행이어도 위에서 3~4번만 갈림길을 고르면 도착</pre>
+
+<p>대부분의 DB가 쓰는 인덱스는 <b>B-tree</b>라는 정렬된 나무 모양입니다. 사전에서 단어를 찾을 때 가운데를 펴고 "앞쪽이네" 하고 범위를 반씩 줄이는 것과 같습니다. 100만 건이어도 20번 정도만 반으로 나누면 찾습니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>두꺼운 교과서에서 "광합성"을 찾을 때, 첫 페이지부터 넘기면 풀 스캔이고, 책 뒤 <b>색인</b>에서 "광합성 → 132쪽"을 보면 인덱스입니다. 대신 색인도 종이를 차지하고, 본문을 고칠 때마다 색인도 고쳐야 합니다.</p>
+</div>
+
+<div class="box warn">
+<span class="box-title">⚠️ 인덱스는 공짜가 아니다</span>
+<ul>
+<li>INSERT·UPDATE 때마다 인덱스도 갱신하니 <b>쓰기는 느려집니다</b>.</li>
+<li>디스크를 더 씁니다.</li>
+<li>결과가 전체의 큰 비율이면(예: status가 3종류뿐이라 3분의 1씩) 인덱스보다 그냥 다 읽는 게 빠를 수 있어 DB가 인덱스를 안 쓰기도 합니다.</li>
+<li>BigQuery·Snowflake 같은 열 저장 웨어하우스는 이런 B-tree 인덱스를 거의 쓰지 않습니다. 대신 아래의 <b>파티션·클러스터링</b>으로 "덜 읽기"를 합니다.</li>
+</ul>
+</div>
+
+<h2 id="tx">트랜잭션과 ACID — "다 되거나, 하나도 안 되거나"</h2>
+
+<p>계좌 이체를 생각해 봅시다. A에서 3만 원 빼고, B에 3만 원 넣는 두 단계입니다. 첫 단계만 되고 서버가 꺼지면 돈이 사라집니다. 그래서 DB는 여러 작업을 <b>트랜잭션</b>이라는 한 묶음으로 처리합니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>글자</th><th>뜻</th><th>쉬운 말</th></tr>
+<tr><td>A · Atomicity (원자성)</td><td>묶음 전체가 성공하거나 전체가 취소된다</td><td>반만 되는 일은 없다</td></tr>
+<tr><td>C · Consistency (일관성)</td><td>규칙(제약 조건)을 깨는 상태로는 끝나지 않는다</td><td>잔액이 음수가 되는 일은 없다</td></tr>
+<tr><td>I · Isolation (격리성)</td><td>동시에 도는 트랜잭션끼리 서로 중간 상태를 보지 않는다</td><td>남이 고치는 중인 값을 읽지 않는다</td></tr>
+<tr><td>D · Durability (지속성)</td><td>COMMIT 된 것은 전원이 나가도 남는다</td><td>"저장됨"이라고 했으면 진짜 저장된 것</td></tr>
+</table>
+</div>
+
+<p><b>격리 수준</b>은 "동시에 돌 때 얼마나 철저히 떼어 놓을까"를 고르는 설정입니다. 철저할수록 안전하지만 서로 기다리는 일이 늘어 느려집니다. 대표적으로 READ COMMITTED(커밋된 것만 읽기, 많은 DB의 기본), REPEATABLE READ, SERIALIZABLE(한 줄로 차례차례 돈 것과 같은 결과) 순으로 엄격해집니다.</p>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<p>프로시저에서 쓰던 <code>BEGIN TRANSACTION ... COMMIT</code>, 오류 나면 <code>ROLLBACK</code>이 바로 이것입니다. "그날 것 지우고(DELETE) 다시 넣기(INSERT)"를 한 트랜잭션으로 묶지 않으면, 지운 직후 실패했을 때 마트가 텅 빈 채로 남습니다. dbt가 테이블을 "임시 테이블에 만들고 → 이름 바꿔치기" 하는 것도 같은 걱정에서 나온 방식입니다.</p>
+</div>
+
+<h2 id="oltp-olap">OLTP와 OLAP — 가게 계산대와 본사 분석실</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>OLTP (온라인 트랜잭션 처리)</th><th>OLAP (온라인 분석 처리)</th></tr>
+<tr><td>예</td><td>주문 접수, 회원 가입, 재고 차감</td><td>월별 매출, 매체별 전환율</td></tr>
+<tr><td>한 번에 다루는 양</td><td>몇 행</td><td>수백만~수십억 행</td></tr>
+<tr><td>주로 하는 일</td><td>INSERT·UPDATE 아주 많이, 아주 빨리</td><td>SELECT + GROUP BY, 큰 JOIN</td></tr>
+<tr><td>저장 방식</td><td>행 저장 + 인덱스</td><td>열 저장 + 파티션</td></tr>
+<tr><td>모델링</td><td>정규화(중복 없이 쪼개기)</td><td>스타 스키마(분석하기 쉽게 다시 묶기)</td></tr>
+<tr><td>대표 제품</td><td>PostgreSQL, MySQL, Oracle, SQL Server</td><td>BigQuery, Snowflake, Redshift, DuckDB</td></tr>
+</table>
+</div>
+
+<p>데이터 엔지니어의 일은 크게 보면 <b>OLTP에 쌓인 데이터를 OLAP으로 옮겨 분석하기 좋게 다시 만드는 것</b>입니다. 운영 DB에서 바로 큰 분석 쿼리를 돌리면 계산대가 멈추니까요.</p>
+
+<p><b>정규화</b>는 "같은 정보는 한 곳에만 적는다"는 원칙입니다. 고객 주소를 주문마다 적지 않고 고객 테이블에 한 번만 적는 것이죠. 정규화·반정규화와 스타 스키마는 <a href="../essentials/index.html">필수 정리</a>의 모델링 주차에서 자세히 다룹니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>OLTP는 <b>편의점 계산대</b>입니다. 손님 한 명씩, 빨리빨리. OLAP은 <b>본사 분석실</b>입니다. 전국 매장 1년 치 영수증을 쌓아 놓고 "어느 지역에서 뭐가 잘 팔리지?"를 봅니다. 계산대에서 분석을 하면 줄이 끝없이 길어집니다.</p>
+</div>
+
+<h2 id="partition">파티션·클러스터링 — 덜 읽는 기술</h2>
+
+<p>열 저장 웨어하우스에서 속도와 요금을 줄이는 핵심은 <b>안 읽어도 되는 부분을 아예 건너뛰는 것</b>입니다.</p>
+
+<ul>
+<li><b>파티션</b>: 테이블을 날짜 같은 기준으로 <b>칸막이</b>를 친 것. <code>WHERE order_date = '2026-10-21'</code>이면 그날 칸만 읽습니다(파티션 가지치기, partition pruning).</li>
+<li><b>클러스터링</b>: 칸 안에서 특정 컬럼(예: customer_id) 순서로 <b>정렬해 두는 것</b>. 블록마다 "이 블록은 customer_id 100~200"이라는 최솟값·최댓값이 적혀 있어서, 해당 없는 블록을 건너뜁니다.</li>
+</ul>
+
+<pre class="diagram">  orders (order_date로 파티션, customer_id로 클러스터링)
+
+  ┌ 2026-10-19 ┐ ┌ 2026-10-20 ┐ ┌ 2026-10-21 ┐ ┌ 2026-10-22 ┐
+  │ 블록 1~99  │ │ 블록 1~99  │ │ 블록  1~120│ │ 블록 1~80  │
+  │ 블록100~.. │ │ ...        │ │ 블록121~250│ │ ...        │
+  └────────────┘ └────────────┘ └────────────┘ └────────────┘
+       건너뜀          건너뜀       ▲ 이 칸만 열고       건너뜀
+                                    │ 그 안에서도 customer_id 범위 맞는 블록만
+
+  WHERE order_date = '2026-10-21' AND customer_id = 42</pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<p>파티션 컬럼에 함수를 씌우면(예: 문자열로 바꿔 비교) 가지치기가 안 되는 경우가 있습니다. 대용량 테이블은 <b>파티션 필터를 필수로</b> 거는 옵션도 있습니다. dbt에서는 모델 설정의 <code>partition_by</code>, <code>cluster_by</code>로 지정합니다.</p>
+</div>
+
+<h2 id="distributed">분산 저장·복제·샤딩, 그리고 CAP</h2>
+
+<p>데이터가 컴퓨터 한 대에 안 들어가거나, 한 대가 고장 나도 서비스가 멈추면 안 될 때 여러 대에 나눠 담습니다.</p>
+
+<ul>
+<li><b>복제(replication)</b>: 같은 데이터를 여러 대에 <b>똑같이</b> 둔다. 한 대가 죽어도 나머지가 답한다. 읽기를 나눠 받을 수도 있다.</li>
+<li><b>샤딩(sharding)·파티셔닝</b>: 데이터를 <b>나눠서</b> 여러 대에 둔다. 고객 1~100만은 1번 서버, 100만~200만은 2번 서버 식. 저장 용량과 처리량을 늘린다.</li>
+</ul>
+
+<pre class="diagram">  복제 (같은 것 여러 벌)          샤딩 (나눠 담기)
+
+  ┌ 서버1 ┐ ┌ 서버2 ┐ ┌ 서버3 ┐     ┌ 서버1 ┐ ┌ 서버2 ┐ ┌ 서버3 ┐
+  │ A B C │ │ A B C │ │ A B C │     │  A    │ │  B    │ │  C    │
+  └───────┘ └───────┘ └───────┘     └───────┘ └───────┘ └───────┘
+  고장에 강함                        용량·속도를 늘림
+  실제로는 둘을 같이 씀: 나눈 조각마다 복제본을 둔다</pre>
+
+<p><b>CAP 정리</b>는 분산 시스템에서 네트워크가 끊겼을 때(P, 분할) <b>일관성(C, 모두가 같은 최신 값을 봄)</b>과 <b>가용성(A, 일단 응답은 함)</b> 중 하나를 포기해야 한다는 이야기입니다. 은행 잔액은 "틀린 답보다 잠깐 멈추는 게 낫다"(C 우선), SNS 좋아요 수는 "잠깐 덜 정확해도 계속 보여 주는 게 낫다"(A 우선)처럼 서비스마다 고릅니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>지점이 두 곳인 가게에서 두 지점 사이 전화가 끊겼습니다. 재고를 서로 확인할 수 없어요. "확인될 때까지 판매 중지"(일관성)할지, "일단 팔고 나중에 맞추자"(가용성)할지 골라야 합니다. 전화가 끊기지 않았다면 고민할 필요가 없죠.</p>
+</div>
+
+<h2 id="lake">객체 저장소·데이터 레이크·레이크하우스</h2>
+
+<p><b>객체 저장소</b>(Amazon S3, Google Cloud Storage, Azure Blob Storage)는 "아주 싸고 거의 무한한 클라우드 파일 창고"입니다. 폴더처럼 보이지만 실제로는 <code>버킷/경로/파일이름</code>이라는 키로 파일 하나(객체)를 통째로 넣고 빼는 구조입니다. 파일 중간만 고치는 건 안 되고, 통째로 다시 씁니다.</p>
+
+<ul>
+<li><b>데이터 레이크</b>: 원천 데이터를 가공 전 모양 그대로(CSV·JSON·Parquet) 객체 저장소에 몽땅 쌓아 두는 방식. 싸고 유연하지만, 관리를 안 하면 "뭐가 뭔지 모르는 늪(data swamp)"이 됩니다.</li>
+<li><b>문제</b>: 파일만 있으니 트랜잭션이 없습니다. 누가 파일을 쓰는 중에 읽으면 반쯤 쓴 데이터를 봅니다. UPDATE·DELETE도 어렵고, 어느 파일들이 "지금 버전의 테이블"인지도 모호합니다.</li>
+<li><b>테이블 포맷</b>(Apache Iceberg, Delta Lake, Apache Hudi): Parquet 파일들 옆에 <b>"지금 이 테이블은 이 파일들로 이뤄져 있다"는 메타데이터(목록·스냅숏)</b>를 같이 관리해서, 파일 더미를 트랜잭션 되는 테이블처럼 쓰게 해 줍니다. 과거 버전 조회(time travel), 스키마 변경, 안전한 동시 쓰기가 됩니다.</li>
+<li><b>레이크하우스</b>: 레이크(싼 객체 저장소 + 열린 파일 포맷) 위에 웨어하우스 기능(트랜잭션·SQL·권한)을 얹은 구조. 여러 엔진(Spark, Trino, Snowflake, BigQuery 등)이 같은 테이블을 읽을 수 있다는 게 장점입니다.</li>
+</ul>
+
+<pre class="diagram">  레이크하우스의 층
+
+  ┌────────────────────────────────────────────┐
+  │ 엔진: Spark · Trino · DuckDB · 웨어하우스  │  ← SQL로 읽고 씀
+  ├────────────────────────────────────────────┤
+  │ 테이블 포맷: Iceberg / Delta / Hudi        │  ← "지금 버전은 파일 a,b,c" 스냅숏·트랜잭션
+  ├────────────────────────────────────────────┤
+  │ 파일 포맷: Parquet (열 저장)               │  ← 실제 데이터
+  ├────────────────────────────────────────────┤
+  │ 객체 저장소: S3 · GCS · Azure Blob         │  ← 싸고 큰 창고
+  └────────────────────────────────────────────┘</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유</span>
+<p>Parquet 파일 더미는 <b>사진이 잔뜩 든 상자</b>, 테이블 포맷은 그 옆의 <b>앨범 목차</b>입니다. "2026년 앨범은 이 사진 120장"이라고 목차에 적혀 있어서, 상자에 사진을 새로 넣는 중이어도 목차를 고치기 전까지는 다들 예전 앨범을 봅니다. 목차를 한 번에 바꾸는 순간 새 앨범이 됩니다.</p>
+</div>
+
+<h2 id="batch-stream">배치와 스트리밍</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>배치</th><th>스트리밍</th></tr>
+<tr><td>방식</td><td>모아 뒀다가 정해진 때 한꺼번에</td><td>들어오는 대로 한 건씩(또는 아주 작은 묶음)</td></tr>
+<tr><td>지연</td><td>몇 분~하루</td><td>몇 초 이하</td></tr>
+<tr><td>예</td><td>매일 새벽 6시 어제 매출 집계</td><td>결제 이상 거래 탐지, 실시간 재고</td></tr>
+<tr><td>도구</td><td>dbt, Airflow, Spark 배치</td><td>Kafka, Flink, Spark Structured Streaming, Pub/Sub</td></tr>
+<tr><td>어려운 점</td><td>늦게 도착한 데이터, 재처리</td><td>순서 뒤바뀜, 중복, 상태 관리, 운영 난도</td></tr>
+</table>
+</div>
+
+<p>스트리밍의 중심에는 보통 <b>로그</b>가 있습니다. 여기서 로그는 "일어난 일을 시간 순서대로 <b>뒤에 덧붙이기만 하는</b> 기록"입니다. Kafka는 이 로그를 여러 서버에 나눠·복제해 저장하고, 여러 소비자가 각자 "나는 어디까지 읽었다(오프셋)"를 기억하며 따라 읽게 합니다.</p>
+
+<pre class="diagram">  Kafka 토픽 = 덧붙이기만 하는 로그
+
+  생산자 ──▶ [0][1][2][3][4][5][6][7] ──▶ 계속 뒤에 붙음
+                        ▲           ▲
+              소비자 A: 3까지 읽음   소비자 B: 7까지 읽음
+              (각자 자기 위치를 기억, 다시 읽기도 가능)</pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<p>"실시간이 필요해요"라는 요청의 상당수는 실제로는 "15분마다면 충분해요"입니다. 스트리밍은 운영 부담이 훨씬 크니, 먼저 <b>얼마나 늦어도 괜찮은지</b>를 숫자로 물어보세요. 배치를 자주 돌리는 것(마이크로 배치)으로 해결되는 경우가 많습니다.</p>
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+
+<p>PowerShell에서 작업 폴더를 하나 만들고 시작하세요. 파이썬 표준 라이브러리만 쓰니 설치할 것은 없습니다.</p>
+<pre><code>mkdir $HOME\cs-lab
+cd $HOME\cs-lab</code></pre>
+
+<div class="lab">
+
+<div class="step" data-id="formats">
+<div class="step-title">1. CSV와 JSONL 크기 비교</div>
+<p><code>fmt.py</code>로 저장하고 <code>python fmt.py</code>로 실행합니다.</p>
+<pre data-file="fmt.py"><code>import csv, json, os, random   # 표준 라이브러리만 사용
+
+# 주문 10만 건 만들기 (SQL로 치면 INSERT 10만 번 할 데이터)
+rows = [{"order_id": i,
+         "status": random.choice(["placed", "shipped", "completed"]),
+         "amount": random.randint(1000, 90000)} for i in range(100000)]
+
+# CSV로 저장: 컬럼 이름은 맨 위 한 줄에만
+with open("orders.csv", "w", newline="", encoding="utf-8") as f:
+    w = csv.DictWriter(f, fieldnames=rows[0].keys())
+    w.writeheader()
+    w.writerows(rows)
+
+# JSONL로 저장: 한 줄에 JSON 하나 (키 이름이 줄마다 반복)
+with open("orders.jsonl", "w", encoding="utf-8") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+
+for name in ["orders.csv", "orders.jsonl"]:
+    print(name, os.path.getsize(name) // 1024, "KB")</code></pre>
+<p>결과 예시 (숫자는 실행마다 조금 다릅니다):</p>
+<pre><code>orders.csv 2062 KB
+orders.jsonl 5773 KB</code></pre>
+<p><code>Get-Content orders.jsonl -TotalCount 2</code>로 앞 두 줄을 열어 보고, 왜 세 배 가까이 큰지 눈으로 확인해 보세요.</p>
+</div>
+
+<div class="step" data-id="column">
+<div class="step-title">2. 행으로 압축 vs 열로 압축</div>
+<p>1번에서 만든 <code>orders.csv</code>를 행 묶음과 열 묶음으로 각각 압축해 봅니다.</p>
+<pre data-file="col.py"><code>import csv, zlib   # zlib = 압축 라이브러리 (zip과 같은 계열)
+
+with open("orders.csv", encoding="utf-8") as f:
+    rows = list(csv.reader(f))[1:]          # 머리글 빼고 전부 읽기
+
+# 행 저장 흉내: 한 행씩 이어 붙이기
+row_bytes = "\n".join(",".join(r) for r in rows).encode()
+
+# 열 저장 흉내: zip(*rows) = 표를 90도 돌려 열 단위로 모으기
+cols = list(zip(*rows))
+col_bytes = ["\n".join(c).encode() for c in cols]
+
+print("행 저장 압축", len(zlib.compress(row_bytes)) // 1024, "KB")
+print("열 저장 압축", sum(len(zlib.compress(c)) for c in col_bytes) // 1024, "KB")
+print("status 열만", len(zlib.compress(col_bytes[1])) // 1024, "KB")</code></pre>
+<p>결과 예시:</p>
+<pre><code>행 저장 압축 588 KB
+열 저장 압축 512 KB
+status 열만 38 KB</code></pre>
+<p>열로 모으면 비슷한 값끼리 붙어 압축이 더 잘 되고, <b>status만 필요한 쿼리라면 38KB만 읽으면 됩니다</b>. BigQuery가 쓴 컬럼만큼만 요금을 매기는 원리가 이것입니다. 실제 Parquet은 사전 인코딩 같은 기법을 더 써서 차이가 훨씬 큽니다.</p>
+</div>
+
+<div class="step" data-id="index">
+<div class="step-title">3. 인덱스 전후 실행 계획 비교 (sqlite3)</div>
+<p>50만 행 테이블에서 같은 쿼리를 인덱스 없이, 그리고 인덱스를 만든 뒤 돌려 봅니다. <code>EXPLAIN QUERY PLAN</code>은 "DB가 이 쿼리를 어떻게 풀 계획인지" 보여 주는 명령입니다.</p>
+<pre data-file="idx.py"><code>import sqlite3, random, time
+
+con = sqlite3.connect(":memory:")   # 메모리 안에 임시 DB 만들기
+con.execute("CREATE TABLE orders (order_id INTEGER, customer_id INTEGER, amount INTEGER)")
+rows = [(i, random.randint(1, 10000), random.randint(1000, 90000)) for i in range(1, 500001)]
+con.executemany("INSERT INTO orders VALUES (?, ?, ?)", rows)   # 50만 행 INSERT
+
+q = "SELECT SUM(amount) FROM orders WHERE customer_id = 42"
+
+print(con.execute("EXPLAIN QUERY PLAN " + q).fetchall())
+t = time.perf_counter(); con.execute(q).fetchone()
+print("인덱스 전", round((time.perf_counter() - t) * 1000, 1), "ms")
+
+con.execute("CREATE INDEX ix_orders_customer ON orders (customer_id)")
+
+print(con.execute("EXPLAIN QUERY PLAN " + q).fetchall())
+t = time.perf_counter(); con.execute(q).fetchone()
+print("인덱스 후", round((time.perf_counter() - t) * 1000, 2), "ms")</code></pre>
+<p>결과 예시:</p>
+<pre><code>[(3, 0, 216, 'SCAN orders')]
+인덱스 전 9.8 ms
+[(4, 0, 62, 'SEARCH orders USING INDEX ix_orders_customer (customer_id=?)')]
+인덱스 후 0.12 ms</code></pre>
+<p><code>SCAN</code>(전부 훑기)이 <code>SEARCH ... USING INDEX</code>(색인으로 찾기)로 바뀌고 수십 배 빨라집니다. 이번엔 <code>WHERE customer_id = 42</code>를 <code>WHERE amount &gt; 1000</code>으로 바꿔 보세요. amount에는 인덱스가 없으니 다시 SCAN이 됩니다.</p>
+</div>
+
+<div class="step" data-id="tx">
+<div class="step-title">4. 트랜잭션 — 반만 되는 이체는 없다</div>
+<pre data-file="tx.py"><code>import sqlite3
+
+con = sqlite3.connect(":memory:")
+# CHECK 제약: 잔액은 0 미만이 될 수 없다 (ACID의 C)
+con.execute("CREATE TABLE account (name TEXT PRIMARY KEY, balance INTEGER CHECK (balance &gt;= 0))")
+con.executemany("INSERT INTO account VALUES (?, ?)", [("A", 10000), ("B", 0)])
+con.commit()
+
+try:
+    with con:   # with con: 블록 = BEGIN ... 끝나면 COMMIT, 오류 나면 ROLLBACK
+        con.execute("UPDATE account SET balance = balance + 30000 WHERE name = 'B'")  # 성공
+        con.execute("UPDATE account SET balance = balance - 30000 WHERE name = 'A'")  # 잔액 부족 → 실패
+except sqlite3.IntegrityError as e:
+    print("실패:", e)
+
+print(con.execute("SELECT * FROM account").fetchall())</code></pre>
+<p>결과:</p>
+<pre><code>실패: CHECK constraint failed: balance &gt;= 0
+[('A', 10000), ('B', 0)]</code></pre>
+<p>B에 3만 원을 넣는 첫 UPDATE는 성공했지만, 두 번째가 실패하자 <b>첫 번째까지 통째로 취소</b>되어 B는 여전히 0원입니다. 이게 원자성(A)입니다. <code>with con:</code>을 빼고 두 줄을 따로 돌리면 어떻게 되는지도 해 보세요.</p>
+</div>
+
+</div>
+
+<h2 id="wrap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+저장의 기술은 대부분 <b>"덜 읽기"</b>와 <b>"안 깨지기"</b> 둘 중 하나입니다. 열 저장·압축·인덱스·파티션·클러스터링은 덜 읽기 위해, 트랜잭션·복제·테이블 포맷은 안 깨지기 위해 있습니다.
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>BigQuery에서 <code>SELECT * ... LIMIT 10</code>이 왜 싸지 않은지, 열 저장으로 설명해 보세요.</li>
+<li>운영 DB(주문 접수)와 웨어하우스가 각각 행 저장·열 저장을 고르는 이유를 말해 보세요.</li>
+<li>Parquet 파일만 S3에 쌓았을 때 생기는 문제와, Iceberg 같은 테이블 포맷이 그걸 어떻게 푸는지 말해 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="2">
+<p class="q-text">컬럼이 60개인 큰 테이블에서 <code>SELECT region, SUM(revenue) ... GROUP BY region</code>을 돌릴 때 열 저장이 유리한 가장 큰 이유는?</p>
+<ol class="q-opts">
+<li>행 단위로 잠금을 걸 수 있어서</li>
+<li>필요한 두 컬럼만 디스크에서 읽으면 되고, 같은 열 값끼리 압축이 잘 되어서</li>
+<li>B-tree 인덱스가 자동으로 만들어져서</li>
+<li>트랜잭션 격리 수준이 더 높아서</li>
+</ol>
+<div class="q-explain">열 저장은 열마다 따로 모여 있어 쿼리에 쓴 열만 읽고, 비슷한 값이 붙어 있어 압축률도 높습니다. 잠금·격리 수준은 트랜잭션 이야기이고, 열 저장 웨어하우스는 B-tree 인덱스를 거의 쓰지 않습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">다음 중 Avro에 대한 설명으로 맞는 것은?</p>
+<ol class="q-opts">
+<li>사람이 메모장으로 읽기 좋은 텍스트 포맷이다</li>
+<li>열 단위 저장이라 분석 쿼리에 가장 빠르다</li>
+<li>엑셀이 기본으로 저장하는 포맷이다</li>
+<li>행 단위 바이너리 포맷이고 스키마가 함께 들어가 스트리밍 메시지에 자주 쓰인다</li>
+</ol>
+<div class="q-explain">Avro는 행 단위 + 스키마 포함 바이너리 포맷이라 한 건씩 쓰고 주고받기 좋아 Kafka 메시지에 많이 씁니다. 열 단위로 분석에 강한 쪽은 Parquet·ORC입니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">이체 중 두 번째 UPDATE가 실패했는데 첫 번째 UPDATE도 취소되었습니다. ACID 중 무엇 덕분인가요?</p>
+<ol class="q-opts">
+<li>Atomicity (원자성)</li>
+<li>Isolation (격리성)</li>
+<li>Durability (지속성)</li>
+<li>Partitioning (분할)</li>
+</ol>
+<div class="q-explain">"다 되거나 하나도 안 되거나"가 원자성입니다. 격리성은 동시에 도는 트랜잭션끼리 간섭하지 않는 것, 지속성은 커밋된 것이 사라지지 않는 것입니다. 분할(P)은 ACID가 아니라 CAP에 나오는 말입니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">날짜로 파티션된 테이블에서 요금을 줄이는 쿼리 습관으로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>쿼리 끝에 <code>LIMIT 100</code>을 붙인다</li>
+<li><code>SELECT *</code>로 한 번에 다 가져와 재사용한다</li>
+<li>파티션 컬럼에 대한 WHERE 조건을 걸어 필요한 날짜 칸만 읽게 한다</li>
+<li>ORDER BY를 추가해 정렬된 결과를 받는다</li>
+</ol>
+<div class="q-explain">파티션 필터가 있으면 해당 칸만 읽어 읽은 바이트가 줄어듭니다. LIMIT은 읽은 뒤에 자르므로 읽는 양을 거의 줄이지 않고, SELECT *는 모든 열을 읽어 오히려 비쌉니다. ORDER BY는 계산만 늘립니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">Iceberg·Delta Lake 같은 테이블 포맷이 해결하려는 문제로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>CSV 파일의 한글 인코딩 문제</li>
+<li>객체 저장소의 파일 더미를 트랜잭션·버전 관리가 되는 테이블처럼 쓰지 못하는 문제</li>
+<li>Python 코드가 느린 문제</li>
+<li>운영 DB의 행 단위 인덱스가 부족한 문제</li>
+</ol>
+<div class="q-explain">테이블 포맷은 "지금 테이블을 이루는 파일 목록"을 메타데이터·스냅숏으로 관리해, 레이크의 Parquet 파일들에 트랜잭션·time travel·스키마 변경을 줍니다. 인코딩이나 운영 DB 인덱스와는 관계없습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text">현업이 "실시간 대시보드가 필요해요"라고 할 때 데이터 엔지니어가 먼저 확인할 것은?</p>
+<ol class="q-opts">
+<li>Kafka 클러스터를 몇 대로 할지</li>
+<li>대시보드 색상 테마</li>
+<li>CSV와 JSON 중 무엇으로 받을지</li>
+<li>데이터가 얼마나 늦어도 괜찮은지(허용 지연)를 숫자로</li>
+</ol>
+<div class="q-explain">"실시간"의 실제 요구가 몇 초인지, 15분인지, 1시간인지에 따라 스트리밍이 필요할 수도, 자주 도는 배치로 충분할 수도 있습니다. 도구 고르기는 그다음입니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2 · 코드가 돌아가는 원리 · 컴퓨터 기초</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cs2">
+<div class="layout">
+<aside class="toc"></aside>
+<main>
+
+<div class="eyebrow">컴퓨터 기초 · 2장</div>
+<h1>코드가 돌아가는 원리</h1>
+<p class="lead">1장에서 CPU는 "더해라·비교해라·건너뛰어라" 같은 아주 단순한 명령만 안다고 했습니다. 그런데 우리는 <code>total = sum(prices)</code>나 <code>SELECT ... GROUP BY</code>처럼 사람 말에 가까운 코드를 씁니다. 이 장은 그 사이에서 <b>무슨 일이 일어나는지</b>를 봅니다. 그리고 에러 메시지(트레이스백)를 겁내지 않고 읽는 법까지 익힙니다.</p>
+<p class="meta-line">읽기 약 60분 · 손으로 해 보기 4개 · 퀴즈 6문제</p>
+
+<div class="box">
+<span class="box-title">이 장을 마치면</span>
+<ul>
+<li>소스 코드가 기계어가 되는 두 가지 길(컴파일·인터프리트)을 설명하기</li>
+<li>Python이 <code>.py</code> 파일을 실행할 때 거치는 단계와 <code>__pycache__</code> 폴더의 정체를 말하기</li>
+<li>변수가 "값을 담는 상자"가 아니라 "값에 붙인 이름표"라는 것을 예로 보이기</li>
+<li>트레이스백을 아래에서부터 읽어 원인 줄을 찾기</li>
+<li>SQL이 선언형이라는 말의 뜻과, 옵티마이저가 무엇을 대신해 주는지 설명하기</li>
+<li><code>import</code>가 모듈을 어디서 찾는지, 순서대로·동시에·병렬 실행이 어떻게 다른지 말하기</li>
+</ul>
+</div>
+
+<h2 id="layers">사람 말에서 기계어까지</h2>
+
+<p>CPU가 실제로 실행하는 것은 <b>기계어(machine code)</b>, 즉 명령어 번호와 데이터가 담긴 바이트입니다. 사람이 그걸 직접 쓰기는 너무 힘들어서, 위로 갈수록 사람 말에 가까운 층을 쌓아 왔습니다.</p>
+
+<pre class="diagram">  사람에 가까움
+       ▲   SQL            SELECT city, SUM(amount) FROM sales GROUP BY city
+       │                  "무엇을 원하는지"만 적는다 (선언형)
+       │   Python · Java  for r in rows: totals[r.city] += r.amount
+       │                  "어떻게 할지"를 순서대로 적는다 (명령형)
+       │   C · Rust       포인터·메모리를 직접 다룬다
+       │   어셈블리        ADD  RAX, RBX      ← 기계어를 글자로 적은 것
+       │   기계어          48 01 D8           ← CPU가 실제로 읽는 바이트
+       ▼
+  기계에 가까움          위의 어떤 코드든 결국 맨 아래 형태가 되어야 실행된다</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 통역</span>
+<p>CPU는 <b>아주 좁은 사투리만 알아듣는 일꾼</b>입니다. 우리가 표준어(Python·SQL)로 말하면 누군가 그 사투리로 옮겨 줘야 합니다. 옮기는 방법은 두 가지입니다. <b>책 한 권을 미리 통째로 번역해 두거나(컴파일)</b>, <b>옆에서 한 문장씩 바로바로 통역하거나(인터프리트)</b>.</p>
+</div>
+
+<h2 id="compile">컴파일 vs 인터프리터</h2>
+
+<div class="table-wrap">
+<table>
+<tr><th></th><th>컴파일 방식</th><th>인터프리터 방식</th></tr>
+<tr><td>언제 옮기나</td><td>실행 <b>전에</b> 전체를 기계어로 번역해 실행 파일(.exe 등)을 만든다</td><td>실행하는 <b>동안</b> 한 줄(한 덩이)씩 읽어 처리한다</td></tr>
+<tr><td>대표</td><td>C, C++, Rust, Go</td><td>Python, JavaScript, 셸 스크립트(PowerShell·bash)</td></tr>
+<tr><td>장점</td><td>빠르다. 실행 파일만 있으면 언어 없이도 돈다. 오타·타입 오류를 실행 전에 많이 잡는다</td><td>고치고 바로 돌려 볼 수 있다. 같은 코드가 여러 OS에서 돈다</td></tr>
+<tr><td>단점</td><td>OS·CPU마다 따로 번역해야 한다. 번역 시간이 든다</td><td>느리다. 오류가 그 줄에 도착해야 드러난다</td></tr>
+</table>
+</div>
+
+<p>실제로는 둘이 섞여 있습니다. Java와 C#은 먼저 <b>바이트코드(bytecode)</b>라는 중간 언어로 번역해 두고, 실행할 때 가상 머신이 그걸 처리합니다. 자주 쓰는 부분은 실행 중에 기계어로 번역해 두는데, 이걸 <b>JIT(Just-In-Time) 컴파일</b>이라고 합니다. Python(정확히는 표준 구현인 CPython)도 사실은 바이트코드로 한 번 바꾼 다음 실행합니다.</p>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<ul>
+<li>pandas·numpy·DuckDB·Polars가 Python인데도 빠른 이유: 겉은 Python이지만 <b>무거운 계산은 C·C++·Rust로 미리 컴파일된 코드</b>가 합니다. 그 컴파일된 부품이 윈도에서는 <code>.dll</code>·<code>.pyd</code> 파일입니다.</li>
+<li>그래서 "Python에서 for문으로 행을 하나씩 도는 코드"와 "라이브러리 함수 한 번 호출"은 속도가 수십~수백 배 차이 날 수 있습니다. 행 단위 반복은 되도록 라이브러리나 SQL에 맡기세요.</li>
+<li>회사 보안 정책이 처음 보는 <code>.dll</code>을 막으면 "설치는 됐는데 import에서 에러" 가 납니다. 컴파일된 부품이 실행을 거부당한 것입니다.</li>
+</ul>
+</div>
+
+<h2 id="python-run">Python은 실제로 어떻게 실행되나</h2>
+
+<p><code>python main.py</code>를 치면 이런 일이 일어납니다.</p>
+
+<pre class="diagram">  main.py (글자)
+      │ ① 읽기 + 문법 검사        → 괄호 빠짐 등은 여기서 SyntaxError (한 줄도 실행 안 됨)
+      ▼
+  구문 트리 (AST)               "이건 함수 정의, 이건 대입, 이건 곱셈"으로 구조화
+      │ ② 컴파일
+      ▼
+  바이트코드                     LOAD_FAST, BINARY_OP … 같은 Python 전용 명령
+      │   (import 된 모듈은 __pycache__/*.pyc 로 저장해 두고 다음에 재사용)
+      ▼ ③ 실행
+  Python 가상 머신(인터프리터)     바이트코드를 하나씩 읽어 처리
+      │                         (여기 자체는 C로 짜서 미리 컴파일된 python.exe)
+      ▼
+  CPU                           결국 python.exe 의 기계어가 돈다</pre>
+
+<p>바이트코드는 <code>dis</code> 모듈로 직접 볼 수 있습니다(Python 3.12 결과).</p>
+
+<pre data-file="Python 3.12"><code>&gt;&gt;&gt; import dis
+&gt;&gt;&gt; def add_tax(price):
+...     return price * 1.1
+...
+&gt;&gt;&gt; dis.dis(add_tax)
+  1           0 RESUME                   0
+
+  2           2 LOAD_FAST                0 (price)     # price 값을 꺼낸다
+              4 LOAD_CONST               1 (1.1)       # 상수 1.1을 꺼낸다
+              6 BINARY_OP                5 (*)         # 둘을 곱한다
+             10 RETURN_VALUE                           # 결과를 돌려준다</code></pre>
+<p style="font-size:14px;color:var(--muted)">바이트코드 모양은 Python 버전마다 조금씩 다릅니다. 내 PC 결과가 조금 달라도 괜찮습니다.</p>
+
+<h3><code>__pycache__</code>의 정체</h3>
+<p>프로젝트 폴더에 저절로 생기는 <code>__pycache__/helper.cpython-312.pyc</code>는 <b>import된 모듈의 바이트코드를 저장해 둔 것</b>입니다. 이름의 <code>312</code>는 Python 3.12용이라는 뜻입니다. 다음 실행 때 원본 <code>.py</code>가 안 바뀌었으면 ②단계를 건너뛰어 빨라집니다. 지워도 다시 만들어지므로 안전하고, git에는 올리지 않습니다(<code>.gitignore</code>에 넣음). 직접 실행한 파일(<code>python main.py</code>의 main.py)은 저장하지 않고 import된 쪽만 저장합니다.</p>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+DB도 비슷한 일을 합니다. SQL 글자를 받으면 ① 문법 검사(파싱) → ② 실행 계획 만들기 → ③ 실행 순서로 처리하고, 자주 쓰는 실행 계획은 캐시해 둡니다. 프로시저를 "컴파일한다"고 할 때도 이렇게 미리 검사하고 계획을 만들어 두는 일을 말합니다. 문법 오류가 실행 시작 전에 나는 것도 같습니다.
+</div>
+
+<h2 id="variables">변수·값·참조 — 이름표 이야기</h2>
+
+<p>처음 배울 때 "변수는 값을 담는 상자"라고 듣지만, Python에서는 <b>"메모리 어딘가에 있는 값(객체)에 붙인 이름표"</b>라고 이해해야 헷갈리지 않습니다.</p>
+
+<pre data-file="Python"><code>a = [1, 2, 3]      # 메모리에 리스트 하나를 만들고 'a' 이름표를 붙인다
+b = a              # 같은 리스트에 'b' 이름표를 하나 더 붙인다 (복사가 아님!)
+b.append(4)        # b가 가리키는 리스트에 4를 넣으면…
+print(a)           # [1, 2, 3, 4]  ← a도 바뀌었다. 같은 리스트니까
+print(a is b)      # True          ← 정말로 같은 객체
+
+c = a.copy()       # 새 리스트를 만들어 복사한다
+c.append(5)
+print(a, c)        # [1, 2, 3, 4] [1, 2, 3, 4, 5]  ← 이제 따로 논다</code></pre>
+
+<pre class="diagram">  b = a 일 때                         c = a.copy() 일 때
+
+   a ──┐                               a ──▶ [1, 2, 3, 4]
+       ├──▶ [1, 2, 3, 4]
+   b ──┘                               c ──▶ [1, 2, 3, 4, 5]   (다른 객체)</pre>
+
+<p>그런데 숫자·문자열은 다르게 보입니다.</p>
+<pre data-file="Python"><code>x = 10
+y = x
+y = y + 1          # 10을 바꾸는 게 아니라, 11이라는 새 값에 y 이름표를 옮겨 붙인다
+print(x, y)        # 10 11</code></pre>
+<p>숫자·문자열·튜플은 <b>바꿀 수 없는(immutable)</b> 값이라 "고친다"는 게 항상 "새 값을 만들어 이름표를 옮긴다"입니다. 리스트·딕셔너리·집합은 <b>바꿀 수 있는(mutable)</b> 값이라 이름표 여러 개가 같은 값을 공유하면 한쪽 변경이 다른 쪽에도 보입니다.</p>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 공유 문서와 첨부 파일</span>
+<p><code>b = a</code>는 <b>구글 시트 링크를 공유</b>한 것입니다. 누가 고치든 모두에게 바뀐 게 보입니다. <code>a.copy()</code>는 <b>엑셀 파일을 첨부로 보낸 것</b>이라, 받은 사람이 고쳐도 내 원본은 그대로입니다.</p>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+<code>b = a</code>는 <b>뷰(VIEW)</b>, <code>a.copy()</code>는 <b><code>CREATE TABLE b AS SELECT * FROM a</code></b>와 비슷합니다. 뷰는 원본을 가리키기만 해서 원본이 바뀌면 같이 바뀌고, CTAS로 만든 테이블은 그 순간의 복사본이라 따로 놉니다.
+</div>
+
+<h3>자료형(type) — 값마다 종류가 있다</h3>
+<div class="table-wrap">
+<table>
+<tr><th>Python</th><th>예</th><th>SQL에서 비슷한 것</th><th>바꿀 수 있나</th></tr>
+<tr><td><code>int</code></td><td><code>42</code></td><td>INT64</td><td>×</td></tr>
+<tr><td><code>float</code></td><td><code>3.14</code></td><td>FLOAT64 (1장의 오차 주의)</td><td>×</td></tr>
+<tr><td><code>str</code></td><td><code>"서울"</code></td><td>STRING</td><td>×</td></tr>
+<tr><td><code>bool</code></td><td><code>True</code></td><td>BOOL</td><td>×</td></tr>
+<tr><td><code>None</code></td><td><code>None</code></td><td>NULL (단, <code>None == None</code>은 True — SQL의 NULL 비교와 다름)</td><td>×</td></tr>
+<tr><td><code>list</code></td><td><code>[1, 2]</code></td><td>ARRAY</td><td>○</td></tr>
+<tr><td><code>dict</code></td><td><code>{"id": 1}</code></td><td>STRUCT, JSON 객체 한 행</td><td>○</td></tr>
+<tr><td><code>tuple</code></td><td><code>(1, "a")</code></td><td>바꿀 수 없는 행 하나</td><td>×</td></tr>
+</table>
+</div>
+<p>Python은 <b>실행 중에</b> 타입을 확인합니다. <code>"1" + "1"</code>은 <code>"11"</code>(문자열 이어 붙이기), <code>1 + 1</code>은 <code>2</code>입니다. CSV에서 읽은 값은 전부 문자열이라, 숫자로 바꾸지 않고 더하면 이런 일이 생깁니다.</p>
+
+<h2 id="stack">함수와 호출 스택</h2>
+
+<p>함수가 다른 함수를 부르면, 컴퓨터는 "어디까지 하다 왔는지"를 차곡차곡 쌓아 둡니다. 이 더미를 <b>호출 스택(call stack)</b>이라고 합니다. 함수가 끝나면 맨 위에서 하나를 꺼내 원래 자리로 돌아갑니다.</p>
+
+<pre class="diagram">  f() 가 g() 를, g() 가 h() 를 부른 순간의 스택
+
+        ┌───────────────┐  ← 맨 위: 지금 실행 중
+        │ h()  6번째 줄    │
+        ├───────────────┤
+        │ g()  4번째 줄    │  h 가 끝나면 여기로 돌아옴
+        ├───────────────┤
+        │ f()  3번째 줄    │
+        ├───────────────┤
+        │ &lt;module&gt; 7번째 줄 │  ← 맨 아래: 파일 자체 (가장 먼저 시작)
+        └───────────────┘</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 접시 쌓기</span>
+<p>일을 맡길 때마다 접시를 하나 위에 올리고, 일이 끝나면 맨 위 접시부터 치웁니다. 함수가 자기 자신을 끝없이 부르면(무한 재귀) 접시가 천장까지 쌓여 무너지는데, 그게 <code>RecursionError</code>(다른 언어에서는 stack overflow)입니다. Python은 기본으로 약 1,000층에서 멈춥니다.</p>
+</div>
+
+<p>각 함수 호출은 자기만의 <b>지역 변수</b> 칸을 스택에 갖습니다. 그래서 함수 안의 <code>s = 0</code>은 바깥의 <code>s</code>와 다른 변수입니다. 함수가 끝나면 그 칸도 사라집니다.</p>
+
+<h2 id="traceback">에러와 트레이스백 읽는 법</h2>
+
+<p>에러가 나면 Python은 그 순간의 <b>호출 스택을 그대로 출력</b>합니다. 이걸 트레이스백(traceback)이라고 합니다. 길어 보여도 읽는 순서만 알면 쉽습니다.</p>
+
+<pre data-file="shop.py"><code>def parse_amount(text):
+    return int(text)
+
+def total(rows):
+    s = 0
+    for r in rows:
+        s += parse_amount(r["amount"])
+    return s
+
+rows = [{"amount": "1000"}, {"amount": "2,000"}]
+print(total(rows))</code></pre>
+
+<pre data-file="실행 결과 (경로는 줄임)"><code>Traceback (most recent call last):
+  File "...\shop.py", line 11, in &lt;module&gt;
+    print(total(rows))
+          ^^^^^^^^^^^
+  File "...\shop.py", line 7, in total
+    s += parse_amount(r["amount"])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "...\shop.py", line 2, in parse_amount
+    return int(text)
+           ^^^^^^^^^
+ValueError: invalid literal for int() with base 10: '2,000'</code></pre>
+
+<div class="box tip">
+<span class="box-title">읽는 순서 — 아래에서 위로</span>
+<ol>
+<li><b>맨 마지막 줄부터</b>: <code>에러종류: 설명</code>. 여기서는 <code>ValueError</code>, "<code>'2,000'</code>은 int로 바꿀 수 없다". 이 한 줄이 답의 80%입니다.</li>
+<li><b>바로 위 블록</b>: 에러가 실제로 터진 곳(2번째 줄 <code>int(text)</code>). <code>^^^^</code>는 그 줄에서 문제가 된 부분을 가리킵니다(Python 3.11+).</li>
+<li><b>더 위로</b>: 누가 그 함수를 불렀는지 거슬러 올라갑니다. 7번째 줄 <code>total</code> → 11번째 줄 파일 본문. "most recent call last"는 <b>가장 최근 호출이 맨 아래</b>라는 뜻입니다.</li>
+<li><b>내 코드의 줄을 찾기</b>: 라이브러리 내부 경로(<code>site-packages\...</code>)가 길게 이어져도, 그중 <b>내 파일 이름이 나오는 가장 아래 줄</b>이 보통 고칠 곳입니다.</li>
+</ol>
+여기서는 원천 데이터에 천 단위 쉼표가 섞여 있었습니다. <code>int(text.replace(",", ""))</code>로 고치거나, 더 좋게는 수집 단계에서 숫자 형식을 정해 두면 됩니다.
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>자주 보는 에러</th><th>뜻</th><th>흔한 원인</th></tr>
+<tr><td><code>SyntaxError</code></td><td>문법이 틀림 (실행 전에 남)</td><td>괄호·따옴표 짝, 콜론 빠짐, 들여쓰기</td></tr>
+<tr><td><code>NameError</code></td><td>그런 이름이 없음</td><td>오타, 정의 전에 사용, import 빠짐</td></tr>
+<tr><td><code>TypeError</code></td><td>타입이 맞지 않음</td><td><code>"1" + 1</code>, None에 연산</td></tr>
+<tr><td><code>ValueError</code></td><td>타입은 맞는데 값이 이상함</td><td><code>int("2,000")</code>, 날짜 형식</td></tr>
+<tr><td><code>KeyError</code></td><td>딕셔너리에 그 키가 없음</td><td>컬럼 이름 오타, BOM 붙은 첫 컬럼(1장)</td></tr>
+<tr><td><code>ModuleNotFoundError</code></td><td>import할 모듈을 못 찾음</td><td>설치 안 함, 다른 가상환경의 python으로 실행</td></tr>
+<tr><td><code>UnicodeDecodeError</code></td><td>바이트를 글자로 못 바꿈</td><td>CP949 파일을 UTF-8로 읽음(1장)</td></tr>
+</table>
+</div>
+
+<div class="box proc">
+<span class="box-title">SQL 감각으로 옮기면</span>
+BigQuery의 <code>Bad int64 value: 2,000</code>, <code>Unrecognized name: amout</code>가 각각 Python의 <code>ValueError</code>, <code>NameError</code>입니다. SQL 에러는 보통 한 줄이지만, Python은 "누가 누구를 불러서 여기까지 왔는지"를 전부 보여 준다는 점만 다릅니다. 프로시저 안에서 프로시저를 부르다 난 에러를 추적하는 것과 같습니다.
+</div>
+
+<h2 id="declarative">명령형 Python, 선언형 SQL</h2>
+
+<p>같은 일 — "1,000원 이상 주문만, 도시별 합계" — 을 두 방식으로 적어 보겠습니다.</p>
+
+<div class="compare">
+<div>
+<div class="label">SQL: "무엇을" 원하는지만</div>
+<pre><code>SELECT city, SUM(amount) AS total
+FROM sales
+WHERE amount &gt;= 1000
+GROUP BY city;</code></pre>
+</div>
+<div>
+<div class="label">Python: "어떻게" 할지 순서대로</div>
+<pre><code>totals = {}                       # 결과 테이블 (GROUP BY 결과)
+for r in rows:                    # FROM sales — 한 행씩
+    if r["amount"] &gt;= 1000:       # WHERE amount &gt;= 1000
+        city = r["city"]          # GROUP BY city 의 키
+        # SUM(amount): 없으면 0에서 시작해 더하기
+        totals[city] = totals.get(city, 0) + r["amount"]
+print(totals)                     # {'서울': 3000}</code></pre>
+</div>
+</div>
+
+<p>Python 쪽은 "한 행씩 돌고, 조건을 보고, 딕셔너리에 더하라"는 <b>절차</b>를 사람이 다 정했습니다. SQL 쪽은 <b>원하는 결과의 모양</b>만 말했고, 절차는 DB가 정합니다. DB 안에서 그 일을 하는 것이 <b>옵티마이저(optimizer)</b>입니다.</p>
+
+<pre class="diagram">  SQL 글자 ──▶ 파서 ──▶ 옵티마이저 ──────────────▶ 실행 계획 ──▶ 실행 엔진
+                         │ 고민하는 것들                   (EXPLAIN 으로 볼 수 있음)
+                         ├ 인덱스를 쓸까, 전체를 읽을까
+                         ├ 어느 테이블부터 조인할까, 해시 조인? 중첩 반복?
+                         ├ WHERE 를 먼저 적용해 읽을 양을 줄일 수 있나
+                         └ 몇 조각으로 나눠 동시에 돌릴까 (분산 DB)</pre>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 내비게이션</span>
+<p>명령형은 <b>"300m 직진, 우회전, 두 번째 골목 좌회전"</b>을 내가 정하는 것이고, 선언형은 <b>목적지만 찍고 내비게이션에 맡기는 것</b>입니다. 내비게이션(옵티마이저)은 그날 교통(데이터 크기·인덱스·통계)을 보고 길을 고릅니다. 데이터가 커져도 SQL은 그대로 두고 DB가 더 좋은 길을 찾아 주는 이유입니다.</p>
+</div>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+<ul>
+<li>선언형이라도 <b>옵티마이저가 고를 수 있는 길을 막으면</b> 느려집니다. 예: 파티션 컬럼에 함수를 씌워 <code>WHERE DATE(ts) = ...</code>처럼 쓰면 일부 DB는 파티션을 건너뛰지 못합니다. 실행 계획(EXPLAIN, BigQuery의 실행 그래프)을 보는 습관이 필요합니다.</li>
+<li>dbt·Spark·pandas도 이 생각을 따릅니다. Spark DataFrame은 바로 실행하지 않고 계획을 모았다가 한 번에 최적화해서 돌립니다(지연 실행).</li>
+<li>Python은 "정해진 절차가 필요할 때"(API 호출, 파일 옮기기, 재시도), SQL은 "집합 계산"에 씁니다. 집계를 Python 반복문으로 하는 건 대부분 손해입니다.</li>
+</ul>
+</div>
+
+<h2 id="import">import는 어디서 찾나 — sys.path</h2>
+
+<p><code>import json</code>이라고 쓰면 Python은 <b><code>sys.path</code>라는 폴더 목록을 위에서부터 차례로</b> 뒤져 <code>json</code>이라는 이름의 모듈을 찾고, <b>처음 찾은 것</b>을 씁니다.</p>
+
+<pre data-file="Python — sys.path 예 (설치 위치에 따라 다름)"><code>&gt;&gt;&gt; import sys
+&gt;&gt;&gt; for p in sys.path: print(p)
+
+                                              ← ① 실행한 스크립트 폴더(대화형이면 현재 폴더)
+C:\...\Python312\python312.zip               ← ② 표준 라이브러리
+C:\...\Python312\DLLs
+C:\...\Python312\Lib
+C:\...\Python312
+C:\...\Python312\Lib\site-packages            ← ③ pip install 한 패키지들</code></pre>
+
+<pre class="diagram">  import helper
+
+  ① 스크립트 폴더에 helper.py 있나?   ── 있으면 → 이걸 씀 (끝)
+  ② 표준 라이브러리에 있나?          ── 있으면 → 이걸 씀
+  ③ site-packages 에 있나?          ── 있으면 → 이걸 씀
+  모두 없음                         ──▶ ModuleNotFoundError</pre>
+
+<div class="box warn">
+<span class="box-title">⚠ 자주 만나는 함정</span>
+<ul>
+<li><b>이름 겹침</b>: 내 폴더에 <code>json.py</code>, <code>csv.py</code>, <code>requests.py</code> 같은 파일을 만들면 ①이 먼저라서 진짜 라이브러리 대신 내 파일이 import됩니다. "분명 설치했는데 그런 함수가 없대요"의 원인입니다.</li>
+<li><b>가상환경이 다름</b>: 가상환경마다 자기 <code>site-packages</code>를 갖습니다. A 가상환경에 설치하고 B의 python으로 실행하면 ③에서 못 찾습니다. <code>python -c "import sys; print(sys.executable)"</code>로 지금 어느 python인지 확인하세요(3장에서 자세히).</li>
+<li>모듈이 실제로 어디서 왔는지는 <code>import json; print(json.__file__)</code>로 확인합니다.</li>
+</ul>
+</div>
+
+<h2 id="concurrency">순서대로·동시에·병렬로</h2>
+
+<p>프로그램이 느린 이유는 크게 두 가지입니다. <b>계산할 게 많거나(CPU 바쁨)</b>, <b>기다리는 시간이 길거나(I/O 대기)</b> — 네트워크 응답, 디스크 읽기, DB 쿼리 결과를 기다리는 시간입니다. 해결책이 다릅니다.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>방식</th><th>무엇</th><th>잘 맞는 일</th><th>Python 도구</th></tr>
+<tr><td><b>순서대로(동기)</b></td><td>하나 끝나면 다음</td><td>단순한 스크립트</td><td>평범한 코드</td></tr>
+<tr><td><b>동시에(concurrency)</b></td><td>기다리는 동안 다른 일을 시작</td><td>API 여러 개 호출, 파일 여러 개 다운로드</td><td>스레드(<code>ThreadPoolExecutor</code>), <code>asyncio</code></td></tr>
+<tr><td><b>병렬로(parallelism)</b></td><td>코어 여러 개가 정말 같은 순간에 계산</td><td>큰 계산, 이미지 처리</td><td>프로세스(<code>ProcessPoolExecutor</code>, <code>multiprocessing</code>)</td></tr>
+<tr><td><b>분산</b></td><td>컴퓨터 여러 대가 나눠서 계산</td><td>한 대에 안 들어가는 데이터</td><td>Spark, BigQuery 같은 웨어하우스</td></tr>
+</table>
+</div>
+
+<div class="box analogy">
+<span class="box-title">🧸 비유 — 라면 다섯 개</span>
+<p>라면 다섯 개를 끓일 때 <b>하나 끓이고 다 먹고 다음 걸 올리면</b> 순서대로입니다. <b>냄비 다섯 개를 동시에 올리고 물 끓는 동안 기다리면</b> 동시에(혼자서도 됨, 대부분 기다리는 시간이니까)입니다. <b>요리사 다섯 명이 각자 끓이면</b> 병렬, <b>식당 다섯 곳에 나눠 주문하면</b> 분산입니다.</p>
+</div>
+
+<p>CPython에는 <b>GIL(Global Interpreter Lock)</b>이 있어서, 스레드를 여러 개 만들어도 <b>Python 바이트코드는 한 순간에 하나의 스레드만</b> 실행합니다. 그래서 스레드는 "기다리는 일"에는 효과가 크지만 "계산이 많은 일"은 빨라지지 않습니다. 계산을 나누려면 프로세스를 여러 개 쓰거나, C로 된 라이브러리·DB에 맡깁니다. (Python 3.13부터 GIL 없는 빌드가 실험적으로 나왔지만, 아직 일반적인 기본 설치는 GIL이 있는 쪽입니다.)</p>
+
+<h2 id="memory-gc">메모리는 누가 치우나 — 가비지 컬렉션</h2>
+
+<p>값(객체)을 만들면 메모리를 차지합니다. C 같은 언어는 다 쓴 메모리를 사람이 직접 돌려줘야 하고, 깜빡하면 메모리가 계속 새는(memory leak) 버그가 생깁니다. Python·Java·JavaScript는 <b>가비지 컬렉션(GC)</b>이 자동으로 치웁니다.</p>
+
+<ul>
+<li>CPython은 기본으로 <b>참조 카운트</b>를 씁니다. 객체마다 "나를 가리키는 이름표가 몇 개인지"를 세다가 0이 되면 바로 메모리를 돌려줍니다.</li>
+<li>서로가 서로를 가리키는 고리(순환 참조)는 카운트가 0이 안 되므로, 가끔 따로 고리를 찾아 치우는 <b>순환 GC</b>가 돕니다.</li>
+</ul>
+
+<pre data-file="Python — 이름표 수 세기"><code>&gt;&gt;&gt; import sys
+&gt;&gt;&gt; a = [1, 2]
+&gt;&gt;&gt; sys.getrefcount(a)   # 2 — a 하나 + 이 함수에 넘기느라 잠깐 생긴 것 하나
+2
+&gt;&gt;&gt; b = a
+&gt;&gt;&gt; sys.getrefcount(a)   # 3 — b 이름표가 늘었다
+3
+&gt;&gt;&gt; del b                # 이름표를 떼면
+&gt;&gt;&gt; sys.getrefcount(a)
+2</code></pre>
+
+<div class="box tip">
+<span class="box-title">데이터 엔지니어에게는</span>
+GC가 있어도 <b>이름표가 붙어 있는 동안에는 치우지 않습니다.</b> 큰 데이터를 리스트에 계속 쌓아 두거나, 전역 변수에 담아 두면 메모리가 계속 늘어 결국 OOM(1장)으로 죽습니다. 큰 데이터는 처리한 뒤 이름표를 떼고(<code>del</code>), 애초에 나눠서(청크) 처리하는 것이 기본입니다.
+</div>
+
+<h2 id="lab">손으로 해 보기</h2>
+<div class="lab">
+
+<div class="step" data-id="dis">
+<div class="step-title">1. 내 함수의 바이트코드 보기</div>
+<p>Python을 켜고 아래를 입력합니다.</p>
+<pre><code>import dis
+def add_tax(price):
+    return price * 1.1
+
+dis.dis(add_tax)</code></pre>
+<p>위 본문과 비슷하게 <code>LOAD_FAST</code> → <code>LOAD_CONST</code> → <code>BINARY_OP (*)</code> → <code>RETURN_VALUE</code>가 나오면 됩니다. 스스로 해 보세요: <code>return price * 1.1 + 100</code>으로 바꾸면 명령이 몇 개 늘어나는지 예상한 뒤 확인합니다.</p>
+</div>
+
+<div class="step" data-id="traceback">
+<div class="step-title">2. 트레이스백 읽고 고치기</div>
+<p>메모장이나 VS Code로 <code>shop.py</code>를 만들어 본문의 코드를 그대로 붙여 넣고, PowerShell에서 실행합니다.</p>
+<pre><code>python shop.py</code></pre>
+<p>본문과 같은 <code>ValueError</code>가 나오면, 아래에서 위로 읽어 고칠 줄을 찾고 직접 고쳐 보세요. 고친 뒤 <code>3000</code>이 출력되면 성공입니다.</p>
+<details class="hint"><summary>힌트 1</summary><p>마지막 줄이 "무엇이 틀렸는지", 바로 위 블록이 "어디서"입니다. 2번째 줄의 <code>int(text)</code>가 받은 값은 무엇이었나요?</p></details>
+<details class="hint"><summary>힌트 2</summary><p>쉼표를 없앤 뒤 int로 바꾸면 됩니다. 문자열의 <code>replace</code> 메서드를 쓰세요.</p></details>
+<details class="hint"><summary>정답 보기</summary><pre><code>def parse_amount(text):
+    return int(text.replace(",", ""))</code></pre></details>
+</div>
+
+<div class="step" data-id="pycache">
+<div class="step-title">3. __pycache__ 가 생기는 순간과 sys.path 보기</div>
+<p>빈 폴더에 파일 두 개를 만듭니다.</p>
+<pre data-file="helper.py"><code>def hi():
+    return "hi"</code></pre>
+<pre data-file="main.py"><code>import helper
+print(helper.hi())</code></pre>
+<p>PowerShell에서:</p>
+<pre><code>python main.py
+Get-ChildItem -Recurse -Name
+python -c "import sys; print(sys.executable); [print(p) for p in sys.path]"</code></pre>
+<p>결과 예시:</p>
+<pre><code>hi
+__pycache__
+helper.py
+main.py
+__pycache__\helper.cpython-312.pyc
+C:\...\Python312\python.exe
+(빈 줄)
+C:\...\Python312\python312.zip
+...</code></pre>
+<p>import된 <code>helper</code>만 <code>.pyc</code>가 생기고, 직접 실행한 <code>main.py</code>는 안 생긴 것을 확인하세요. 이어서 같은 폴더에 <code>json.py</code>라는 빈 파일을 만든 뒤 <code>python -c "import json; print(json.__file__)"</code>를 실행해 보세요. 표준 라이브러리 대신 내 파일이 잡히는 이름 겹침을 직접 볼 수 있습니다(확인 후 <code>json.py</code>는 지우세요).</p>
+</div>
+
+<div class="step" data-id="threads">
+<div class="step-title">4. 순서대로 vs 동시에 — 기다리는 일 다섯 개</div>
+<p><code>wait.py</code>를 만들어 실행합니다. <code>time.sleep(1)</code>은 "API 응답을 1초 기다린다"는 흉내입니다.</p>
+<pre data-file="wait.py"><code>import time
+from concurrent.futures import ThreadPoolExecutor   # 스레드 여러 개로 동시에 일 시키는 도구
+
+def fetch(n):          # API 하나 호출하는 척
+    time.sleep(1)      # 응답 기다리는 1초
+    return n
+
+t = time.time()
+[fetch(n) for n in range(5)]                 # 하나씩 순서대로 5번
+print(f"순서대로: {time.time() - t:.1f}초")
+
+t = time.time()
+with ThreadPoolExecutor(max_workers=5) as pool:   # 일꾼 5명
+    list(pool.map(fetch, range(5)))               # 5개를 나눠 맡김
+print(f"동시에: {time.time() - t:.1f}초")</code></pre>
+<pre><code>python wait.py</code></pre>
+<p>결과:</p>
+<pre><code>순서대로: 5.0초
+동시에: 1.0초</code></pre>
+<p>기다리는 일이라 스레드로 5배 빨라졌습니다. 같은 실험을 <code>time.sleep(1)</code> 대신 <code>sum(range(30_000_000))</code>처럼 계산만 하는 일로 바꾸면 스레드로는 거의 빨라지지 않습니다(GIL). 시간이 되면 직접 비교해 보세요.</p>
+</div>
+
+</div>
+
+<h2 id="wrap">정리</h2>
+
+<div class="box summary">
+<span class="box-title">💡 한 줄 요약</span>
+모든 코드는 결국 <b>기계어가 되어 CPU에서 돕니다.</b> Python은 바이트코드를 거쳐 인터프리터가 한 줄씩, SQL은 옵티마이저가 고른 실행 계획대로 돕니다. 에러는 그 순간의 <b>호출 스택 사진</b>이므로 <b>아래에서 위로</b> 읽으면 됩니다.
+</div>
+
+<div class="box">
+<span class="box-title">스스로 설명해 보기</span>
+<ol>
+<li>"pandas는 Python인데 왜 빠르고, 내가 짠 for문은 왜 느린가요?"에 컴파일·인터프리터라는 말을 써서 답해 보세요.</li>
+<li><code>b = a</code> 후 <code>b.append(4)</code>를 했더니 <code>a</code>도 바뀌었습니다. 이유를 이름표 비유와 SQL의 뷰 비유로 각각 설명해 보세요.</li>
+<li>"SQL은 선언형이다"를 내비게이션 비유로 설명하고, 그래도 실행 계획을 봐야 하는 이유 하나를 들어 보세요.</li>
+</ol>
+</div>
+
+<h2 id="quiz">퀴즈</h2>
+<div class="quiz">
+
+<div class="q" data-answer="3">
+<p class="q-text">CPython이 <code>.py</code> 파일을 실행하는 방식으로 가장 정확한 것은?</p>
+<ol class="q-opts">
+<li>실행 전에 전체를 기계어 .exe로 컴파일한다</li>
+<li>소스 코드 글자를 CPU가 직접 읽는다</li>
+<li>바이트코드로 바꾼 뒤, 인터프리터(Python 가상 머신)가 그 바이트코드를 실행한다</li>
+<li>SQL로 바꿔서 DB에 보낸다</li>
+</ol>
+<div class="q-explain">CPython은 소스를 바이트코드로 컴파일한 뒤 가상 머신이 그걸 하나씩 실행합니다. 기계어 실행 파일을 만드는 것은 C·Go 같은 컴파일 언어 방식이고, CPU는 소스 글자를 직접 읽지 못합니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">프로젝트 폴더의 <code>__pycache__</code> 폴더에 대한 설명으로 맞는 것은?</p>
+<ol class="q-opts">
+<li>import된 모듈의 바이트코드를 저장해 둔 것이라 지워도 다시 만들어진다</li>
+<li>실행 기록(로그)이라 지우면 안 된다</li>
+<li>내가 직접 실행한 파일만 저장된다</li>
+<li>git에 꼭 올려야 한다</li>
+</ol>
+<div class="q-explain">.pyc는 바이트코드 캐시라서 지워도 다음 import 때 다시 만들어집니다. 직접 실행한 스크립트가 아니라 import된 모듈 쪽이 저장되고, 버전마다 다르게 생기므로 git에는 올리지 않습니다.</div>
+</div>
+
+<div class="q" data-answer="4">
+<p class="q-text"><code>a = [1, 2]; b = a; b.append(3)</code> 다음 <code>print(a)</code>의 결과는?</p>
+<ol class="q-opts">
+<li><code>[1, 2]</code></li>
+<li><code>[3]</code></li>
+<li>에러</li>
+<li><code>[1, 2, 3]</code></li>
+</ol>
+<div class="q-explain"><code>b = a</code>는 복사가 아니라 같은 리스트에 이름표를 하나 더 붙인 것입니다. 리스트는 바꿀 수 있는(mutable) 값이라 b로 바꾼 것이 a로도 보입니다. 따로 쓰려면 <code>a.copy()</code>를 씁니다.</div>
+</div>
+
+<div class="q" data-answer="2">
+<p class="q-text">긴 트레이스백에서 가장 먼저 봐야 할 곳은?</p>
+<ol class="q-opts">
+<li>맨 첫 줄 <code>Traceback (most recent call last):</code></li>
+<li>맨 마지막 줄의 에러 종류와 설명</li>
+<li>가장 긴 줄</li>
+<li>라이브러리 내부(site-packages) 경로가 나오는 줄</li>
+</ol>
+<div class="q-explain">"most recent call last"라는 말대로 가장 최근(에러가 난) 호출이 맨 아래에 있고, 마지막 줄이 에러 종류와 이유를 알려 줍니다. 그다음 위로 올라가며 내 파일 이름이 나오는 가장 아래 줄을 찾습니다. 라이브러리 내부 줄은 보통 고칠 곳이 아닙니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">같은 폴더에 <code>csv.py</code>를 만들었더니 <code>import csv</code> 후 <code>csv.reader</code>가 없다는 에러가 납니다. 원인은?</p>
+<ol class="q-opts">
+<li>csv 라이브러리를 pip로 설치하지 않았다</li>
+<li>Python 버전이 너무 낮다</li>
+<li><code>sys.path</code>에서 스크립트 폴더가 표준 라이브러리보다 먼저라, 내 <code>csv.py</code>가 import됐다</li>
+<li>윈도에서는 csv 모듈을 쓸 수 없다</li>
+</ol>
+<div class="q-explain">import는 sys.path를 앞에서부터 찾아 처음 찾은 것을 씁니다. 스크립트 폴더가 맨 앞이라 표준 라이브러리 csv 대신 내 빈 파일이 잡혔습니다. csv는 표준 라이브러리라 설치가 필요 없습니다. 파일 이름을 바꾸면 해결됩니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">API 200개를 호출해 응답을 저장하는 스크립트가 느립니다. 대부분의 시간이 응답 대기라면 가장 알맞은 개선은?</p>
+<ol class="q-opts">
+<li>스레드나 asyncio로 여러 요청을 동시에 보내고 기다린다</li>
+<li>CPU가 더 빠른 PC로 바꾼다</li>
+<li>for문을 while문으로 바꾼다</li>
+<li>Spark 클러스터로 옮긴다</li>
+</ol>
+<div class="q-explain">기다리는 일(I/O 대기)은 기다리는 동안 다른 요청을 보내면 되므로 스레드·asyncio가 잘 맞습니다. 계산이 병목이 아니므로 CPU를 바꿔도 거의 안 빨라지고, 반복문 종류는 상관없습니다. 데이터가 크지 않은 API 호출에 Spark는 과합니다. 다만 API 쪽의 호출 횟수 제한(rate limit)은 지켜야 합니다.</div>
+</div>
+
+</div>
+
+</main>
+</div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

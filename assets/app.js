@@ -16,7 +16,20 @@
     { id: "cheatsheet", file: "cheatsheet.html", title: "명령어 모음" },
     { id: "d30", file: "dbt30/index.html", title: "30일 버전 →" },
     { id: "ess", file: "essentials/index.html", title: "필수 정리 →" },
+    { id: "cs", file: "basics/index.html", title: "컴퓨터 기초 →" },
   ];
+  /* basics/ 폴더 = 컴퓨터·소프트웨어 기초 (지도 + 8장) */
+  const CS = [
+    { id: "cs1", file: "ch1.html", title: "컴퓨터의 몸 — 비트·CPU·메모리·디스크" },
+    { id: "cs2", file: "ch2.html", title: "코드가 돌아가는 원리" },
+    { id: "cs3", file: "ch3.html", title: "운영체제와 터미널" },
+    { id: "cs4", file: "ch4.html", title: "네트워크·웹·API" },
+    { id: "cs5", file: "ch5.html", title: "데이터는 어떻게 저장되나" },
+    { id: "cs6", file: "ch6.html", title: "소프트웨어를 만드는 습관" },
+    { id: "cs7", file: "ch7.html", title: "데이터 엔지니어링의 역사" },
+    { id: "cs8", file: "ch8.html", title: "막혔을 때 — 디버깅 사고법과 로드맵" },
+  ];
+  window.CS_CHAPTERS = CS;
   window.DE_DAYS = DAYS;
 
   const body = document.body;
@@ -27,7 +40,8 @@
   const inDays = location.pathname.includes("/days/");
   /* essentials/ 폴더 = 필수 정리 (본문은 assets/essentials.js 가 그림) */
   const inEss = location.pathname.includes("/essentials/");
-  const root = inDays || in30 || inEss ? "../" : "";
+  const inCs = location.pathname.includes("/basics/");
+  const root = inDays || in30 || inEss || inCs ? "../" : "";
   const href = (f) => (f.startsWith("day") ? (inDays ? f : "days/" + f) : root + f);
 
   const store = {
@@ -40,7 +54,11 @@
   const top = document.createElement("header");
   top.className = "topbar";
   let links;
-  if (inEss) {
+  if (inCs) {
+    links = [`<a href="index.html" class="${page === "cs-home" ? "active" : ""}">지도</a>`]
+      .concat(CS.map((c, i) => `<a href="${c.file}" class="${c.id === page ? "active" : ""} ${store.get(c.id + ":done", false) ? "done" : ""}" title="${c.title}">${i + 1}</a>`))
+      .concat([`<a href="../glossary.html">용어집</a>`, `<a href="../days/day1.html">dbt 1일차</a>`, `<a href="../dbt30/index.html">dbt 30일</a>`, `<a href="../essentials/index.html">필수 정리</a>`, `<a href="../index.html">← 7일 버전</a>`]);
+  } else if (inEss) {
     links = [`<a href="index.html" class="${page === "ess-home" ? "active" : ""}">목차</a>`]
       .concat([1, 2, 3, 4].map((w) => `<a href="index.html#w${w}">${w}주차</a>`))
       .concat([`<a href="../dbt30/index.html">dbt 30일</a>`, `<a href="../index.html">7일 버전</a>`]);
@@ -57,7 +75,7 @@
       return `<a href="${href(d.file)}" class="${d.id === page ? "active" : ""} ${done ? "done" : ""}" title="${d.title}">${i + 1}</a>`;
     }).concat(EXTRA.map((e) => `<a href="${href(e.file)}" class="${e.id === page ? "active" : ""}">${e.title}</a>`));
   }
-  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${in30 || inEss ? "index.html" : root + "index.html"}">${in30 ? "DAS · dbt 30일" : inEss ? "DAS · 필수 정리" : "DAS"}</a><nav class="topnav">${links.join("")}</nav></div>`;
+  top.innerHTML = `<div class="topbar-inner"><a class="brand" href="${in30 || inEss || inCs ? "index.html" : root + "index.html"}">${in30 ? "DAS · dbt 30일" : inEss ? "DAS · 필수 정리" : inCs ? "DAS · 컴퓨터 기초" : "DAS"}</a><nav class="topnav">${links.join("")}</nav></div>`;
   body.prepend(top);
 
   const main = document.querySelector("main");
@@ -180,7 +198,7 @@
   }
 
   /* ---------- 완료 버튼 + 이전/다음 ---------- */
-  const LIST = in30 ? D30 : DAYS;
+  const LIST = in30 ? D30 : inCs ? CS : DAYS;
   const di = LIST.findIndex((d) => d.id === page);
   if (di >= 0) {
     const row = document.createElement("div");
@@ -203,7 +221,7 @@
     const pager = document.createElement("nav");
     pager.className = "pager";
     const prev = LIST[di - 1], next = LIST[di + 1];
-    const home = in30 ? "index.html" : "../index.html";
+    const home = in30 || inCs ? "index.html" : "../index.html";
     const ok = (d) => d && (!in30 || d.ready);
     pager.innerHTML =
       (ok(prev) ? `<a href="${prev.file}">← ${di} · ${prev.title}</a>` : `<a href="${home}">← 전체 커리큘럼</a>`) +
