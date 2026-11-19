@@ -14,7 +14,7 @@
 <div class="eyebrow">컴퓨터 기초 · 4장 심화 2</div>
 <h1>API 호출 실전 — 공공데이터포털로 처음부터 끝까지</h1>
 <p class="lead"><a href="api.html">API 역사</a>에서 "컴퓨터끼리 어떻게 대화하나"를 봤다면, 이 장은 <b>실제로 한 번 불러서 데이터를 끝까지 모아 저장하기</b>까지 갑니다. 예제는 공공데이터포털(data.go.kr)의 <b>특일 정보(공휴일) API</b>입니다. 키 발급, 주소 만들기, 인증키 인코딩 함정, 응답 구조, 에러 두 층, 페이지 넘기기, 재시도, 저장까지 다룹니다. 그다음 광고 매체 API는 무엇이 다른지 비교합니다.</p>
-<p class="meta-line">읽기 약 40분 · 손으로 해 보기 4개 (키 없이 3개 + 내 키로 1개) · 퀴즈 5문제</p>
+<p class="meta-line">읽기 약 60분 · 손으로 해 보기 6개 (키 없이 되는 부분 + 내 키로) · 퀴즈 7문제</p>
 
 <div class="box">
 <span class="box-title">이 장을 마치면</span>
@@ -25,6 +25,7 @@
 <li>페이지 넘기기 · 재시도 · 시간 제한 · 트래픽 한도를 갖춘 수집기를 짜기</li>
 <li>받은 데이터를 "다시 돌려도 안전하게" 저장하기 (원본 보관 · 덮어쓰기 · 수집 시각)</li>
 <li>공공 API와 광고 매체 API의 인증 · 페이지 · 리포트 방식 차이 말하기</li>
+<li>기상청 격자 · 발표 시각 · 긴 표 → 넓은 표, Meta 비동기 리포트(주문 → 폴링 → 커서)를 모의 서버로 직접 겪어 보기</li>
 </ul>
 </div>
 
@@ -220,8 +221,68 @@ Decoding 키를 params로 → serviceKey=my%2Btest%2Fkey%3D%3D            ← �
 <p>브라우저에서 돌아가는 코드에 키를 넣으면 페이지를 연 누구나 F12로 키를 봅니다. 게다가 다른 사이트의 API는 브라우저가 <b>CORS</b> 규칙으로 막는 경우가 많습니다. 키가 필요한 호출은 <b>서버 쪽(파이썬 · Airflow)</b>에서 하고, 브라우저에는 결과만 줍니다. GitHub Pages 같은 정적 사이트가 API 키를 못 쓰는 이유입니다.</p>
 </div>
 
+<h2 id="weather">더 해 보기 ① 기상청 날씨 API — 까다로운 요청 변수</h2>
+<p>공휴일 API는 "연도 · 월"만 넣으면 됐습니다. 기상청 <b>단기예보</b>(<code>VilageFcstInfoService_2.0/getVilageFcst</code>)는 같은 포털, 같은 키, 같은 봉투 구조인데 요청 변수가 훨씬 까다롭습니다. 실무 API 대부분이 이런 식이라 좋은 연습이 됩니다.</p>
+<pre><code>https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=...&amp;dataType=JSON&amp;numOfRows=1000&amp;pageNo=1&amp;base_date=20261119&amp;base_time=1100&amp;nx=60&amp;ny=127</code></pre>
+<div class="table-wrap">
+<table>
+<tr><th>까다로운 점</th><th>내용</th><th>해결</th></tr>
+<tr><td><b>위치가 위도 · 경도가 아니라 격자</b></td><td>한반도를 5km 칸으로 나눈 <code>nx · ny</code>. 서울시청 = (60, 127)</td><td>기상청이 공개한 변환 공식(람베르트 정각원추도법)으로 계산, 또는 활용 가이드의 지역별 격자 엑셀</td></tr>
+<tr><td><b>발표 시각을 맞춰야 함</b></td><td>단기예보는 하루 8번(02 · 05 · 08 · 11 · 14 · 17 · 20 · 23시) 발표, API에는 발표 후 약 10분 뒤 올라옴. 아직 안 나온 시각을 넣으면 <b>resultCode 03 (데이터 없음)</b></td><td>"지금 시각 − 10분" 이하에서 가장 최근 발표 시각을 고르는 함수. 새벽 2시 10분 전이면 <b>전날 23시</b></td></tr>
+<tr><td>형식 변수 이름이 다름</td><td>공휴일은 <code>_type=json</code>, 기상청은 <code>dataType=JSON</code></td><td>문서 요청 변수 표를 매번 확인</td></tr>
+<tr><td><b>긴 표(long)로 옴</b></td><td>한 행 = "시각 × 항목 하나". 기온 · 하늘 · 강수가 각각 다른 행</td><td>시각을 기준으로 펼쳐서 <b>넓은 표(wide)</b>로 (SQL의 피벗)</td></tr>
+<tr><td><b>값이 문자열 · 코드</b></td><td><code>PCP</code>(1시간 강수량)가 <code>"강수없음"</code>, <code>"1mm 미만"</code>, <code>"2.0mm"</code>. <code>SKY</code>는 1 맑음 · 3 구름많음 · 4 흐림, <code>PTY</code>는 0 없음 · 1 비 · 2 비/눈 · 3 눈 · 4 소나기</td><td>원본은 문자열 그대로 저장하고, 숫자 변환 · 코드 해석은 staging에서</td></tr>
+<tr><td><b>예보는 과거를 주지 않음</b></td><td>단기예보는 최근 발표분만 제공. "지난 6월 비 온 날 ROAS"는 예보 API로 못 구함</td><td>과거 분석에는 <b>관측</b> 자료(기상청 지상 종관 ASOS 일자료 API 등)를 씀. 예보 = 앞으로, 관측 = 지난날</td></tr>
+</table>
+</div>
+<p>긴 표가 넓은 표가 되는 모습입니다.</p>
+<pre><code>긴 표 (API가 주는 모양)                         넓은 표 (분석에 쓰는 모양)
+fcstTime  category  fcstValue                  fcstTime  TMP  SKY  PTY  PCP
+0600      TMP       3                          0600      3    1    0    강수없음
+0600      SKY       1               -->        0700      2    3    1    1mm 미만
+0600      PTY       0
+0600      PCP       강수없음
+0700      TMP       2
+...</code></pre>
+<p class="muted">항목 코드와 값의 뜻은 기상청 활용 가이드(포털 상세 페이지의 참고 문서) 기준입니다. 발표 후 올라오는 시각 같은 세부는 바뀔 수 있으니 실제로 쓸 때는 최신 가이드를 확인하세요.</p>
+
+<h2 id="meta-async">더 해 보기 ② Meta 비동기 리포트 — 주문하고 나중에 받기</h2>
+<p>광고 매체 API는 공공 API와 무엇이 다른지, Meta(페이스북 · 인스타그램) 광고 성과 API의 <b>비동기 인사이트</b> 모양을 흉내 낸 모의 서버로 직접 겪어 봅니다. 큰 기간 · 많은 광고 세트를 한 번에 요청하면 바로 답하지 않고 이렇게 대화합니다.</p>
+<div class="table-wrap">
+<table>
+<tr><th>단계</th><th>요청</th><th>응답</th></tr>
+<tr><td>① 주문</td><td><code>POST /v21.0/act_&lt;계정&gt;/insights</code> + 기간 · 단위 · 필드</td><td><code>{"report_run_id": "1200001"}</code> — 주문 번호만</td></tr>
+<tr><td>② 상태 묻기 (폴링)</td><td><code>GET /v21.0/1200001</code></td><td><code>{"async_status": "Job Running", "async_percent_completion": 59}</code></td></tr>
+<tr><td>③ 결과 받기</td><td><code>GET /v21.0/1200001/insights?limit=5</code></td><td><code>{"data": [...], "paging": {"next": "..."}}</code> — <b>next가 없을 때까지</b></td></tr>
+</table>
+</div>
+<h3>공휴일 API와 달라지는 다섯 가지</h3>
+<div class="table-wrap">
+<table>
+<tr><th>무엇</th><th>공휴일 API</th><th>Meta 인사이트</th></tr>
+<tr><td>신분 확인</td><td>주소에 <code>serviceKey</code></td><td><b>헤더에</b> <code>Authorization: Bearer 토큰</code> (OAuth 토큰. 사람 계정 토큰은 기한이 있어서 서버 수집에는 보통 시스템 사용자 토큰)</td></tr>
+<tr><td>에러 모양</td><td>HTTP 상태 + <code>resultCode</code></td><td>HTTP 4xx + <code>{"error": {"code": 190, "message": ...}}</code>. <b>code 숫자로 판단</b>: 190 토큰 문제(멈춤), 4 · 17 · 80004 호출 한도(기다림), 100 잘못된 변수(멈춤)</td></tr>
+<tr><td>페이지</td><td><code>pageNo</code> 직접 계산</td><td><b>커서</b>: 응답의 <code>paging.next</code> 주소를 그대로 부름</td></tr>
+<tr><td>숫자 모양</td><td>숫자</td><td><code>"spend": "278850.00"</code>처럼 <b>숫자가 문자열</b>로 옴</td></tr>
+<tr><td>중첩</td><td>평평한 행</td><td><code>actions</code>가 <b>목록 안의 목록</b>: <code>[{"action_type":"purchase","value":"8"}, ...]</code> → 필요한 것만 펼쳐서 열로</td></tr>
+</table>
+</div>
+<div class="box warn">
+<span class="box-title">⚠ 폴링의 예절과 함정</span>
+<ul>
+<li><b>너무 자주 묻지 않기</b>: 모의 서버는 1초 안에 또 물으면 code 17(한도 초과)을 줍니다. 실제 Meta도 호출 한도가 있고, 응답 헤더(<code>x-business-use-case-usage</code> 등)로 사용량을 알려 줍니다. 묻는 간격을 점점 늘립니다.</li>
+<li><b>최대 대기 시간</b>: "Job Running"이 영원히 계속될 수 있습니다. 상한을 두고, 넘으면 실패로 기록하고 다음 실행에서 다시 시도합니다.</li>
+<li><b>실패 처리</b>: <code>Job Failed</code>면 기간을 쪼개서 다시 주문하는 것이 흔한 해결입니다 (한 달 → 일주일씩).</li>
+<li><b>next 주소를 로그에 그대로 찍지 않기</b>: 실제 Graph API의 next 주소에는 토큰이 들어 있는 경우가 있습니다.</li>
+</ul>
+</div>
+<div class="box tip">
+<span class="box-title">우리 프로젝트와 연결 — 클릭 후 전환 vs 조회 후 전환</span>
+<p>11-18 피드백 요청 ①(조회 후 전환을 어떻게 볼까)의 답이 바로 이 API에 있습니다. Meta 인사이트에는 <code>action_attribution_windows</code> 변수(예: <code>["7d_click","1d_view"]</code>)가 있어서, 전환을 <b>클릭 기준 · 조회 기준으로 나눠</b> 받을 수 있습니다. 가상 원천 데이터에 이 구분을 넣는다면 이 모양을 따르면 됩니다. 정확한 응답 모양은 쓸 때 공식 문서로 확인하세요.</p>
+</div>
+
 <h2 id="lab">손으로 해 보기</h2>
-<p>1~3은 <b>키 없이</b> 됩니다. 3은 실제 포털과 같은 모양으로 답하는 <b>모의 서버</b>를 내 PC(localhost:8010)에 띄워서 합니다. 4는 내 키를 받은 뒤 진짜 포털로 합니다.</p>
+<p>1~3과 6은 <b>키 없이</b> 됩니다 (5는 앞부분만 키 없이). 3은 실제 포털과 같은 모양으로 답하는 <b>모의 서버</b>를 내 PC(localhost:8010)에 띄워서 합니다. 4는 내 키를 받은 뒤 진짜 포털로 합니다.</p>
 <div class="lab">
 
 <div class="step" data-id="apicall-gate">
@@ -405,12 +466,344 @@ $env:DATA_GO_KR_KEY = '여기에 Decoding 키'
 python collect_holidays.py 2026</code></pre>
 <p class="muted">이 단계는 키가 있어야 해서 이 페이지를 쓸 때 끝까지 실행해 보지는 못했습니다(키 없는 401 · 403까지는 확인). 승인 직후에는 403(30)이 나올 수 있으니 잠시 뒤 다시 해 보세요. 진짜 응답에서 필드나 버릇이 다르면 <code>raw\</code>의 JSON을 열어 비교해 보는 것도 좋은 연습입니다.</p>
 </div>
+
+<div class="step" data-id="apicall-weather">
+<div class="step-title">5. 기상청 날씨 — 격자 · 발표 시각 · 피벗 (키 없이 → 내 키로)</div>
+<pre><code>cd $HOME\api-lab
+Invoke-WebRequest "$base/weather_tools.py" -OutFile weather_tools.py
+python weather_tools.py</code></pre>
+<p>키 없이 세 가지를 확인합니다: 서울시청 → <code>(60, 127)</code>, 부산시청 → <code>(98, 76)</code> / 시각별 발표 시각 (01:30 → 전날 <code>2300</code>, 05:05 → <code>0200</code>, 05:15 → <code>0500</code>) / 긴 표 8행이 넓은 표 2행이 되는 모습.</p>
+<p><b>먼저 직접 해 보기</b>: <code>to_wide()</code>를 보기 전에, 같은 일을 SQL로 쓰면 어떻게 될지 생각해 보세요 (긴 표 테이블 <code>fcst(fcstDate, fcstTime, category, fcstValue)</code>).</p>
+<details class="hint"><summary>힌트 — SQL 피벗</summary>
+<pre><code>select fcstDate, fcstTime,
+       max(case when category = 'TMP' then fcstValue end) as tmp,
+       max(case when category = 'SKY' then fcstValue end) as sky,
+       max(case when category = 'PTY' then fcstValue end) as pty,
+       max(case when category = 'PCP' then fcstValue end) as pcp
+from fcst
+group by fcstDate, fcstTime</code></pre>
+<p>dbt에서는 이런 펼치기를 staging이나 intermediate 모델에서 합니다. 파이썬에서 할지 SQL에서 할지도 설계 결정입니다 (원본을 그대로 두려면 SQL 쪽).</p>
+</details>
+<p>"특일 정보"와 같은 방법으로 <b>"기상청_단기예보 조회서비스"</b>를 활용 신청한 뒤 진짜로 불러 봅니다.</p>
+<pre><code>$env:DATA_GO_KR_KEY = '여기에 Decoding 키'
+python weather_tools.py live</code></pre>
+<details class="hint"><summary>더 해 보기</summary>
+<ol>
+<li><code>latest_base()</code> 대신 일부러 1시간 뒤 발표 시각을 넣어 보기 → resultCode 03</li>
+<li><code>numOfRows</code>를 10으로 → <code>totalCount</code>와 비교해서 페이지 넘기기를 붙여 보기 (공휴일 수집기 재사용)</li>
+<li>회사 · 매장 주소의 위도 · 경도로 격자를 구해 보기</li>
+</ol>
+</details>
+<details class="hint"><summary>weather_tools.py 전체 코드 보기</summary>
+<pre><code># 기상청 단기예보 API 연습 도구 - 표준 라이브러리만
+#   python weather_tools.py            -&gt; 키 없이: 격자 변환 · 발표 시각 계산 · 긴 표를 넓은 표로
+#   python weather_tools.py live       -&gt; 내 키로 진짜 호출 (환경 변수 DATA_GO_KR_KEY = Decoding 키)
+import json, math, os, sys, urllib.parse, urllib.request
+from datetime import datetime, timedelta
+
+
+def latlon_to_grid(lat, lon):
+    """위도 · 경도 -&gt; 기상청 격자 (nx, ny). 기상청 활용 가이드의 람베르트 정각원추도법 공식."""
+    RE, GRID = 6371.00877, 5.0                  # 지구 반지름(km), 격자 간격(km)
+    SLAT1, SLAT2, OLON, OLAT = 30.0, 60.0, 126.0, 38.0
+    XO, YO = 43, 136                            # 기준점의 격자 좌표
+    D = math.pi / 180.0
+    re = RE / GRID
+    slat1, slat2, olon, olat = SLAT1 * D, SLAT2 * D, OLON * D, OLAT * D
+    sn = math.log(math.cos(slat1) / math.cos(slat2)) / math.log(
+        math.tan(math.pi * 0.25 + slat2 * 0.5) / math.tan(math.pi * 0.25 + slat1 * 0.5))
+    sf = math.tan(math.pi * 0.25 + slat1 * 0.5) ** sn * math.cos(slat1) / sn
+    ro = re * sf / math.tan(math.pi * 0.25 + olat * 0.5) ** sn
+    ra = re * sf / math.tan(math.pi * 0.25 + lat * D * 0.5) ** sn
+    theta = lon * D - olon
+    if theta &gt; math.pi:
+        theta -= 2.0 * math.pi
+    if theta &lt; -math.pi:
+        theta += 2.0 * math.pi
+    theta *= sn
+    return int(ra * math.sin(theta) + XO + 0.5), int(ro - ra * math.cos(theta) + YO + 0.5)
+
+
+def latest_base(now):
+    """지금 부를 수 있는 가장 최근 단기예보 발표 (base_date, base_time).
+    발표는 02 · 05 · 08 · 11 · 14 · 17 · 20 · 23시, API 에는 발표 후 약 10분 뒤 올라옴."""
+    t = now - timedelta(minutes=10)
+    hours = [h for h in (2, 5, 8, 11, 14, 17, 20, 23) if h &lt;= t.hour]
+    if not hours:                               # 02:10 전이면 전날 23시 발표
+        t -= timedelta(days=1)
+        return t.strftime("%Y%m%d"), "2300"
+    return t.strftime("%Y%m%d"), f"{hours[-1]:02d}00"
+
+
+def to_wide(items):
+    """긴 표(한 행 = 시각 x 항목 하나) -&gt; 넓은 표(한 행 = 시각, 열 = 항목)."""
+    wide = {}
+    for it in items:
+        key = (it["fcstDate"], it["fcstTime"])
+        wide.setdefault(key, {"fcstDate": it["fcstDate"], "fcstTime": it["fcstTime"]})[it["category"]] = it["fcstValue"]
+    return [wide[k] for k in sorted(wide)]
+
+
+SAMPLE = [  # 응답 item 모양 그대로 (값은 연습용)
+    {"baseDate": "20261119", "baseTime": "0500", "category": "TMP", "fcstDate": "20261119", "fcstTime": "0600", "fcstValue": "3", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "SKY", "fcstDate": "20261119", "fcstTime": "0600", "fcstValue": "1", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "PTY", "fcstDate": "20261119", "fcstTime": "0600", "fcstValue": "0", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "PCP", "fcstDate": "20261119", "fcstTime": "0600", "fcstValue": "강수없음", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "TMP", "fcstDate": "20261119", "fcstTime": "0700", "fcstValue": "2", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "SKY", "fcstDate": "20261119", "fcstTime": "0700", "fcstValue": "3", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "PTY", "fcstDate": "20261119", "fcstTime": "0700", "fcstValue": "1", "nx": 60, "ny": 127},
+    {"baseDate": "20261119", "baseTime": "0500", "category": "PCP", "fcstDate": "20261119", "fcstTime": "0700", "fcstValue": "1mm 미만", "nx": 60, "ny": 127},
+]
+
+
+def live(nx, ny):
+    base_date, base_time = latest_base(datetime.now())
+    params = {"serviceKey": os.environ["DATA_GO_KR_KEY"], "dataType": "JSON", "numOfRows": 1000, "pageNo": 1,
+              "base_date": base_date, "base_time": base_time, "nx": nx, "ny": ny}
+    url = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?" + urllib.parse.urlencode(params)
+    with urllib.request.urlopen(url, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    header = data["response"]["header"]
+    if header["resultCode"] != "00":
+        raise SystemExit(f"서비스 오류 {header['resultCode']} {header['resultMsg']}")
+    item = data["response"]["body"]["items"]["item"]
+    return base_date, base_time, to_wide(item if isinstance(item, list) else [item])
+
+
+if __name__ == "__main__":
+    print("서울시청 (37.5665, 126.9780) -&gt;", latlon_to_grid(37.5665, 126.9780))
+    print("부산시청 (35.1796, 129.0756) -&gt;", latlon_to_grid(35.1796, 129.0756))
+    for s in ("2026-11-19 01:30", "2026-11-19 05:05", "2026-11-19 05:15", "2026-11-19 13:59"):
+        print(s, "-&gt;", latest_base(datetime.strptime(s, "%Y-%m-%d %H:%M")))
+    print("긴 표", len(SAMPLE), "행 -&gt; 넓은 표:")
+    for row in to_wide(SAMPLE):
+        print(" ", row)
+    if sys.argv[1:] == ["live"]:
+        bd, bt, rows = live(*latlon_to_grid(37.5665, 126.9780))
+        print(f"\n진짜 예보 (발표 {bd} {bt}) 처음 5시간:")
+        for row in rows[:5]:
+            print(" ", row)</code></pre>
+</details>
+<p class="muted">키 없는 부분(격자 · 발표 시각 · 피벗)은 페이지를 쓸 때 실행해서 확인했습니다. <code>live</code>는 키가 없어 끝까지 실행해 보지 못했습니다(키 없이 403까지 확인).</p>
+</div>
+
+<div class="step" data-id="apicall-meta">
+<div class="step-title">6. Meta 비동기 리포트 — 모의 서버로 주문 · 폴링 · 커서</div>
+<pre><code>Invoke-WebRequest "$base/mock_meta.py" -OutFile mock_meta.py
+Invoke-WebRequest "$base/collect_meta_async.py" -OutFile collect_meta_async.py
+python mock_meta.py                     # 창 하나에서 (localhost:8011)</code></pre>
+<p><b>먼저 손으로 대화해 보기</b> (다른 창, PowerShell). 연습용 토큰은 <code>practice-token</code>입니다.</p>
+<pre><code>$h = @{ Authorization = 'Bearer practice-token' }
+$order = Invoke-RestMethod -Method Post -Headers $h -Uri http://localhost:8011/v21.0/act_1/insights `
+  -Body @{ time_range = '{"since":"2026-06-01","until":"2026-06-03"}' }
+$order                                                        # report_run_id
+Invoke-RestMethod -Headers $h -Uri "http://localhost:8011/v21.0/$($order.report_run_id)"   # 몇 초 간격으로 여러 번</code></pre>
+<p>Job Running이 몇 %씩 오르다가 6초쯤 뒤 Job Completed가 됩니다. 1초 안에 연달아 물어서 code 17도 받아 보고, 완료 전에 <code>/insights</code>를 불러서 "not ready"도 받아 보세요. 그다음 수집기를 돌립니다.</p>
+<pre><code>$env:META_TOKEN = 'practice-token'
+python collect_meta_async.py 2026-06-01 2026-06-07</code></pre>
+<p><code>p1: 5행</code> ~ <code>p5: 1행</code>, <code>완료: meta_2026-06-01_2026-06-07.csv 21행</code>(7일 × 광고 세트 3개)이 나오면 성공입니다. CSV의 <code>purchases</code> 열이 <code>actions</code> 목록에서 펼쳐 낸 값입니다.</p>
+<details class="hint"><summary>더 해 보기 — 일부러 망가뜨리기</summary>
+<ol>
+<li><code>$env:META_TOKEN = 'nope'</code> → code 190에서 바로 멈추는지</li>
+<li>수집기의 첫 <code>wait</code>를 <code>0.3</code>으로 → "너무 자주 물었음 → 간격 늘리기"가 동작하는지</li>
+<li>결과 받기 반복을 <code>while url:</code> 대신 한 번만 → 몇 행이 빠지는지 (조용한 누락)</li>
+<li><code>actions</code>에서 <code>link_click</code>도 열로 꺼내서 <code>clicks</code>와 같은지 비교해 보기</li>
+</ol>
+</details>
+<details class="hint"><summary>collect_meta_async.py 전체 코드 보기</summary>
+<pre><code># Meta 비동기 인사이트 수집기 (모의 서버용) - 표준 라이브러리만
+#   $env:META_TOKEN = 'practice-token'; python collect_meta_async.py 2026-06-01 2026-06-07
+import csv, json, os, sys, time, urllib.error, urllib.parse, urllib.request
+from datetime import datetime
+from pathlib import Path
+
+BASE = os.environ.get("META_BASE", "http://localhost:8011/v21.0")
+ACCOUNT = "act_1234567890"
+TOKEN = os.environ["META_TOKEN"]
+SINCE, UNTIL = sys.argv[1], sys.argv[2]
+RAW = Path("raw") / f"meta_{SINCE}_{UNTIL}"
+RAW.mkdir(parents=True, exist_ok=True)
+
+
+def call(url, data=None):
+    """토큰은 주소가 아니라 헤더에. Meta 에러는 본문의 error.code 로 판단."""
+    req = urllib.request.Request(url, data=data, headers={"Authorization": f"Bearer {TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read().decode("utf-8"))
+        error = body.get("error", {})
+        if error.get("code") in (4, 17, 80004):             # 호출 한도 -&gt; 기다리라는 뜻
+            return {"_rate_limited": True}
+        raise SystemExit(f"Meta 오류 code={error.get('code')} {error.get('message')}")
+
+
+# 1) 주문 넣기
+order = urllib.parse.urlencode({
+    "level": "adset", "time_increment": 1,
+    "time_range": json.dumps({"since": SINCE, "until": UNTIL}),
+    "fields": "adset_id,adset_name,spend,impressions,clicks,actions",
+}).encode()
+rid = call(f"{BASE}/{ACCOUNT}/insights", data=order)["report_run_id"]
+print("주문 번호:", rid)
+
+# 2) 다 됐는지 묻기 (폴링) - 간격을 점점 늘리고, 최대 대기 시간을 둠
+wait, deadline = 1.5, time.time() + 120
+while True:
+    time.sleep(wait)
+    st = call(f"{BASE}/{rid}")
+    if st.get("_rate_limited"):
+        wait = min(wait * 2, 30)
+        print(f"  너무 자주 물었음 -&gt; {wait}초 간격으로")
+        continue
+    print(f"  {st['async_status']} {st['async_percent_completion']}%")
+    if st["async_status"] == "Job Completed":
+        break
+    if st["async_status"] in ("Job Failed", "Job Skipped"):
+        raise SystemExit("작업 실패 - 기간을 줄여 다시 주문")
+    if time.time() &gt; deadline:
+        raise SystemExit("너무 오래 걸림 - 나중에 같은 번호로 다시 확인")
+    wait = min(wait * 1.5, 30)
+
+# 3) 결과 받기 - next 주소가 없을 때까지 (커서 방식: 직접 계산하지 않음)
+url, page, rows = f"{BASE}/{rid}/insights?limit=5", 1, []
+fetched_at = datetime.now().isoformat(timespec="seconds")
+while url:
+    data = call(url)
+    (RAW / f"p{page}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    for r in data["data"]:
+        acts = {a["action_type"]: a["value"] for a in r.get("actions", [])}   # 목록 안의 목록 -&gt; 펼치기
+        rows.append({"date": r["date_start"], "adset_id": r["adset_id"], "adset_name": r["adset_name"],
+                     "spend": r["spend"], "impressions": r["impressions"], "clicks": r["clicks"],
+                     "purchases": acts.get("purchase", "0"), "fetched_at": fetched_at})
+    print(f"  p{page}: {len(data['data'])}행")
+    url, page = data["paging"].get("next"), page + 1
+
+out = Path(f"meta_{SINCE}_{UNTIL}.csv")
+with out.open("w", newline="", encoding="utf-8-sig") as f:
+    w = csv.DictWriter(f, fieldnames=list(rows[0]))
+    w.writeheader()
+    w.writerows(rows)
+print(f"완료: {out} {len(rows)}행")</code></pre>
+</details>
+<details class="hint"><summary>mock_meta.py 전체 코드 보기</summary>
+<pre><code># Meta(페이스북) 광고 '비동기 인사이트' 흉내 서버 (연습용) - python mock_meta.py, http://localhost:8011
+# 실제 Graph API 의 모양만 따라 함: 주문(POST) -&gt; report_run_id -&gt; 상태 묻기(GET) -&gt; 결과 페이지(cursor)
+import base64, json, time
+from datetime import date, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
+
+TOKEN = "practice-token"
+VER = "v21.0"                                   # 실제로는 그때의 최신 버전 번호
+ADSETS = [("23850001", "MW_릴스_봄"), ("23850002", "MW_피드_리타겟"), ("23850003", "NK_스토리_신규")]
+JOBS = {}                                       # report_run_id -&gt; {start, rows, last_poll}
+JOB_SECONDS = 6                                 # 작업이 끝나는 데 걸리는 시간
+
+
+def make_rows(since, until):
+    rows, d = [], date.fromisoformat(since)
+    while d &lt;= date.fromisoformat(until):
+        for i, (aid, name) in enumerate(ADSETS):
+            n = d.toordinal() * 7 + i * 13          # 늘 같은 값이 나오게 (난수 대신)
+            clicks, buys = 300 + n % 500, 3 + n % 11
+            rows.append({"adset_id": aid, "adset_name": name, "date_start": d.isoformat(), "date_stop": d.isoformat(),
+                         "spend": f"{(clicks * 412.5):.2f}", "impressions": str(clicks * 37), "clicks": str(clicks),
+                         "actions": [{"action_type": "link_click", "value": str(clicks)},
+                                     {"action_type": "purchase", "value": str(buys)}]})
+        d += timedelta(days=1)
+    return rows
+
+
+def err(message, code, etype="OAuthException", status=400):
+    return status, {"error": {"message": message, "type": etype, "code": code, "fbtrace_id": "AbCdEf123"}}
+
+
+class H(BaseHTTPRequestHandler):
+    def reply(self, status, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=UTF-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def params(self):
+        q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+        n = int(self.headers.get("Content-Length") or 0)
+        if n:
+            q.update({k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()})
+        return q
+
+    def token_ok(self, q):
+        auth = self.headers.get("Authorization", "")
+        return q.get("access_token") == TOKEN or auth == f"Bearer {TOKEN}"
+
+    def route(self, method):
+        q = self.params()
+        parts = urlparse(self.path).path.strip("/").split("/")
+        if not self.token_ok(q):
+            return err("Invalid OAuth access token - Cannot parse access token", 190)
+        if not parts or parts[0] != VER:
+            return err(f"Unsupported version. Use {VER}", 2635, "GraphMethodException")
+        # 1) 주문: POST /v21.0/act_&lt;id&gt;/insights
+        if method == "POST" and len(parts) == 3 and parts[1].startswith("act_") and parts[2] == "insights":
+            tr = json.loads(q.get("time_range", "{}"))
+            if "since" not in tr or "until" not in tr:
+                return err("(#100) time_range must have since and until", 100, "OAuthException")
+            rid = str(1200000 + len(JOBS) + 1)
+            JOBS[rid] = {"start": time.time(), "rows": make_rows(tr["since"], tr["until"]), "last_poll": 0}
+            return 200, {"report_run_id": rid}
+        if len(parts) &gt;= 2 and parts[1] in JOBS:
+            job = JOBS[parts[1]]
+            # 2) 상태: GET /v21.0/&lt;report_run_id&gt;
+            if method == "GET" and len(parts) == 2:
+                now = time.time()
+                if now - job["last_poll"] &lt; 1.0:          # 너무 자주 물으면 한도 초과
+                    return err("(#17) User request limit reached", 17)
+                job["last_poll"] = now
+                pct = min(100, int((now - job["start"]) / JOB_SECONDS * 100))
+                status = "Job Completed" if pct &gt;= 100 else ("Job Running" if pct &gt; 0 else "Job Not Started")
+                return 200, {"id": parts[1], "async_status": status, "async_percent_completion": pct}
+            # 3) 결과: GET /v21.0/&lt;report_run_id&gt;/insights?limit=&amp;after=
+            if method == "GET" and len(parts) == 3 and parts[2] == "insights":
+                if time.time() - job["start"] &lt; JOB_SECONDS:
+                    return err("(#100) Report is not ready yet", 100)
+                limit = int(q.get("limit", 25))
+                start = int(base64.b64decode(q["after"]).decode()) if "after" in q else 0
+                page = job["rows"][start:start + limit]
+                out = {"data": page, "paging": {"cursors": {
+                    "before": base64.b64encode(str(start).encode()).decode(),
+                    "after": base64.b64encode(str(start + len(page)).encode()).decode()}}}
+                if start + limit &lt; len(job["rows"]):    # 다음 페이지가 있을 때만 next
+                    after = out["paging"]["cursors"]["after"]
+                    out["paging"]["next"] = f"http://localhost:8011/{VER}/{parts[1]}/insights?limit={limit}&amp;after={after}"
+                return 200, out
+        return err("Unknown path components", 2500, "OAuthException")
+
+    def do_GET(self):
+        self.reply(*self.route("GET"))
+
+    def do_POST(self):
+        self.reply(*self.route("POST"))
+
+    def log_message(self, fmt, *args):
+        print(self.command, self.path.split("?")[0], "-&gt;", args[1] if len(args) &gt; 1 else "")
+
+
+if __name__ == "__main__":
+    print("모의 Meta Graph API: http://localhost:8011  (Ctrl+C 로 종료)")
+    HTTPServer(("127.0.0.1", 8011), H).serve_forever()</code></pre>
+</details>
+<p class="muted">모의 서버는 공개된 Graph API의 <b>모양</b>(주문 번호 · async_status · paging.next · error.code)만 흉내 냅니다. 실제 버전 번호 · 필드 이름 · 한도 규칙은 Meta 공식 문서를 따르세요.</p>
+</div>
 </div>
 
 <h2 id="project">마케팅 프로젝트에 붙여 보면 (생각해 볼 거리)</h2>
 <ul>
 <li><b>공휴일</b>: 연휴에는 광고 클릭 · 전환 패턴이 달라집니다. 날짜 차원에 "공휴일인가"를 붙이면 "연휴 주간 ROAS가 낮다"를 설명할 수 있습니다. 공휴일은 거의 안 바뀌니 1년에 한 번 받아 seed나 작은 테이블로 두면 충분합니다.</li>
-<li><b>날씨</b>(기상청 API): 화장품 · 생활용품은 기온 · 강수와 관계가 있을 수 있습니다. 날씨 API는 <code>dataType=JSON</code>, 격자 좌표 <code>nx · ny</code>, 발표 시각 <code>base_time</code> 등 변수가 까다로워서 이 장의 다음 연습으로 좋습니다.</li>
+<li><b>날씨</b>(기상청 API): 화장품 · 생활용품은 기온 · 강수와 관계가 있을 수 있습니다. 날씨 API는 <code>dataType=JSON</code>, 격자 좌표 <code>nx · ny</code>, 발표 시각 <code>base_time</code> 등 변수가 까다롭습니다 → <a href="#weather">더 해 보기 ①</a>. 과거 날씨와 광고 성과를 비교하려면 예보가 아니라 <b>관측</b> 자료를 써야 합니다.</li>
 <li>어떤 모양으로 모델에 넣을지는 직접 설계해 보세요. "원천 → staging → 날짜 차원에 조인"까지가 dbt 연습이 됩니다.</li>
 </ul>
 
@@ -500,6 +893,28 @@ API 수집은 <b>"한 번 부르기"가 아니라 "매일 빠짐없이, 다시 �
 <li>API 호출 수를 줄인다</li>
 </ol>
 <div class="q-explain">"다시 돌려도 결과가 같다"가 데이터 파이프라인의 기본 안전장치입니다. DISTINCT로 감추면 진짜 중복과 가짜 중복을 구분하지 못하게 됩니다.</div>
+</div>
+
+<div class="q" data-answer="3">
+<p class="q-text">"지난 6월 비 온 날의 ROAS"를 보고 싶다. 기상청 단기예보 API로 6월 날씨를 받으려는 계획의 문제는?</p>
+<ol class="q-opts">
+<li>격자 좌표를 몰라서</li>
+<li>JSON을 지원하지 않아서</li>
+<li>예보 API는 최근 발표분만 줘서 지난 날씨를 구할 수 없다 — 과거는 관측 자료 API를 써야 한다</li>
+<li>하루 호출 한도가 모자라서</li>
+</ol>
+<div class="q-explain">예보 = 앞으로, 관측 = 지난날입니다. API를 고르기 전에 "이 API가 어떤 기간의 데이터를 주나"를 문서에서 먼저 확인합니다.</div>
+</div>
+
+<div class="q" data-answer="1">
+<p class="q-text">Meta 비동기 리포트의 상태가 계속 "Job Running"이다. 수집기가 해야 할 일로 가장 알맞은 것은?</p>
+<ol class="q-opts">
+<li>묻는 간격을 점점 늘리며 기다리되 최대 대기 시간을 두고, 넘으면 실패로 기록하고 기간을 쪼개 다시 주문한다</li>
+<li>0.1초마다 계속 묻는다</li>
+<li>결과 주소를 바로 불러서 있는 만큼만 받는다</li>
+<li>새 주문을 계속 넣는다</li>
+</ol>
+<div class="q-explain">너무 자주 물으면 호출 한도(code 17 등)에 걸리고, 주문을 계속 넣으면 서버 부담과 한도만 늘어납니다. 기다림에는 간격과 상한, 둘 다 필요합니다.</div>
 </div>
 </div>
 
